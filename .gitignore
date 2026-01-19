@@ -17,6 +17,7 @@ ENV/
 
 #
 .claude/settings.local.json
+tests/fixtures
 
 # Environment variables
 .env

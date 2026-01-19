@@ -43,12 +43,26 @@ def find_uproject_file(start_dir: Optional[Path] = None) -> Optional[Path]:
     """
     Find .uproject file by searching upward from start_dir.
 
+    Search order:
+    1. CLAUDE_PROJECT_DIR environment variable (if set)
+    2. start_dir parameter or cwd
+
     Args:
         start_dir: Starting directory for search (defaults to cwd)
 
     Returns:
         Path to .uproject file, or None if not found
     """
+    # Check CLAUDE_PROJECT_DIR environment variable first
+    claude_project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
+    if claude_project_dir:
+        project_root = find_ue5_project_root(Path(claude_project_dir))
+        if project_root is not None:
+            uprojects = list(project_root.glob("*.uproject"))
+            if uprojects:
+                return uprojects[0]
+
+    # Fall back to start_dir or cwd
     project_root = find_ue5_project_root(start_dir)
     if project_root is None:
         return None

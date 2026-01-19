@@ -4,6 +4,7 @@ UE-MCP Editor Manager
 Manages the lifecycle of a single Unreal Editor instance bound to a project.
 """
 
+import asyncio
 import atexit
 import logging
 import subprocess
@@ -11,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Coroutine, Optional
 
 from .autoconfig import run_config_check
 from .remote_client import RemoteExecutionClient
@@ -93,6 +94,35 @@ class EditorManager:
             ),
         }
 
+    def _try_connect(self) -> bool:
+        """
+        Try to connect to the editor's remote execution.
+
+        Returns:
+            True if connected successfully, False otherwise
+        """
+        if self._editor is None:
+            return False
+
+        remote_client = RemoteExecutionClient(project_name=self.project_name)
+
+        if remote_client.find_unreal_instance(timeout=2.0):
+            if remote_client.open_connection():
+                # Verify PID to ensure we connected to the right process
+                if remote_client.verify_pid(self._editor.process.pid):
+                    self._editor.node_id = remote_client.get_node_id()
+                    self._editor.remote_client = remote_client
+                    self._editor.status = "ready"
+                    logger.info(
+                        f"Connected to editor (node_id: {self._editor.node_id})"
+                    )
+                    return True
+                else:
+                    logger.debug("PID mismatch, not our editor instance")
+                    remote_client.close_connection()
+
+        return False
+
     def is_running(self) -> bool:
         """Check if editor is running."""
         if self._editor is None:
@@ -105,7 +135,7 @@ class EditorManager:
         wait_timeout: float = 120.0,
     ) -> dict[str, Any]:
         """
-        Launch Unreal Editor for the bound project.
+        Launch Unreal Editor for the bound project (synchronous, blocking).
 
         Args:
             additional_paths: Optional list of additional Python paths to configure
@@ -224,6 +254,178 @@ class EditorManager:
             "config_result": config_result,
             "status": self.get_status(),
         }
+
+    # Type alias for notification callback
+    NotifyCallback = Callable[[str, str], Coroutine[Any, Any, None]]
+
+    async def launch_async(
+        self,
+        notify: NotifyCallback,
+        additional_paths: Optional[list[str]] = None,
+        wait_timeout: float = 120.0,
+    ) -> dict[str, Any]:
+        """
+        Launch Unreal Editor asynchronously and return immediately.
+
+        The editor startup and connection will happen in the background.
+        Notifications will be sent via the notify callback when:
+        - Editor process is started
+        - Connection is established successfully
+        - Connection fails or times out
+
+        Args:
+            notify: Async callback function(level, message) to send notifications
+            additional_paths: Optional list of additional Python paths to configure
+            wait_timeout: Maximum time to wait for editor to become ready
+
+        Returns:
+            Immediate launch result (process started, waiting for connection)
+        """
+        if self.is_running():
+            return {
+                "success": False,
+                "error": "Editor is already running",
+                "status": self.get_status(),
+            }
+
+        # Run autoconfig
+        logger.info("Running project configuration check...")
+        config_result = run_config_check(
+            self.project_root, auto_fix=True, additional_paths=additional_paths
+        )
+
+        if config_result["status"] == "error":
+            return {
+                "success": False,
+                "error": f"Configuration failed: {config_result['summary']}",
+                "config_result": config_result,
+            }
+
+        if config_result["status"] == "fixed":
+            logger.info(f"Configuration fixed: {config_result['summary']}")
+
+        # Find editor executable
+        editor_path = find_ue5_editor_for_project(self.project_path)
+        if editor_path is None:
+            return {
+                "success": False,
+                "error": "Could not find Unreal Editor executable",
+            }
+
+        logger.info(f"Launching editor: {editor_path}")
+        logger.info(f"Project: {self.project_path}")
+
+        # Launch editor process
+        try:
+            process = subprocess.Popen(
+                [str(editor_path), str(self.project_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=False,  # Keep in same process group for cleanup
+            )
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to launch editor: {e}",
+            }
+
+        self._editor = EditorInstance(process=process, status="starting")
+        logger.info(f"Editor process started (PID: {process.pid})")
+
+        # Start background task to wait for connection
+        asyncio.create_task(
+            self._wait_for_connection_async(
+                process=process,
+                notify=notify,
+                wait_timeout=wait_timeout,
+            )
+        )
+
+        # Return immediately
+        return {
+            "success": True,
+            "message": "Editor process started, waiting for connection in background",
+            "config_result": config_result,
+            "status": self.get_status(),
+        }
+
+    async def _wait_for_connection_async(
+        self,
+        process: subprocess.Popen,
+        notify: NotifyCallback,
+        wait_timeout: float,
+    ) -> None:
+        """
+        Background task to wait for editor connection and send notifications.
+
+        Args:
+            process: The editor subprocess
+            notify: Async callback to send notifications
+            wait_timeout: Maximum time to wait for connection
+        """
+        logger.info(f"Background: Waiting for editor connection (timeout: {wait_timeout}s)...")
+
+        remote_client = RemoteExecutionClient(project_name=self.project_name)
+        start_time = time.time()
+        connected = False
+
+        while time.time() - start_time < wait_timeout:
+            # Check if process crashed
+            if process.poll() is not None:
+                if self._editor:
+                    self._editor.status = "stopped"
+                logger.error(f"Editor process exited unexpectedly (exit code: {process.returncode})")
+                await notify(
+                    "error",
+                    f"Editor process exited unexpectedly (exit code: {process.returncode})"
+                )
+                return
+
+            # Try to discover and connect
+            if remote_client.find_unreal_instance(timeout=2.0):
+                if remote_client.open_connection():
+                    # Verify PID to ensure we connected to the right process
+                    if remote_client.verify_pid(process.pid):
+                        connected = True
+                        break
+                    else:
+                        logger.warning(
+                            "Connected to wrong UE5 instance (PID mismatch), retrying..."
+                        )
+                        remote_client.close_connection()
+
+            # Use asyncio.sleep to allow other tasks to run
+            await asyncio.sleep(2.0)
+
+        if not connected:
+            logger.error("Timeout waiting for editor to enable remote execution")
+            if self._editor:
+                self._editor.status = "starting"
+            await notify(
+                "warning",
+                "Timeout waiting for editor connection. Editor may still be loading - "
+                "use editor.status to check later."
+            )
+            return
+
+        # Store the node_id for future reconnections
+        if self._editor:
+            self._editor.node_id = remote_client.get_node_id()
+            self._editor.remote_client = remote_client
+            self._editor.status = "ready"
+
+        elapsed = time.time() - start_time
+        logger.info(
+            f"Editor connected successfully (node_id: {remote_client.get_node_id()}, "
+            f"elapsed: {elapsed:.1f}s)"
+        )
+
+        await notify(
+            "info",
+            f"Editor launched and connected successfully! "
+            f"(PID: {process.pid}, node_id: {remote_client.get_node_id()}, "
+            f"elapsed: {elapsed:.1f}s)"
+        )
 
     def stop(self) -> dict[str, Any]:
         """
