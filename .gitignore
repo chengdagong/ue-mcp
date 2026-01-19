@@ -17,7 +17,22 @@ ENV/
 
 #
 .claude/settings.local.json
-tests/fixtures
+
+# Test fixtures - ignore all except template projects
+tests/fixtures/*/
+!tests/fixtures/EmptyCPPProject/
+!tests/fixtures/EmptyProjectTemplate/
+
+# Ignore build artifacts within allowed fixture projects
+tests/fixtures/*/Saved/
+tests/fixtures/*/Intermediate/
+tests/fixtures/*/Backup/
+tests/fixtures/*/.vs/
+tests/fixtures/*/*.sln
+tests/fixtures/*/*.xcode-project
+tests/fixtures/*/*.code-workspace
+
+
 
 # Environment variables
 .env
