@@ -7,6 +7,7 @@ Manages the lifecycle of a single Unreal Editor instance bound to a project.
 import asyncio
 import atexit
 import logging
+import re
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -22,7 +23,11 @@ from .pip_install import (
     pip_install,
 )
 from .remote_client import RemoteExecutionClient
-from .utils import find_ue5_editor_for_project, get_project_name
+from .utils import (
+    find_ue5_build_batch_file,
+    find_ue5_editor_for_project,
+    get_project_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +139,16 @@ class EditorManager:
         if self._editor is None:
             return False
         return self._editor.process.poll() is None
+
+    def is_cpp_project(self) -> bool:
+        """
+        Check if the project is a C++ project.
+
+        Returns:
+            True if project has a 'Source' directory, False otherwise.
+        """
+        source_dir = self.project_root / "Source"
+        return source_dir.exists() and source_dir.is_dir()
 
     def launch(
         self,
@@ -261,8 +276,8 @@ class EditorManager:
             "status": self.get_status(),
         }
 
-    # Type alias for notification callback
     NotifyCallback = Callable[[str, str], Coroutine[Any, Any, None]]
+    ProgressCallback = Callable[[int, int], Coroutine[Any, Any, None]]
 
     async def launch_async(
         self,
@@ -676,3 +691,306 @@ class EditorManager:
         """
         python_path = self._get_python_path()
         return pip_install(packages, python_path=python_path, upgrade=upgrade)
+
+    def build(
+        self,
+        target: str = "Editor",
+        configuration: str = "Development",
+        platform: str = "Win64",
+        clean: bool = False,
+        timeout: float = 1800.0,
+    ) -> dict[str, Any]:
+        """
+        Build the UE5 project using UnrealBuildTool.
+
+        Args:
+            target: Build target - "Editor", "Game", "Client", or "Server" (default: "Editor")
+            configuration: Build configuration - "Debug", "DebugGame", "Development",
+                          "Shipping", or "Test" (default: "Development")
+            platform: Target platform - "Win64", "Mac", "Linux", etc. (default: "Win64")
+            clean: Whether to perform a clean build (default: False)
+            timeout: Build timeout in seconds (default: 1800 = 30 minutes)
+
+        Returns:
+            Build result dictionary containing:
+            - success: Whether build succeeded
+            - output: Build output/log
+            - return_code: Process return code
+            - error: Error message (if failed)
+        """
+        # Check if C++ project
+        if not self.is_cpp_project():
+            logger.info(f"Project {self.project_name} is a Blueprint-only project. Skipping build.")
+            return {
+                "success": True,
+                "message": f"Project '{self.project_name}' is a Blueprint-only project (no Source directory). No C++ compilation required.",
+                "is_cpp": False,
+            }
+
+        # Find Build.bat
+        build_script = find_ue5_build_batch_file()
+        if build_script is None:
+            return {
+                "success": False,
+                "error": "Could not find UE5 Build script (Build.bat/Build.sh)",
+            }
+
+        # Construct build target name: ProjectNameEditor, ProjectNameGame, etc.
+        if target == "Editor":
+            target_name = f"{self.project_name}Editor"
+        elif target == "Game":
+            target_name = self.project_name
+        else:
+            target_name = f"{self.project_name}{target}"
+
+        # Build command line arguments
+        cmd = [str(build_script), target_name, platform, configuration]
+
+        # Add project path
+        cmd.extend([f"-Project={self.project_path}"])
+
+        # Add wait mutex to prevent parallel builds
+        cmd.append("-WaitMutex")
+
+        # Add clean flag if requested
+        if clean:
+            cmd.append("-Clean")
+
+        logger.info(f"Building project: {self.project_name}")
+        logger.info(f"Target: {target_name}, Platform: {platform}, Configuration: {configuration}")
+        logger.info(f"Command: {' '.join(cmd)}")
+
+        try:
+            # Run the build process
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=str(self.project_root),
+            )
+
+            # Collect output with timeout
+            try:
+                stdout, _ = process.communicate(timeout=timeout)
+                return_code = process.returncode
+            except subprocess.TimeoutExpired:
+                process.kill()
+                stdout, _ = process.communicate()
+                return {
+                    "success": False,
+                    "error": f"Build timed out after {timeout} seconds",
+                    "output": stdout,
+                    "return_code": -1,
+                }
+
+            success = return_code == 0
+
+            if success:
+                logger.info("Build completed successfully")
+            else:
+                logger.error(f"Build failed with return code: {return_code}")
+
+            return {
+                "success": success,
+                "output": stdout,
+                "return_code": return_code,
+                "target": target_name,
+                "platform": platform,
+                "configuration": configuration,
+                "message": "Build completed successfully" if success else "Build failed",
+            }
+
+        except FileNotFoundError as e:
+            return {
+                "success": False,
+                "error": f"Build script not found: {e}",
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Build failed with error: {e}",
+            }
+
+    async def build_async(
+        self,
+        notify: NotifyCallback,
+        progress: Optional[ProgressCallback] = None,
+        target: str = "Editor",
+        configuration: str = "Development",
+        platform: str = "Win64",
+        clean: bool = False,
+        timeout: float = 1800.0,
+    ) -> dict[str, Any]:
+        """
+        Build the UE5 project asynchronously using UnrealBuildTool.
+
+        This method returns immediately and sends notifications via the callback
+        as the build progresses.
+
+        Args:
+            notify: Async callback function(level, message) to send notifications
+            progress: Optional async callback function(current, total) to report progress
+            target: Build target - "Editor", "Game", "Client", or "Server" (default: "Editor")
+            configuration: Build configuration - "Debug", "DebugGame", "Development",
+                          "Shipping", or "Test" (default: "Development")
+            platform: Target platform - "Win64", "Mac", "Linux", etc. (default: "Win64")
+            clean: Whether to perform a clean build (default: False)
+            timeout: Build timeout in seconds (default: 1800 = 30 minutes)
+
+        Returns:
+            Initial build result (build started)
+        """
+        # Check if C++ project
+        if not self.is_cpp_project():
+            logger.info(f"Project {self.project_name} is a Blueprint-only project. Skipping build.")
+            return {
+                "success": True,
+                "message": f"Project '{self.project_name}' is a Blueprint-only project (no Source directory). No C++ compilation required.",
+                "is_cpp": False,
+            }
+
+        # Find Build.bat
+        build_script = find_ue5_build_batch_file()
+        if build_script is None:
+            return {
+                "success": False,
+                "error": "Could not find UE5 Build script (Build.bat/Build.sh)",
+            }
+
+        # Construct build target name
+        if target == "Editor":
+            target_name = f"{self.project_name}Editor"
+        elif target == "Game":
+            target_name = self.project_name
+        else:
+            target_name = f"{self.project_name}{target}"
+
+        # Build command line arguments
+        cmd = [str(build_script), target_name, platform, configuration]
+        cmd.extend([f"-Project={self.project_path}"])
+        cmd.append("-WaitMutex")
+
+        if clean:
+            cmd.append("-Clean")
+
+        logger.info(f"Building project asynchronously: {self.project_name}")
+        logger.info(f"Target: {target_name}, Platform: {platform}, Configuration: {configuration}")
+
+        # Start background build task
+        asyncio.create_task(
+            self._run_build_async(
+                cmd=cmd,
+                notify=notify,
+                progress=progress,
+                target_name=target_name,
+                platform=platform,
+                configuration=configuration,
+                timeout=timeout,
+            )
+        )
+
+        return {
+            "success": True,
+            "message": f"Build started for {target_name} ({platform} {configuration})",
+            "target": target_name,
+            "platform": platform,
+            "configuration": configuration,
+        }
+
+    async def _run_build_async(
+        self,
+        cmd: list[str],
+        notify: NotifyCallback,
+        target_name: str,
+        platform: str,
+        configuration: str,
+        timeout: float,
+        progress: Optional[ProgressCallback] = None,
+    ) -> None:
+        """
+        Background task to run build process and send notifications.
+
+        Args:
+            cmd: Build command line
+            notify: Async callback to send notifications
+            progress: Optional async callback to report progress
+            target_name: Build target name for messages
+            platform: Target platform for messages
+            configuration: Build configuration for messages
+            timeout: Build timeout in seconds
+        """
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=str(self.project_root),
+            )
+
+            # Read output with timeout
+            output_lines: list[str] = []
+            start_time = time.time()
+
+            try:
+                while True:
+                    if time.time() - start_time > timeout:
+                        process.kill()
+                        await notify(
+                            "error",
+                            f"Build timed out after {timeout} seconds"
+                        )
+                        return
+
+                    try:
+                        line = await asyncio.wait_for(
+                            process.stdout.readline(),
+                            timeout=1.0
+                        )
+                        if not line:
+                            break
+                        line_str = line.decode("utf-8", errors="replace").rstrip()
+                        output_lines.append(line_str)
+
+                        # Parse progress like [1/50]
+                        if progress:
+                            match = re.search(r"\[(\d+)/(\d+)\]", line_str)
+                            if match:
+                                current = int(match.group(1))
+                                total = int(match.group(2))
+                                await progress(current, total)
+
+                        # Send progress notifications for important lines
+                        if any(keyword in line_str.lower() for keyword in
+                               ["error", "warning", "building", "compiling", "linking"]):
+                            await notify("info", line_str[:200])  # Truncate long lines
+                    except asyncio.TimeoutError:
+                        if process.returncode is not None:
+                            break
+                        continue
+
+                await process.wait()
+                return_code = process.returncode
+
+                elapsed = time.time() - start_time
+                if return_code == 0:
+                    await notify(
+                        "info",
+                        f"Build completed successfully! "
+                        f"({target_name} {platform} {configuration}, {elapsed:.1f}s)"
+                    )
+                else:
+                    # Find error lines for notification
+                    error_lines = [l for l in output_lines if "error" in l.lower()][:5]
+                    error_summary = "\n".join(error_lines) if error_lines else "Check build log"
+                    await notify(
+                        "error",
+                        f"Build failed (return code: {return_code}). Errors:\n{error_summary}"
+                    )
+
+            except Exception as e:
+                await notify("error", f"Build process error: {e}")
+
+        except Exception as e:
+            logger.error(f"Failed to start build process: {e}")
+            await notify("error", f"Failed to start build: {e}")

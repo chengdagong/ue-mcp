@@ -86,6 +86,7 @@ Available tools:
 - editor.capture.orbital: Capture multi-angle screenshots around a target location
 - editor.capture.pie: Capture screenshots during Play-In-Editor session
 - editor.capture.window: Capture editor window screenshots (Windows only)
+- project.build: Build the UE5 project using UnrealBuildTool (supports Editor, Game, etc.)
 """,
 )
 
@@ -233,6 +234,91 @@ def configure_project(
         additional_paths=additional_paths if additional_paths else None,
         include_bundled_packages=True,
     )
+
+
+@mcp.tool(name="project.build")
+async def build_project(
+    ctx: Context,
+    target: str = "Editor",
+    configuration: str = "Development",
+    platform: str = "Win64",
+    clean: bool = False,
+    wait: bool = False,
+    timeout: float = 1800.0,
+) -> dict[str, Any]:
+    """
+    Build the UE5 project using UnrealBuildTool.
+
+    This tool compiles the project's C++ code. By default, it runs asynchronously
+    in the background and sends notifications as the build progresses.
+
+    Args:
+        target: Build target type - one of:
+            - "Editor": Build for editor (ProjectNameEditor) [default]
+            - "Game": Build standalone game (ProjectName)
+            - "Client": Build client target (ProjectNameClient)
+            - "Server": Build dedicated server (ProjectNameServer)
+        configuration: Build configuration - one of:
+            - "Debug": Full debugging, no optimizations
+            - "DebugGame": Game debugging, engine optimized
+            - "Development": Development build with optimizations [default]
+            - "Shipping": Final shipping build, fully optimized
+            - "Test": Testing configuration
+        platform: Target platform - "Win64" [default], "Mac", "Linux", etc.
+        clean: Whether to perform a clean build (rebuilds everything) (default: False)
+        wait: Whether to wait for build to complete (default: False, runs in background)
+        timeout: Build timeout in seconds (default: 1800 = 30 minutes)
+
+    Returns:
+        If wait=False (default):
+            - success: True if build started
+            - message: Status message
+            - target/platform/configuration: Build parameters
+
+        If wait=True:
+            - success: Whether build succeeded
+            - output: Full build output/log
+            - return_code: Process return code
+            - error: Error message (if failed)
+
+    Example:
+        # Start background build (returns immediately)
+        build_project(target="Editor", configuration="Development")
+
+        # Wait for build to complete
+        build_project(target="Game", configuration="Shipping", wait=True)
+
+        # Clean rebuild
+        build_project(clean=True, wait=True)
+    """
+    manager = _get_editor_manager()
+
+    if wait:
+        # Synchronous build - wait for completion
+        return manager.build(
+            target=target,
+            configuration=configuration,
+            platform=platform,
+            clean=clean,
+            timeout=timeout,
+        )
+    else:
+        # Asynchronous build - return immediately
+        async def notify(level: str, message: str) -> None:
+            await ctx.log(level, message)
+
+        async def progress_callback(current: int, total: int) -> None:
+            await ctx.report_progress(progress=current, total=total)
+
+        return await manager.build_async(
+            notify=notify,
+            progress=progress_callback,
+            target=target,
+            configuration=configuration,
+            platform=platform,
+            clean=clean,
+            timeout=timeout,
+        )
 
 
 @mcp.tool(name="editor.pip_install")

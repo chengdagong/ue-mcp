@@ -41,6 +41,7 @@ fastmcp run ue_mcp.server:mcp
 - `editor.stop()` - Stop the editor
 - `editor.execute(code)` - Execute Python code in the editor
 - `editor.configure()` - Check/fix project configuration
+- `project.build()` - Build the UE5 project using UnrealBuildTool
 
 ## Claude Code Configuration
 

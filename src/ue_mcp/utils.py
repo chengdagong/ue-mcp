@@ -178,3 +178,140 @@ def find_ue5_editor_for_project(uproject_path: Path) -> Optional[Path]:
     return find_ue5_editor()
 
 
+def find_ue5_python() -> Optional[Path]:
+    """
+    Find the latest installed UE5 Python executable.
+
+    Returns:
+        Path to Python executable or None if not found
+    """
+    system = platform.system()
+
+    for install_dir in _find_ue5_installations():
+        if system == "Windows":
+            python_path = (
+                install_dir
+                / "Engine"
+                / "Binaries"
+                / "ThirdParty"
+                / "Python3"
+                / "Win64"
+                / "python.exe"
+            )
+        elif system == "Darwin":
+            python_path = (
+                install_dir
+                / "Engine"
+                / "Binaries"
+                / "ThirdParty"
+                / "Python3"
+                / "Mac"
+                / "bin"
+                / "python3"
+            )
+        else:  # Linux
+            python_path = (
+                install_dir
+                / "Engine"
+                / "Binaries"
+                / "ThirdParty"
+                / "Python3"
+                / "Linux"
+                / "bin"
+                / "python3"
+            )
+
+        if python_path.exists():
+            return python_path
+
+    return None
+
+
+def find_ue5_python_for_editor(editor_path: Path) -> Optional[Path]:
+    """
+    Find the UE5 Python executable corresponding to the given editor.
+
+    Args:
+        editor_path: Path to UnrealEditor executable
+
+    Returns:
+        Path to Python executable or None if not found
+    """
+    system = platform.system()
+    engine_binaries = editor_path.parent.parent.parent
+
+    if system == "Windows":
+        python_path = engine_binaries / "ThirdParty" / "Python3" / "Win64" / "python.exe"
+    elif system == "Darwin":
+        # editor_path is usually .../Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor
+        # engine_binaries is .../Engine/Binaries
+        python_path = engine_binaries / "ThirdParty" / "Python3" / "Mac" / "bin" / "python3"
+    else:  # Linux
+        python_path = engine_binaries / "ThirdParty" / "Python3" / "Linux" / "bin" / "python3"
+
+    if python_path.exists():
+        return python_path
+
+    return find_ue5_python()
+
+
+def find_ue5_build_batch_file() -> Optional[Path]:
+    """
+    Find the UE5 Build.bat file for running UnrealBuildTool.
+
+    Returns:
+        Path to Build.bat or None if not found
+    """
+    system = platform.system()
+
+    for install_dir in _find_ue5_installations():
+        if system == "Windows":
+            build_bat = install_dir / "Engine" / "Build" / "BatchFiles" / "Build.bat"
+        elif system == "Darwin":
+            build_bat = install_dir / "Engine" / "Build" / "BatchFiles" / "Mac" / "Build.sh"
+        else:  # Linux
+            build_bat = install_dir / "Engine" / "Build" / "BatchFiles" / "Linux" / "Build.sh"
+
+        if build_bat.exists():
+            return build_bat
+
+    return None
+
+
+def find_ue5_runuat() -> Optional[Path]:
+    """
+    Find the UE5 RunUAT script for running Unreal Automation Tool.
+
+    Returns:
+        Path to RunUAT.bat/.sh or None if not found
+    """
+    system = platform.system()
+
+    for install_dir in _find_ue5_installations():
+        if system == "Windows":
+            runuat = install_dir / "Engine" / "Build" / "BatchFiles" / "RunUAT.bat"
+        elif system == "Darwin":
+            runuat = install_dir / "Engine" / "Build" / "BatchFiles" / "RunUAT.sh"
+        else:  # Linux
+            runuat = install_dir / "Engine" / "Build" / "BatchFiles" / "RunUAT.sh"
+
+        if runuat.exists():
+            return runuat
+
+    return None
+
+
+def get_ue5_engine_root(uproject_path: Optional[Path] = None) -> Optional[Path]:
+    """
+    Get the UE5 engine root directory.
+
+    Args:
+        uproject_path: Optional path to .uproject file (for future engine association lookup)
+
+    Returns:
+        Path to UE5 engine root or None if not found
+    """
+    installations = _find_ue5_installations()
+    if installations:
+        return installations[0]
+    return None
