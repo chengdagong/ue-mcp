@@ -9,8 +9,9 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
+from .autoconfig import get_bundled_site_packages
 from .editor_manager import EditorManager
 from .utils import find_uproject_file
 
@@ -86,7 +87,8 @@ Available tools:
 
 
 @mcp.tool(name="editor.launch")
-def launch_editor(
+async def launch_editor(
+    ctx: Context,
     additional_paths: list[str] = [],
     wait_timeout: float = 120.0,
 ) -> dict[str, Any]:
@@ -95,20 +97,41 @@ def launch_editor(
 
     This will:
     1. Check and auto-fix project configuration (Python plugin, remote execution)
-    2. Start the editor process
-    3. Wait for the editor to become ready for remote execution
-    4. Establish a connection for executing Python code
+    2. Automatically include bundled Python packages (asset_diagnostic, editor_capture)
+    3. Start the editor process
+    4. Return immediately while waiting for connection in background
+    5. Send a notification when connection is established
+
+    The tool returns immediately after the editor process starts. You will receive
+    a notification when the editor is fully connected and ready for remote execution.
+    Use editor.status to check the current connection status.
 
     Args:
         additional_paths: Optional list of additional Python paths to add to the editor's sys.path
-        wait_timeout: Maximum time in seconds to wait for editor to start (default: 120)
+        wait_timeout: Maximum time in seconds to wait for editor connection (default: 120)
 
     Returns:
-        Launch result with status information
+        Launch result with status information (editor process started)
     """
     manager = _get_editor_manager()
-    return manager.launch(
-        additional_paths=additional_paths if additional_paths else None,
+
+    # Create notification callback using ctx.log
+    async def notify(level: str, message: str) -> None:
+        """Send notification to client via MCP log message."""
+        await ctx.log(level, message)
+
+    # Include bundled site-packages automatically
+    all_paths = list(additional_paths) if additional_paths else []
+    bundled_path = get_bundled_site_packages()
+    if bundled_path.exists():
+        bundled_path_str = str(bundled_path.resolve())
+        if bundled_path_str not in all_paths:
+            all_paths.insert(0, bundled_path_str)
+            logger.info(f"Including bundled site-packages: {bundled_path_str}")
+
+    return await manager.launch_async(
+        notify=notify,
+        additional_paths=all_paths if all_paths else None,
         wait_timeout=wait_timeout,
     )
 
@@ -185,7 +208,10 @@ def configure_project(
     This checks:
     1. Python plugin enabled in .uproject
     2. Remote execution settings in DefaultEngine.ini
-    3. Additional Python paths (if specified)
+    3. Additional Python paths (bundled packages are automatically included)
+
+    Bundled packages (asset_diagnostic, editor_capture) are automatically added
+    to the editor's Python path.
 
     Args:
         auto_fix: Whether to automatically fix issues (default: True)
@@ -201,6 +227,7 @@ def configure_project(
         manager.project_root,
         auto_fix=auto_fix,
         additional_paths=additional_paths if additional_paths else None,
+        include_bundled_packages=True,
     )
 
 

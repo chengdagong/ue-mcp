@@ -11,6 +11,19 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+
+def get_bundled_site_packages() -> Path:
+    """
+    Get the path to the bundled site-packages directory.
+
+    This directory contains Python packages that should be available
+    in the UE5 editor's Python environment.
+
+    Returns:
+        Path to the vendor/site-packages directory
+    """
+    return Path(__file__).parent / "vendor" / "site-packages"
+
 # INI file section for Python plugin settings
 PYTHON_PLUGIN_SECTION = "[/Script/PythonScriptPlugin.PythonScriptPluginSettings]"
 
@@ -314,6 +327,7 @@ def run_config_check(
     project_root: Path,
     auto_fix: bool = True,
     additional_paths: Optional[list[str]] = None,
+    include_bundled_packages: bool = True,
 ) -> dict[str, Any]:
     """
     Run full config check and fix.
@@ -322,11 +336,21 @@ def run_config_check(
         project_root: Path to project root directory
         auto_fix: Whether to automatically fix issues
         additional_paths: Optional list of additional Python paths to add
+        include_bundled_packages: Whether to include bundled site-packages (default: True)
 
     Returns:
         Result dictionary with status, check results, and summary
     """
-    additional_paths = additional_paths or []
+    additional_paths = list(additional_paths) if additional_paths else []
+
+    # Include bundled site-packages by default
+    if include_bundled_packages:
+        bundled_path = get_bundled_site_packages()
+        if bundled_path.exists():
+            bundled_path_str = str(bundled_path.resolve())
+            if bundled_path_str not in additional_paths:
+                additional_paths.insert(0, bundled_path_str)
+                logger.info(f"Including bundled site-packages: {bundled_path_str}")
 
     result: dict[str, Any] = {
         "status": "ok",
