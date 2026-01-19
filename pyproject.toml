@@ -40,3 +40,7 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: marks tests as integration tests (require Claude CLI and may require UE5)",
+    "slow: marks tests as slow (may take minutes to complete)",
+]
