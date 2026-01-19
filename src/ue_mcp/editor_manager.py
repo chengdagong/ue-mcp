@@ -31,6 +31,9 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
+NotifyCallback = Callable[[str, str], Coroutine[Any, Any, None]]
+ProgressCallback = Callable[[int, int], Coroutine[Any, Any, None]]
+
 
 @dataclass
 class EditorInstance:
@@ -150,158 +153,11 @@ class EditorManager:
         source_dir = self.project_root / "Source"
         return source_dir.exists() and source_dir.is_dir()
 
-    def launch(
+    async def _prepare_launch(
         self,
         additional_paths: Optional[list[str]] = None,
-        wait_timeout: float = 120.0,
-    ) -> dict[str, Any]:
-        """
-        Launch Unreal Editor for the bound project (synchronous, blocking).
-
-        Args:
-            additional_paths: Optional list of additional Python paths to configure
-            wait_timeout: Maximum time to wait for editor to become ready
-
-        Returns:
-            Launch result dictionary
-        """
-        if self.is_running():
-            return {
-                "success": False,
-                "error": "Editor is already running",
-                "status": self.get_status(),
-            }
-
-        # Run autoconfig
-        logger.info("Running project configuration check...")
-        config_result = run_config_check(
-            self.project_root, auto_fix=True, additional_paths=additional_paths
-        )
-
-        if config_result["status"] == "error":
-            return {
-                "success": False,
-                "error": f"Configuration failed: {config_result['summary']}",
-                "config_result": config_result,
-            }
-
-        if config_result["status"] == "fixed":
-            logger.info(f"Configuration fixed: {config_result['summary']}")
-
-        # Find editor executable
-        editor_path = find_ue5_editor_for_project(self.project_path)
-        if editor_path is None:
-            return {
-                "success": False,
-                "error": "Could not find Unreal Editor executable",
-            }
-
-        logger.info(f"Launching editor: {editor_path}")
-        logger.info(f"Project: {self.project_path}")
-
-        # Launch editor process
-        try:
-            process = subprocess.Popen(
-                [str(editor_path), str(self.project_path)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=False,  # Keep in same process group for cleanup
-            )
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Failed to launch editor: {e}",
-            }
-
-        self._editor = EditorInstance(process=process, status="starting")
-
-        # Wait for editor to become ready
-        logger.info(f"Waiting for editor to start (timeout: {wait_timeout}s)...")
-        logger.info(f"Editor PID: {process.pid}")
-
-        remote_client = RemoteExecutionClient(project_name=self.project_name)
-        start_time = time.time()
-        connected = False
-        verified = False
-
-        while time.time() - start_time < wait_timeout:
-            # Check if process crashed
-            if process.poll() is not None:
-                self._editor.status = "stopped"
-                return {
-                    "success": False,
-                    "error": "Editor process exited unexpectedly",
-                    "exit_code": process.returncode,
-                }
-
-            # Try to discover and connect
-            if remote_client.find_unreal_instance(timeout=2.0):
-                if remote_client.open_connection():
-                    # Verify PID to ensure we connected to the right process
-                    if remote_client.verify_pid(process.pid):
-                        connected = True
-                        verified = True
-                        break
-                    else:
-                        logger.warning(
-                            "Connected to wrong UE5 instance (PID mismatch), retrying..."
-                        )
-                        remote_client.close_connection()
-
-            time.sleep(2.0)
-
-        if not connected:
-            logger.error("Timeout waiting for editor to enable remote execution")
-            # Don't kill the editor, just report the timeout
-            self._editor.status = "starting"
-            return {
-                "success": False,
-                "error": "Timeout waiting for editor to enable remote execution. Editor may still be loading.",
-                "status": self.get_status(),
-            }
-
-        # Store the node_id for future reconnections
-        self._editor.node_id = remote_client.get_node_id()
-        self._editor.remote_client = remote_client
-        self._editor.status = "ready"
-
-        logger.info(
-            f"Editor launched and connected successfully (node_id: {self._editor.node_id})"
-        )
-
-        return {
-            "success": True,
-            "message": "Editor launched and connected",
-            "config_result": config_result,
-            "status": self.get_status(),
-        }
-
-    NotifyCallback = Callable[[str, str], Coroutine[Any, Any, None]]
-    ProgressCallback = Callable[[int, int], Coroutine[Any, Any, None]]
-
-    async def launch_async(
-        self,
-        notify: NotifyCallback,
-        additional_paths: Optional[list[str]] = None,
-        wait_timeout: float = 120.0,
-    ) -> dict[str, Any]:
-        """
-        Launch Unreal Editor asynchronously and return immediately.
-
-        The editor startup and connection will happen in the background.
-        Notifications will be sent via the notify callback when:
-        - Editor process is started
-        - Connection is established successfully
-        - Connection fails or times out
-
-        Args:
-            notify: Async callback function(level, message) to send notifications
-            additional_paths: Optional list of additional Python paths to configure
-            wait_timeout: Maximum time to wait for editor to become ready
-
-        Returns:
-            Immediate launch result (process started, waiting for connection)
-        """
+    ) -> Any:
+        """Shared preparation logic for launching the editor."""
         if self.is_running():
             return {
                 "success": False,
@@ -352,6 +208,48 @@ class EditorManager:
 
         self._editor = EditorInstance(process=process, status="starting")
         logger.info(f"Editor process started (PID: {process.pid})")
+        return process, config_result
+
+    async def launch(
+        self,
+        notify: Optional[NotifyCallback] = None,
+        additional_paths: Optional[list[str]] = None,
+        wait_timeout: float = 120.0,
+    ) -> dict[str, Any]:
+        """
+        Launch Unreal Editor and wait for connection (synchronous startup).
+        """
+        prep_result = await self._prepare_launch(additional_paths)
+        if isinstance(prep_result, dict):
+            return prep_result
+        
+        process, config_result = prep_result
+
+        # Helper for null notify
+        async def null_notify(level: str, message: str) -> None:
+            pass
+        actual_notify = notify or null_notify
+
+        return await self._wait_for_connection_async(
+            process=process,
+            notify=actual_notify,
+            wait_timeout=wait_timeout,
+        )
+
+    async def launch_async(
+        self,
+        notify: NotifyCallback,
+        additional_paths: Optional[list[str]] = None,
+        wait_timeout: float = 120.0,
+    ) -> dict[str, Any]:
+        """
+        Launch Unreal Editor asynchronously (returns immediately).
+        """
+        prep_result = await self._prepare_launch(additional_paths)
+        if isinstance(prep_result, dict):
+            return prep_result
+        
+        process, config_result = prep_result
 
         # Start background task to wait for connection
         asyncio.create_task(
@@ -362,7 +260,6 @@ class EditorManager:
             )
         )
 
-        # Return immediately
         return {
             "success": True,
             "message": "Editor process started, waiting for connection in background",
@@ -375,14 +272,17 @@ class EditorManager:
         process: subprocess.Popen,
         notify: NotifyCallback,
         wait_timeout: float,
-    ) -> None:
+    ) -> dict[str, Any]:
         """
-        Background task to wait for editor connection and send notifications.
+        Task to wait for editor connection and send notifications.
 
         Args:
             process: The editor subprocess
             notify: Async callback to send notifications
             wait_timeout: Maximum time to wait for connection
+
+        Returns:
+            Launch result dictionary
         """
         logger.info(f"Background: Waiting for editor connection (timeout: {wait_timeout}s)...")
 
@@ -400,10 +300,14 @@ class EditorManager:
                     "error",
                     f"Editor process exited unexpectedly (exit code: {process.returncode})"
                 )
-                return
+                return {
+                    "success": False,
+                    "error": "Editor process exited unexpectedly",
+                    "exit_code": process.returncode,
+                }
 
             # Try to discover and connect
-            if remote_client.find_unreal_instance(timeout=2.0):
+            if remote_client.find_unreal_instance(timeout=1.0):
                 if remote_client.open_connection():
                     # Verify PID to ensure we connected to the right process
                     if remote_client.verify_pid(process.pid):
@@ -416,7 +320,7 @@ class EditorManager:
                         remote_client.close_connection()
 
             # Use asyncio.sleep to allow other tasks to run
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(0.5)
 
         if not connected:
             logger.error("Timeout waiting for editor to enable remote execution")
@@ -427,7 +331,11 @@ class EditorManager:
                 "Timeout waiting for editor connection. Editor may still be loading - "
                 "use editor.status to check later."
             )
-            return
+            return {
+                "success": False,
+                "error": "Timeout waiting for editor to enable remote execution. Editor may still be loading.",
+                "status": self.get_status(),
+            }
 
         # Store the node_id for future reconnections
         if self._editor:
@@ -447,6 +355,12 @@ class EditorManager:
             f"(PID: {process.pid}, node_id: {remote_client.get_node_id()}, "
             f"elapsed: {elapsed:.1f}s)"
         )
+
+        return {
+            "success": True,
+            "message": "Editor launched and connected",
+            "status": self.get_status(),
+        }
 
     def stop(self) -> dict[str, Any]:
         """
@@ -692,24 +606,30 @@ class EditorManager:
         python_path = self._get_python_path()
         return pip_install(packages, python_path=python_path, upgrade=upgrade)
 
-    def build(
+    async def build(
         self,
+        notify: Optional[NotifyCallback] = None,
+        progress: Optional[ProgressCallback] = None,
         target: str = "Editor",
         configuration: str = "Development",
         platform: str = "Win64",
         clean: bool = False,
         timeout: float = 1800.0,
+        verbose: bool = False,
     ) -> dict[str, Any]:
         """
-        Build the UE5 project using UnrealBuildTool.
+        Build the UE5 project using UnrealBuildTool (synchronous, but async implementation).
 
         Args:
+            notify: Optional async callback to send notifications
+            progress: Optional async callback to report progress
             target: Build target - "Editor", "Game", "Client", or "Server" (default: "Editor")
             configuration: Build configuration - "Debug", "DebugGame", "Development",
                           "Shipping", or "Test" (default: "Development")
             platform: Target platform - "Win64", "Mac", "Linux", etc. (default: "Win64")
             clean: Whether to perform a clean build (default: False)
             timeout: Build timeout in seconds (default: 1800 = 30 minutes)
+            verbose: Whether to send all build logs via notify (default: False)
 
         Returns:
             Build result dictionary containing:
@@ -727,6 +647,12 @@ class EditorManager:
                 "is_cpp": False,
             }
 
+        # Helper for null notify
+        async def null_notify(level: str, message: str) -> None:
+            pass
+
+        actual_notify = notify or null_notify
+
         # Find Build.bat
         build_script = find_ue5_build_batch_file()
         if build_script is None:
@@ -735,7 +661,7 @@ class EditorManager:
                 "error": "Could not find UE5 Build script (Build.bat/Build.sh)",
             }
 
-        # Construct build target name: ProjectNameEditor, ProjectNameGame, etc.
+        # Construct build target name
         if target == "Editor":
             target_name = f"{self.project_name}Editor"
         elif target == "Game":
@@ -745,72 +671,26 @@ class EditorManager:
 
         # Build command line arguments
         cmd = [str(build_script), target_name, platform, configuration]
-
-        # Add project path
         cmd.extend([f"-Project={self.project_path}"])
-
-        # Add wait mutex to prevent parallel builds
         cmd.append("-WaitMutex")
 
-        # Add clean flag if requested
         if clean:
             cmd.append("-Clean")
 
         logger.info(f"Building project: {self.project_name}")
         logger.info(f"Target: {target_name}, Platform: {platform}, Configuration: {configuration}")
-        logger.info(f"Command: {' '.join(cmd)}")
 
-        try:
-            # Run the build process
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                cwd=str(self.project_root),
-            )
-
-            # Collect output with timeout
-            try:
-                stdout, _ = process.communicate(timeout=timeout)
-                return_code = process.returncode
-            except subprocess.TimeoutExpired:
-                process.kill()
-                stdout, _ = process.communicate()
-                return {
-                    "success": False,
-                    "error": f"Build timed out after {timeout} seconds",
-                    "output": stdout,
-                    "return_code": -1,
-                }
-
-            success = return_code == 0
-
-            if success:
-                logger.info("Build completed successfully")
-            else:
-                logger.error(f"Build failed with return code: {return_code}")
-
-            return {
-                "success": success,
-                "output": stdout,
-                "return_code": return_code,
-                "target": target_name,
-                "platform": platform,
-                "configuration": configuration,
-                "message": "Build completed successfully" if success else "Build failed",
-            }
-
-        except FileNotFoundError as e:
-            return {
-                "success": False,
-                "error": f"Build script not found: {e}",
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Build failed with error: {e}",
-            }
+        # Run build and wait for result
+        return await self._run_build_async(
+            cmd=cmd,
+            notify=actual_notify,
+            progress=progress,
+            target_name=target_name,
+            platform=platform,
+            configuration=configuration,
+            timeout=timeout,
+            verbose=verbose,
+        )
 
     async def build_async(
         self,
@@ -821,6 +701,7 @@ class EditorManager:
         platform: str = "Win64",
         clean: bool = False,
         timeout: float = 1800.0,
+        verbose: bool = False,
     ) -> dict[str, Any]:
         """
         Build the UE5 project asynchronously using UnrealBuildTool.
@@ -837,6 +718,7 @@ class EditorManager:
             platform: Target platform - "Win64", "Mac", "Linux", etc. (default: "Win64")
             clean: Whether to perform a clean build (default: False)
             timeout: Build timeout in seconds (default: 1800 = 30 minutes)
+            verbose: Whether to send all build logs via notify (default: False)
 
         Returns:
             Initial build result (build started)
@@ -887,6 +769,7 @@ class EditorManager:
                 platform=platform,
                 configuration=configuration,
                 timeout=timeout,
+                verbose=verbose,
             )
         )
 
@@ -907,7 +790,8 @@ class EditorManager:
         configuration: str,
         timeout: float,
         progress: Optional[ProgressCallback] = None,
-    ) -> None:
+        verbose: bool = False,
+    ) -> dict[str, Any]:
         """
         Background task to run build process and send notifications.
 
@@ -919,6 +803,10 @@ class EditorManager:
             platform: Target platform for messages
             configuration: Build configuration for messages
             timeout: Build timeout in seconds
+            verbose: Whether to send all build logs via notify
+
+        Returns:
+            Build result dictionary
         """
         try:
             process = await asyncio.create_subprocess_exec(
@@ -935,12 +823,17 @@ class EditorManager:
             try:
                 while True:
                     if time.time() - start_time > timeout:
-                        process.kill()
+                        if process.returncode is None:
+                            process.kill()
                         await notify(
                             "error",
                             f"Build timed out after {timeout} seconds"
                         )
-                        return
+                        return {
+                            "success": False,
+                            "error": f"Build timed out after {timeout} seconds",
+                            "output": "\n".join(output_lines),
+                        }
 
                     try:
                         line = await asyncio.wait_for(
@@ -960,8 +853,10 @@ class EditorManager:
                                 total = int(match.group(2))
                                 await progress(current, total)
 
-                        # Send progress notifications for important lines
-                        if any(keyword in line_str.lower() for keyword in
+                        # Send progress notifications for important lines or all if verbose
+                        if verbose:
+                            await notify("info", line_str)
+                        elif any(keyword in line_str.lower() for keyword in
                                ["error", "warning", "building", "compiling", "linking"]):
                             await notify("info", line_str[:200])  # Truncate long lines
                     except asyncio.TimeoutError:
@@ -973,12 +868,20 @@ class EditorManager:
                 return_code = process.returncode
 
                 elapsed = time.time() - start_time
+                stdout = "\n".join(output_lines)
+
                 if return_code == 0:
                     await notify(
                         "info",
                         f"Build completed successfully! "
                         f"({target_name} {platform} {configuration}, {elapsed:.1f}s)"
                     )
+                    return {
+                        "success": True,
+                        "output": stdout,
+                        "return_code": 0,
+                        "elapsed": elapsed,
+                    }
                 else:
                     # Find error lines for notification
                     error_lines = [l for l in output_lines if "error" in l.lower()][:5]
@@ -987,10 +890,26 @@ class EditorManager:
                         "error",
                         f"Build failed (return code: {return_code}). Errors:\n{error_summary}"
                     )
+                    return {
+                        "success": False,
+                        "output": stdout,
+                        "return_code": return_code,
+                        "error": error_summary,
+                        "elapsed": elapsed,
+                    }
 
             except Exception as e:
                 await notify("error", f"Build process error: {e}")
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "output": "\n".join(output_lines),
+                }
 
         except Exception as e:
             logger.error(f"Failed to start build process: {e}")
             await notify("error", f"Failed to start build: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+            }

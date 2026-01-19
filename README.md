@@ -36,12 +36,12 @@ fastmcp run ue_mcp.server:mcp
 
 ## MCP Tools
 
-- `editor.launch()` - Start the Unreal Editor
+- `editor.launch(additional_paths, wait, wait_timeout)` - Launch Unreal Editor (synchronous by default)
 - `editor.status()` - Get editor status
 - `editor.stop()` - Stop the editor
 - `editor.execute(code)` - Execute Python code in the editor
 - `editor.configure()` - Check/fix project configuration
-- `project.build()` - Build the UE5 project using UnrealBuildTool
+- `project.build(target, configuration, platform, clean, wait, verbose)` - Build the UE5 project using UnrealBuildTool
 
 ## Claude Code Configuration
 

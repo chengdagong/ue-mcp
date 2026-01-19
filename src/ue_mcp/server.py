@@ -95,6 +95,7 @@ Available tools:
 async def launch_editor(
     ctx: Context,
     additional_paths: list[str] = [],
+    wait: bool = True,
     wait_timeout: float = 120.0,
 ) -> dict[str, Any]:
     """
@@ -104,19 +105,15 @@ async def launch_editor(
     1. Check and auto-fix project configuration (Python plugin, remote execution)
     2. Automatically include bundled Python packages (asset_diagnostic, editor_capture)
     3. Start the editor process
-    4. Return immediately while waiting for connection in background
-    5. Send a notification when connection is established
-
-    The tool returns immediately after the editor process starts. You will receive
-    a notification when the editor is fully connected and ready for remote execution.
-    Use editor.status to check the current connection status.
+    4. By default, wait for the editor to become ready for remote execution.
 
     Args:
         additional_paths: Optional list of additional Python paths to add to the editor's sys.path
+        wait: Whether to wait for the editor to connect before returning (default: True)
         wait_timeout: Maximum time in seconds to wait for editor connection (default: 120)
 
     Returns:
-        Launch result with status information (editor process started)
+        Launch result with status information.
     """
     manager = _get_editor_manager()
 
@@ -134,11 +131,18 @@ async def launch_editor(
             all_paths.insert(0, bundled_path_str)
             logger.info(f"Including bundled site-packages: {bundled_path_str}")
 
-    return await manager.launch_async(
-        notify=notify,
-        additional_paths=all_paths if all_paths else None,
-        wait_timeout=wait_timeout,
-    )
+    if wait:
+        return await manager.launch(
+            notify=notify,
+            additional_paths=all_paths if all_paths else None,
+            wait_timeout=wait_timeout,
+        )
+    else:
+        return await manager.launch_async(
+            notify=notify,
+            additional_paths=all_paths if all_paths else None,
+            wait_timeout=wait_timeout,
+        )
 
 
 @mcp.tool(name="editor.status")
@@ -243,14 +247,15 @@ async def build_project(
     configuration: str = "Development",
     platform: str = "Win64",
     clean: bool = False,
-    wait: bool = False,
+    wait: bool = True,
+    verbose: bool = False,
     timeout: float = 1800.0,
 ) -> dict[str, Any]:
     """
     Build the UE5 project using UnrealBuildTool.
 
-    This tool compiles the project's C++ code. By default, it runs asynchronously
-    in the background and sends notifications as the build progresses.
+    This tool compiles the project's C++ code. By default, it waits for the build
+    to complete (synchronous) and reports real-time progress.
 
     Args:
         target: Build target type - one of:
@@ -266,50 +271,51 @@ async def build_project(
             - "Test": Testing configuration
         platform: Target platform - "Win64" [default], "Mac", "Linux", etc.
         clean: Whether to perform a clean build (rebuilds everything) (default: False)
-        wait: Whether to wait for build to complete (default: False, runs in background)
+        wait: Whether to wait for build to complete (default: True)
+        verbose: Whether to stream all build logs via notifications (default: False)
         timeout: Build timeout in seconds (default: 1800 = 30 minutes)
 
     Returns:
-        If wait=False (default):
-            - success: True if build started
-            - message: Status message
-            - target/platform/configuration: Build parameters
-
-        If wait=True:
+        If wait=True (default):
             - success: Whether build succeeded
             - output: Full build output/log
             - return_code: Process return code
             - error: Error message (if failed)
 
+        If wait=False:
+            - success: True if build started
+            - message: Status message
+            - target/platform/configuration: Build parameters
+
     Example:
-        # Start background build (returns immediately)
+        # Build project (waits for completion by default)
         build_project(target="Editor", configuration="Development")
 
-        # Wait for build to complete
-        build_project(target="Game", configuration="Shipping", wait=True)
-
-        # Clean rebuild
-        build_project(clean=True, wait=True)
+        # Start build in background (returns immediately)
+        build_project(target="Game", configuration="Shipping", wait=False)
     """
     manager = _get_editor_manager()
 
+    async def notify(level: str, message: str) -> None:
+        await ctx.log(level, message)
+
+    async def progress_callback(current: int, total: int) -> None:
+        await ctx.report_progress(progress=current, total=total)
+
     if wait:
         # Synchronous build - wait for completion
-        return manager.build(
+        return await manager.build(
+            notify=notify,
+            progress=progress_callback,
             target=target,
             configuration=configuration,
             platform=platform,
             clean=clean,
             timeout=timeout,
+            verbose=verbose,
         )
     else:
         # Asynchronous build - return immediately
-        async def notify(level: str, message: str) -> None:
-            await ctx.log(level, message)
-
-        async def progress_callback(current: int, total: int) -> None:
-            await ctx.report_progress(progress=current, total=total)
-
         return await manager.build_async(
             notify=notify,
             progress=progress_callback,
@@ -318,6 +324,7 @@ async def build_project(
             platform=platform,
             clean=clean,
             timeout=timeout,
+            verbose=verbose,
         )
 
 

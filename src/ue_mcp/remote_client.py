@@ -239,7 +239,7 @@ class RemoteExecutionClient:
             self.cmd_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.cmd_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.cmd_sock.bind(("127.0.0.1", cmd_port))
-            self.cmd_sock.settimeout(2.0)
+            self.cmd_sock.settimeout(1.0)
             self.cmd_sock.listen()
 
             self.cmd_connection, _ = self.cmd_sock.accept()
