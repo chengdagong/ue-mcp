@@ -120,7 +120,7 @@ async def launch_editor(
     # Create notification callback using ctx.log
     async def notify(level: str, message: str) -> None:
         """Send notification to client via MCP log message."""
-        await ctx.log(level, message)
+        await ctx.log(message, level=level)
 
     # Include bundled site-packages automatically
     all_paths = list(additional_paths) if additional_paths else []
@@ -297,7 +297,7 @@ async def build_project(
     manager = _get_editor_manager()
 
     async def notify(level: str, message: str) -> None:
-        await ctx.log(level, message)
+        await ctx.log(message, level=level)
 
     async def progress_callback(current: int, total: int) -> None:
         await ctx.report_progress(progress=current, total=total)
@@ -393,6 +393,7 @@ def _parse_capture_result(exec_result: dict[str, Any]) -> dict[str, Any]:
 
 @mcp.tool(name="editor.capture.orbital")
 def capture_orbital(
+    level: str,
     target_x: float,
     target_y: float,
     target_z: float,
@@ -409,6 +410,7 @@ def capture_orbital(
     the specified target point in the editor world.
 
     Args:
+        level: Path to the level to load (e.g. /Game/Maps/MyLevel)
         target_x: Target X coordinate in world space
         target_y: Target Y coordinate in world space
         target_z: Target Z coordinate in world space
@@ -432,40 +434,31 @@ def capture_orbital(
     """
     manager = _get_editor_manager()
 
-    output_dir_repr = repr(output_dir) if output_dir else "None"
+    from .script_executor import execute_script
 
-    code = f'''
-import editor_capture
-import unreal
-import json
-
-world = unreal.EditorLevelLibrary.get_editor_world()
-if not world:
-    raise RuntimeError("Could not get editor world")
-
-results = editor_capture.take_orbital_screenshots_with_preset(
-    loaded_world=world,
-    preset="{preset}",
-    target_location=unreal.Vector({target_x}, {target_y}, {target_z}),
-    distance={distance},
-    output_dir={output_dir_repr},
-    resolution_width={resolution_width},
-    resolution_height={resolution_height},
-)
-
-# Convert to JSON-serializable format
-files = {{k: list(v) if v else [] for k, v in results.items()}}
-total = sum(len(v) for v in files.values())
-print("__CAPTURE_RESULT__" + json.dumps({{"files": files, "total_captures": total}}))
-'''
-
-    result = manager.execute_with_auto_install(code, timeout=120.0)
+    result = execute_script(
+        manager,
+        "capture_orbital",
+        params={
+            "level": level,
+            "target_x": target_x,
+            "target_y": target_y,
+            "target_z": target_z,
+            "distance": distance,
+            "preset": preset,
+            "output_dir": output_dir,
+            "resolution_width": resolution_width,
+            "resolution_height": resolution_height,
+        },
+        timeout=120.0,
+    )
     return _parse_capture_result(result)
 
 
 @mcp.tool(name="editor.capture.pie")
 def capture_pie(
     output_dir: str,
+    level: str,
     duration_seconds: float = 10.0,
     interval_seconds: float = 1.0,
     resolution_width: int = 1920,
@@ -483,6 +476,7 @@ def capture_pie(
 
     Args:
         output_dir: Output directory for screenshots (required)
+        level: Path to the level to load (required)
         duration_seconds: How long to capture in seconds (default: 10)
         interval_seconds: Time between captures in seconds (default: 1.0)
         resolution_width: Screenshot width in pixels (default: 1920)
@@ -499,46 +493,34 @@ def capture_pie(
     """
     manager = _get_editor_manager()
 
-    code = f'''
-import editor_capture
-import time
-import json
-
-# Start PIE capture with auto-start
-capturer = editor_capture.start_pie_capture(
-    output_dir="{output_dir}",
-    interval_seconds={interval_seconds},
-    resolution=({resolution_width}, {resolution_height}),
-    auto_start_pie=True,
-    multi_angle={multi_angle},
-    camera_distance={camera_distance},
-    target_height={target_height},
-)
-
-# Wait for specified duration
-start_time = time.time()
-time.sleep({duration_seconds})
-elapsed = time.time() - start_time
-
-# Stop PIE capture
-editor_capture.stop_pie_capture()
-
-print("__CAPTURE_RESULT__" + json.dumps({{
-    "output_dir": "{output_dir}",
-    "duration": elapsed,
-    "interval": {interval_seconds},
-}}))
-'''
+    from .script_executor import execute_script
 
     # Timeout = duration + buffer for startup/shutdown
     timeout = duration_seconds + 60.0
-    result = manager.execute_with_auto_install(code, timeout=timeout)
+    
+    result = execute_script(
+        manager,
+        "capture_pie",
+        params={
+            "output_dir": output_dir,
+            "level": level,
+            "duration_seconds": duration_seconds,
+            "interval_seconds": interval_seconds,
+            "resolution_width": resolution_width,
+            "resolution_height": resolution_height,
+            "multi_angle": multi_angle,
+            "camera_distance": camera_distance,
+            "target_height": target_height,
+        },
+        timeout=timeout,
+    )
     return _parse_capture_result(result)
 
 
 @mcp.tool(name="editor.capture.window")
 def capture_window(
     output_file: str,
+    level: str,
     mode: str = "window",
     asset_path: Optional[str] = None,
     asset_list: Optional[list[str]] = None,
@@ -552,6 +534,7 @@ def capture_window(
 
     Args:
         output_file: Output file path for screenshot (required for window/asset modes)
+        level: Path to the level to load (required)
         mode: Capture mode - one of:
             - "window": Capture the main UE5 editor window [default]
             - "asset": Open an asset editor and capture it
@@ -568,78 +551,35 @@ def capture_window(
     """
     manager = _get_editor_manager()
 
-    if mode == "window":
-        tab_code = ""
-        if tab is not None:
-            tab_code = f'''
-hwnd = editor_capture.find_ue5_window()
-if hwnd:
-    editor_capture.switch_to_tab({tab}, hwnd)
-    time.sleep(0.5)
-'''
-        code = f'''
-import editor_capture
-import time
-import json
+    from .script_executor import execute_script
 
-{tab_code}
-success = editor_capture.capture_ue5_window("{output_file}")
-print("__CAPTURE_RESULT__" + json.dumps({{"file": "{output_file}", "captured": success}}))
-'''
-
-    elif mode == "asset":
+    params = {
+        "output_file": output_file,
+        "level": level,
+        "mode": mode,
+        "tab": tab,
+    }
+    
+    if mode == "asset":
         if not asset_path:
-            return {"success": False, "error": "asset_path is required for 'asset' mode"}
-
-        tab_arg = f", tab_number={tab}" if tab is not None else ""
-        code = f'''
-import editor_capture
-import json
-
-result = editor_capture.open_asset_and_screenshot(
-    asset_path="{asset_path}",
-    output_path="{output_file}",
-    delay=3.0{tab_arg}
-)
-print("__CAPTURE_RESULT__" + json.dumps({{
-    "file": "{output_file}",
-    "opened": result["opened"],
-    "captured": result["screenshot"],
-}}))
-'''
-
+             return {"success": False, "error": "asset_path is required for 'asset' mode"}
+        params["asset_path"] = asset_path
+    
     elif mode == "batch":
         if not asset_list or not output_dir:
             return {
                 "success": False,
                 "error": "asset_list and output_dir are required for 'batch' mode",
             }
+        params["asset_list"] = asset_list
+        params["output_dir"] = output_dir
 
-        asset_list_repr = repr(asset_list)
-        code = f'''
-import editor_capture
-import json
-
-results = editor_capture.batch_asset_screenshots(
-    asset_paths={asset_list_repr},
-    output_dir="{output_dir}",
-    delay=3.0,
-    close_after=True,
-)
-
-files = [r.get("screenshot_path") for r in results if r.get("screenshot")]
-success_count = len(files)
-total_count = len({asset_list_repr})
-print("__CAPTURE_RESULT__" + json.dumps({{
-    "files": files,
-    "success_count": success_count,
-    "total_count": total_count,
-}}))
-'''
-    else:
-        return {"success": False, "error": f"Unknown mode: {mode}"}
-
-    result = manager.execute_with_auto_install(code, timeout=120.0)
+    result = execute_script(
+        manager,
+        "capture_window",
+        params=params,
+        timeout=120.0,
+    )
     return _parse_capture_result(result)
 
 

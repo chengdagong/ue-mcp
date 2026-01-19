@@ -7,6 +7,7 @@ Manages the lifecycle of a single Unreal Editor instance bound to a project.
 import asyncio
 import atexit
 import logging
+import os
 import re
 import subprocess
 import time
@@ -153,6 +154,51 @@ class EditorManager:
         source_dir = self.project_root / "Source"
         return source_dir.exists() and source_dir.is_dir()
 
+    def needs_build(self) -> tuple[bool, str]:
+        """
+        Check if the project needs to be built.
+
+        Returns:
+            Tuple of (needs_build, reason)
+        """
+        if not self.is_cpp_project():
+            return False, ""
+
+        # Default Development Editor DLL path
+        # Note: This checks the standard Binaries location for the main project module
+        dll_name = f"UnrealEditor-{self.project_name}.dll"
+        dll_path = self.project_root / "Binaries" / "Win64" / dll_name
+
+        if not dll_path.exists():
+            return True, f"Project binary not found: {dll_name}"
+
+        # Check modification times
+        try:
+            dll_mtime = dll_path.stat().st_mtime
+            
+            source_dir = self.project_root / "Source"
+            latest_source_mtime = 0.0
+            latest_source_file = ""
+
+            for root, _, files in os.walk(source_dir):
+                for file in files:
+                    if file.endswith((".cpp", ".h", ".cs")):
+                        file_path = Path(root) / file
+                        mtime = file_path.stat().st_mtime
+                        if mtime > latest_source_mtime:
+                            latest_source_mtime = mtime
+                            latest_source_file = file
+            
+            if latest_source_mtime > dll_mtime:
+                return True, f"Source file '{latest_source_file}' is newer than project binary"
+
+        except Exception as e:
+            logger.warning(f"Error checking build status: {e}")
+            # If we can't check, assume safe to launch
+            return False, ""
+
+        return False, ""
+
     async def _prepare_launch(
         self,
         additional_paths: Optional[list[str]] = None,
@@ -163,6 +209,14 @@ class EditorManager:
                 "success": False,
                 "error": "Editor is already running",
                 "status": self.get_status(),
+            }
+
+        # Check if C++ project needs build
+        needs_build, reason = self.needs_build()
+        if needs_build:
+            return {
+                "success": False,
+                "error": f"Project needs to be built: {reason}. Please run 'project.build' first.",
             }
 
         # Run autoconfig
@@ -194,11 +248,19 @@ class EditorManager:
 
         # Launch editor process
         try:
+            # On Windows, use DETACHED_PROCESS to fully separate from parent
+            import sys
+            creationflags = 0
+            if sys.platform == "win32":
+                creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            
             process = subprocess.Popen(
                 [str(editor_path), str(self.project_path)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                start_new_session=False,  # Keep in same process group for cleanup
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,  # Create new session
+                creationflags=creationflags,
             )
         except Exception as e:
             return {
@@ -267,6 +329,62 @@ class EditorManager:
             "status": self.get_status(),
         }
 
+    async def _background_connect_loop(
+        self,
+        process: subprocess.Popen,
+        notify: NotifyCallback,
+        retry_interval: float = 5.0,
+    ) -> None:
+        """
+        Background task to keep trying to connect after initial timeout.
+        Runs until connected or process exits.
+
+        Args:
+            process: The editor subprocess
+            notify: Async callback to send notifications
+            retry_interval: Time between connection attempts in seconds
+        """
+        logger.info("Starting background connection loop...")
+        remote_client = RemoteExecutionClient(project_name=self.project_name)
+
+        while True:
+            # Check if process crashed
+            if process.poll() is not None:
+                logger.info("Editor process exited, stopping background connection loop")
+                if self._editor:
+                    self._editor.status = "stopped"
+                return
+
+            # Check if already connected (by another path, e.g., execute() reconnect)
+            if self._editor and self._editor.status == "ready":
+                logger.info("Editor already connected, stopping background connection loop")
+                return
+
+            # Try to connect
+            if remote_client.find_unreal_instance(timeout=2.0):
+                if remote_client.open_connection():
+                    if remote_client.verify_pid(process.pid):
+                        # Success!
+                        if self._editor:
+                            self._editor.node_id = remote_client.get_node_id()
+                            self._editor.remote_client = remote_client
+                            self._editor.status = "ready"
+
+                        logger.info(
+                            f"Background connect succeeded (node_id: {remote_client.get_node_id()})"
+                        )
+                        await notify(
+                            "info",
+                            f"Editor connected successfully in background! "
+                            f"(PID: {process.pid}, node_id: {remote_client.get_node_id()})"
+                        )
+                        return
+                    else:
+                        logger.debug("PID mismatch in background connect, retrying...")
+                        remote_client.close_connection()
+
+            await asyncio.sleep(retry_interval)
+
     async def _wait_for_connection_async(
         self,
         process: subprocess.Popen,
@@ -323,18 +441,31 @@ class EditorManager:
             await asyncio.sleep(0.5)
 
         if not connected:
-            logger.error("Timeout waiting for editor to enable remote execution")
+            logger.warning(
+                "Timeout waiting for editor connection, continuing in background..."
+            )
             if self._editor:
                 self._editor.status = "starting"
+
+            # Start background connection loop to keep trying
+            asyncio.create_task(
+                self._background_connect_loop(
+                    process=process,
+                    notify=notify,
+                    retry_interval=5.0,
+                )
+            )
+
             await notify(
                 "warning",
-                "Timeout waiting for editor connection. Editor may still be loading - "
-                "use editor.status to check later."
+                "Timeout waiting for editor connection. "
+                "Continuing to try connecting in background - you will be notified when ready."
             )
             return {
                 "success": False,
-                "error": "Timeout waiting for editor to enable remote execution. Editor may still be loading.",
+                "error": "Timeout waiting for editor to enable remote execution. Background connection continues.",
                 "status": self.get_status(),
+                "background_connecting": True,
             }
 
         # Store the node_id for future reconnections
@@ -808,108 +939,126 @@ class EditorManager:
         Returns:
             Build result dictionary
         """
+        # Helper to safely send notifications without raising
+        async def safe_notify(level: str, message: str) -> None:
+            try:
+                await notify(level, message)
+            except Exception as notify_err:
+                logger.warning(f"Failed to send notification: {notify_err}")
+
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=str(self.project_root),
             )
-
-            # Read output with timeout
-            output_lines: list[str] = []
-            start_time = time.time()
-
-            try:
-                while True:
-                    if time.time() - start_time > timeout:
-                        if process.returncode is None:
-                            process.kill()
-                        await notify(
-                            "error",
-                            f"Build timed out after {timeout} seconds"
-                        )
-                        return {
-                            "success": False,
-                            "error": f"Build timed out after {timeout} seconds",
-                            "output": "\n".join(output_lines),
-                        }
-
-                    try:
-                        line = await asyncio.wait_for(
-                            process.stdout.readline(),
-                            timeout=1.0
-                        )
-                        if not line:
-                            break
-                        line_str = line.decode("utf-8", errors="replace").rstrip()
-                        output_lines.append(line_str)
-
-                        # Parse progress like [1/50]
-                        if progress:
-                            match = re.search(r"\[(\d+)/(\d+)\]", line_str)
-                            if match:
-                                current = int(match.group(1))
-                                total = int(match.group(2))
-                                await progress(current, total)
-
-                        # Send progress notifications for important lines or all if verbose
-                        if verbose:
-                            await notify("info", line_str)
-                        elif any(keyword in line_str.lower() for keyword in
-                               ["error", "warning", "building", "compiling", "linking"]):
-                            await notify("info", line_str[:200])  # Truncate long lines
-                    except asyncio.TimeoutError:
-                        if process.returncode is not None:
-                            break
-                        continue
-
-                await process.wait()
-                return_code = process.returncode
-
-                elapsed = time.time() - start_time
-                stdout = "\n".join(output_lines)
-
-                if return_code == 0:
-                    await notify(
-                        "info",
-                        f"Build completed successfully! "
-                        f"({target_name} {platform} {configuration}, {elapsed:.1f}s)"
-                    )
-                    return {
-                        "success": True,
-                        "output": stdout,
-                        "return_code": 0,
-                        "elapsed": elapsed,
-                    }
-                else:
-                    # Find error lines for notification
-                    error_lines = [l for l in output_lines if "error" in l.lower()][:5]
-                    error_summary = "\n".join(error_lines) if error_lines else "Check build log"
-                    await notify(
-                        "error",
-                        f"Build failed (return code: {return_code}). Errors:\n{error_summary}"
-                    )
-                    return {
-                        "success": False,
-                        "output": stdout,
-                        "return_code": return_code,
-                        "error": error_summary,
-                        "elapsed": elapsed,
-                    }
-
-            except Exception as e:
-                await notify("error", f"Build process error: {e}")
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "output": "\n".join(output_lines),
-                }
-
         except Exception as e:
             logger.error(f"Failed to start build process: {e}")
-            await notify("error", f"Failed to start build: {e}")
+            await safe_notify("error", f"Failed to start build: {e}")
             return {
                 "success": False,
                 "error": str(e),
+            }
+
+        # Read output with timeout
+        output_lines: list[str] = []
+        start_time = time.time()
+        build_error: Optional[str] = None
+
+        try:
+            while True:
+                if time.time() - start_time > timeout:
+                    if process.returncode is None:
+                        process.kill()
+                    await safe_notify(
+                        "error",
+                        f"Build timed out after {timeout} seconds"
+                    )
+                    return {
+                        "success": False,
+                        "error": f"Build timed out after {timeout} seconds",
+                        "output": "\n".join(output_lines),
+                    }
+
+                try:
+                    line = await asyncio.wait_for(
+                        process.stdout.readline(),
+                        timeout=1.0
+                    )
+                    if not line:
+                        break
+                    line_str = line.decode("utf-8", errors="replace").rstrip()
+                    output_lines.append(line_str)
+
+                    # Parse progress like [1/50]
+                    if progress:
+                        match = re.search(r"\[(\d+)/(\d+)\]", line_str)
+                        if match:
+                            current = int(match.group(1))
+                            total = int(match.group(2))
+                            await progress(current, total)
+
+                    # Send progress notifications for important lines or all if verbose
+                    if verbose:
+                        await safe_notify("info", line_str)
+                    elif any(keyword in line_str.lower() for keyword in
+                           ["error", "warning", "building", "compiling", "linking"]):
+                        await safe_notify("info", line_str[:200])  # Truncate long lines
+                except asyncio.TimeoutError:
+                    if process.returncode is not None:
+                        break
+                    continue
+
+        except Exception as e:
+            build_error = str(e)
+            logger.error(f"Build process error: {e}")
+
+        # Wait for process to complete
+        try:
+            await process.wait()
+        except Exception:
+            pass
+
+        return_code = process.returncode
+        elapsed = time.time() - start_time
+        stdout = "\n".join(output_lines)
+
+        # Handle build error during output reading
+        if build_error:
+            await safe_notify("error", f"Build process error: {build_error}")
+            return {
+                "success": False,
+                "error": build_error,
+                "output": stdout,
+            }
+
+        # Return result based on return code
+        if return_code == 0:
+            await safe_notify(
+                "info",
+                f"Build completed successfully! "
+                f"({target_name} {platform} {configuration}, {elapsed:.1f}s)"
+            )
+            return {
+                "success": True,
+                "output": stdout,
+                "return_code": 0,
+                "elapsed": elapsed,
+            }
+        else:
+            # Find error lines for notification
+            error_lines = [l for l in output_lines if "error" in l.lower()][:5]
+            error_summary = "\n".join(error_lines) if error_lines else "Check build log"
+            await safe_notify(
+                "error",
+                f"Build failed (return code: {return_code}). Errors:\n{error_summary}"
+            )
+            return {
+                "success": False,
+                "output": stdout,
+                "return_code": return_code,
+                "error": error_summary,
+                "elapsed": elapsed,
             }
