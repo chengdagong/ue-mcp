@@ -15,6 +15,12 @@ from pathlib import Path
 from typing import Any, Callable, Coroutine, Optional
 
 from .autoconfig import run_config_check
+from .pip_install import (
+    get_missing_module_from_result,
+    is_import_error,
+    module_to_package,
+    pip_install,
+)
 from .remote_client import RemoteExecutionClient
 from .utils import find_ue5_editor_for_project, get_project_name
 
@@ -552,3 +558,121 @@ class EditorManager:
             }
 
         return result
+
+    def _get_python_path(self) -> Optional[Path]:
+        """
+        Get Python interpreter path from the running editor.
+
+        Returns:
+            Path to Python interpreter, or None if failed
+        """
+        try:
+            result = self.execute("import unreal; print(unreal.get_interpreter_executable_path())", timeout=5.0)
+            if result.get("success") and result.get("output"):
+                output = result["output"]
+                if isinstance(output, list):
+                    output = "\n".join(output)
+                # Extract path from output
+                for line in output.strip().split("\n"):
+                    line = line.strip()
+                    if line and (line.endswith(".exe") or "python" in line.lower()):
+                        return Path(line)
+        except Exception as e:
+            logger.error(f"Failed to get Python path from editor: {e}")
+        return None
+
+    def execute_with_auto_install(
+        self,
+        code: str,
+        timeout: float = 30.0,
+        max_install_attempts: int = 3,
+    ) -> dict[str, Any]:
+        """
+        Execute Python code with automatic missing module installation.
+
+        If execution fails due to a missing module, this method will:
+        1. Detect the missing module name
+        2. Install it via pip using UE5's embedded Python
+        3. Retry the execution
+
+        Args:
+            code: Python code to execute
+            timeout: Execution timeout in seconds
+            max_install_attempts: Maximum number of packages to auto-install
+
+        Returns:
+            Execution result dictionary (same as execute())
+            Additional fields when auto-install occurs:
+            - auto_installed: List of packages that were auto-installed
+        """
+        installed_packages: list[str] = []
+        attempts = 0
+
+        while attempts <= max_install_attempts:
+            result = self.execute(code, timeout=timeout)
+
+            # If successful or not an import error, return immediately
+            if result.get("success", False) or not is_import_error(result):
+                if installed_packages:
+                    result["auto_installed"] = installed_packages
+                return result
+
+            # Extract missing module
+            missing_module = get_missing_module_from_result(result)
+            if not missing_module:
+                logger.warning("Import error detected but could not extract module name")
+                if installed_packages:
+                    result["auto_installed"] = installed_packages
+                return result
+
+            # Convert module name to package name
+            package_name = module_to_package(missing_module)
+
+            # Check if we've already tried this package
+            if package_name in installed_packages:
+                logger.warning(f"Already attempted to install {package_name}, giving up")
+                if installed_packages:
+                    result["auto_installed"] = installed_packages
+                return result
+
+            # Get Python path from running editor
+            python_path = self._get_python_path()
+
+            # Attempt to install the package
+            logger.info(f"Auto-installing missing package: {package_name}")
+            install_result = pip_install([package_name], python_path=python_path)
+
+            if not install_result.get("success", False):
+                logger.error(f"Failed to install {package_name}: {install_result.get('error')}")
+                result["install_error"] = install_result
+                if installed_packages:
+                    result["auto_installed"] = installed_packages
+                return result
+
+            installed_packages.append(package_name)
+            logger.info(f"Successfully installed {package_name}, retrying execution...")
+            attempts += 1
+
+        # Max attempts reached
+        result = self.execute(code, timeout=timeout)
+        if installed_packages:
+            result["auto_installed"] = installed_packages
+        return result
+
+    def pip_install_packages(
+        self,
+        packages: list[str],
+        upgrade: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Install Python packages in UE5's Python environment.
+
+        Args:
+            packages: List of package names to install
+            upgrade: Whether to upgrade existing packages
+
+        Returns:
+            Installation result dictionary
+        """
+        python_path = self._get_python_path()
+        return pip_install(packages, python_path=python_path, upgrade=upgrade)

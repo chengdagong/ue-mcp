@@ -82,6 +82,10 @@ Available tools:
 - editor.stop: Stop the running editor
 - editor.execute: Execute Python code in the editor
 - editor.configure: Check and fix project configuration
+- editor.pip_install: Install Python packages in UE5's Python environment
+- editor.capture.orbital: Capture multi-angle screenshots around a target location
+- editor.capture.pie: Capture screenshots during Play-In-Editor session
+- editor.capture.window: Capture editor window screenshots (Windows only)
 """,
 )
 
@@ -229,6 +233,321 @@ def configure_project(
         additional_paths=additional_paths if additional_paths else None,
         include_bundled_packages=True,
     )
+
+
+@mcp.tool(name="editor.pip_install")
+def pip_install_packages(
+    packages: list[str],
+    upgrade: bool = False,
+) -> dict[str, Any]:
+    """
+    Install Python packages in UE5's embedded Python environment.
+
+    This tool uses UE5's bundled Python interpreter to install packages via pip.
+    Installed packages will be available for use in editor.execute() calls.
+
+    Args:
+        packages: List of package names to install (e.g., ["Pillow", "numpy"])
+        upgrade: Whether to upgrade packages if already installed (default: False)
+
+    Returns:
+        Installation result containing:
+        - success: Whether installation succeeded
+        - packages: List of packages that were installed
+        - output: pip output
+        - python_path: Path to UE5's Python interpreter used
+
+    Example:
+        pip_install_packages(["Pillow", "numpy"])
+    """
+    manager = _get_editor_manager()
+    return manager.pip_install_packages(packages, upgrade=upgrade)
+
+
+# =============================================================================
+# Capture Tools
+# =============================================================================
+
+
+def _parse_capture_result(exec_result: dict[str, Any]) -> dict[str, Any]:
+    """Parse capture result from execution output."""
+    if not exec_result.get("success"):
+        return {
+            "success": False,
+            "error": exec_result.get("error", "Execution failed"),
+            "output": exec_result.get("output", ""),
+        }
+
+    output = exec_result.get("output", "")
+    marker = "__CAPTURE_RESULT__"
+
+    if marker in output:
+        import json
+
+        try:
+            json_str = output.split(marker)[1].strip().split("\n")[0]
+            result_data = json.loads(json_str)
+            return {"success": True, **result_data}
+        except (json.JSONDecodeError, IndexError) as e:
+            return {
+                "success": True,
+                "warning": f"Could not parse result: {e}",
+                "output": output,
+            }
+
+    return {"success": True, "output": output}
+
+
+@mcp.tool(name="editor.capture.orbital")
+def capture_orbital(
+    target_x: float,
+    target_y: float,
+    target_z: float,
+    distance: float = 500.0,
+    preset: str = "orthographic",
+    output_dir: Optional[str] = None,
+    resolution_width: int = 800,
+    resolution_height: int = 600,
+) -> dict[str, Any]:
+    """
+    Capture multi-angle screenshots around a target location using SceneCapture2D.
+
+    Creates multiple screenshots from different camera angles orbiting around
+    the specified target point in the editor world.
+
+    Args:
+        target_x: Target X coordinate in world space
+        target_y: Target Y coordinate in world space
+        target_z: Target Z coordinate in world space
+        distance: Camera distance from target in UE units (default: 500)
+        preset: View preset - one of:
+            - "all": All views (perspective + orthographic + birdseye)
+            - "perspective": 4 horizontal views (front, back, left, right)
+            - "orthographic": 6 views (front, back, left, right, top, bottom) [default]
+            - "birdseye": 4 elevated 45-degree angle views
+            - "horizontal": perspective + birdseye views
+            - "technical": Same as orthographic
+        output_dir: Output directory for screenshots (default: auto-generated in project)
+        resolution_width: Screenshot width in pixels (default: 800)
+        resolution_height: Screenshot height in pixels (default: 600)
+
+    Returns:
+        Result containing:
+        - success: Whether capture succeeded
+        - files: Dictionary mapping view types to lists of file paths
+        - output: Console output from capture
+    """
+    manager = _get_editor_manager()
+
+    output_dir_repr = repr(output_dir) if output_dir else "None"
+
+    code = f'''
+import editor_capture
+import unreal
+import json
+
+world = unreal.EditorLevelLibrary.get_editor_world()
+if not world:
+    raise RuntimeError("Could not get editor world")
+
+results = editor_capture.take_orbital_screenshots_with_preset(
+    loaded_world=world,
+    preset="{preset}",
+    target_location=unreal.Vector({target_x}, {target_y}, {target_z}),
+    distance={distance},
+    output_dir={output_dir_repr},
+    resolution_width={resolution_width},
+    resolution_height={resolution_height},
+)
+
+# Convert to JSON-serializable format
+files = {{k: list(v) if v else [] for k, v in results.items()}}
+total = sum(len(v) for v in files.values())
+print("__CAPTURE_RESULT__" + json.dumps({{"files": files, "total_captures": total}}))
+'''
+
+    result = manager.execute_with_auto_install(code, timeout=120.0)
+    return _parse_capture_result(result)
+
+
+@mcp.tool(name="editor.capture.pie")
+def capture_pie(
+    output_dir: str,
+    duration_seconds: float = 10.0,
+    interval_seconds: float = 1.0,
+    resolution_width: int = 1920,
+    resolution_height: int = 1080,
+    multi_angle: bool = True,
+    camera_distance: float = 300.0,
+    target_height: float = 90.0,
+) -> dict[str, Any]:
+    """
+    Capture screenshots during Play-In-Editor (PIE) session.
+
+    Automatically starts PIE, captures screenshots at regular intervals for
+    the specified duration, then stops PIE and returns. This is a synchronous
+    operation that blocks until capture completes.
+
+    Args:
+        output_dir: Output directory for screenshots (required)
+        duration_seconds: How long to capture in seconds (default: 10)
+        interval_seconds: Time between captures in seconds (default: 1.0)
+        resolution_width: Screenshot width in pixels (default: 1920)
+        resolution_height: Screenshot height in pixels (default: 1080)
+        multi_angle: Enable multi-angle capture around player (default: True)
+        camera_distance: Camera distance from player for multi-angle (default: 300)
+        target_height: Target height offset for camera (default: 90)
+
+    Returns:
+        Result containing:
+        - success: Whether capture succeeded
+        - output_dir: Directory containing captured screenshots
+        - duration: Actual capture duration
+    """
+    manager = _get_editor_manager()
+
+    code = f'''
+import editor_capture
+import time
+import json
+
+# Start PIE capture with auto-start
+capturer = editor_capture.start_pie_capture(
+    output_dir="{output_dir}",
+    interval_seconds={interval_seconds},
+    resolution=({resolution_width}, {resolution_height}),
+    auto_start_pie=True,
+    multi_angle={multi_angle},
+    camera_distance={camera_distance},
+    target_height={target_height},
+)
+
+# Wait for specified duration
+start_time = time.time()
+time.sleep({duration_seconds})
+elapsed = time.time() - start_time
+
+# Stop PIE capture
+editor_capture.stop_pie_capture()
+
+print("__CAPTURE_RESULT__" + json.dumps({{
+    "output_dir": "{output_dir}",
+    "duration": elapsed,
+    "interval": {interval_seconds},
+}}))
+'''
+
+    # Timeout = duration + buffer for startup/shutdown
+    timeout = duration_seconds + 60.0
+    result = manager.execute_with_auto_install(code, timeout=timeout)
+    return _parse_capture_result(result)
+
+
+@mcp.tool(name="editor.capture.window")
+def capture_window(
+    output_file: str,
+    mode: str = "window",
+    asset_path: Optional[str] = None,
+    asset_list: Optional[list[str]] = None,
+    output_dir: Optional[str] = None,
+    tab: Optional[int] = None,
+) -> dict[str, Any]:
+    """
+    Capture UE5 editor window screenshot using Windows API.
+
+    NOTE: This tool is Windows-only and uses Windows API for window capture.
+
+    Args:
+        output_file: Output file path for screenshot (required for window/asset modes)
+        mode: Capture mode - one of:
+            - "window": Capture the main UE5 editor window [default]
+            - "asset": Open an asset editor and capture it
+            - "batch": Capture multiple assets to a directory
+        asset_path: Asset path to open (required for "asset" mode)
+        asset_list: List of asset paths (required for "batch" mode)
+        output_dir: Output directory (required for "batch" mode, overrides output_file)
+        tab: Tab number to switch to before capture (1-9, optional)
+
+    Returns:
+        Result containing:
+        - success: Whether capture succeeded
+        - file/files: Path(s) to captured screenshot(s)
+    """
+    manager = _get_editor_manager()
+
+    if mode == "window":
+        tab_code = ""
+        if tab is not None:
+            tab_code = f'''
+hwnd = editor_capture.find_ue5_window()
+if hwnd:
+    editor_capture.switch_to_tab({tab}, hwnd)
+    time.sleep(0.5)
+'''
+        code = f'''
+import editor_capture
+import time
+import json
+
+{tab_code}
+success = editor_capture.capture_ue5_window("{output_file}")
+print("__CAPTURE_RESULT__" + json.dumps({{"file": "{output_file}", "captured": success}}))
+'''
+
+    elif mode == "asset":
+        if not asset_path:
+            return {"success": False, "error": "asset_path is required for 'asset' mode"}
+
+        tab_arg = f", tab_number={tab}" if tab is not None else ""
+        code = f'''
+import editor_capture
+import json
+
+result = editor_capture.open_asset_and_screenshot(
+    asset_path="{asset_path}",
+    output_path="{output_file}",
+    delay=3.0{tab_arg}
+)
+print("__CAPTURE_RESULT__" + json.dumps({{
+    "file": "{output_file}",
+    "opened": result["opened"],
+    "captured": result["screenshot"],
+}}))
+'''
+
+    elif mode == "batch":
+        if not asset_list or not output_dir:
+            return {
+                "success": False,
+                "error": "asset_list and output_dir are required for 'batch' mode",
+            }
+
+        asset_list_repr = repr(asset_list)
+        code = f'''
+import editor_capture
+import json
+
+results = editor_capture.batch_asset_screenshots(
+    asset_paths={asset_list_repr},
+    output_dir="{output_dir}",
+    delay=3.0,
+    close_after=True,
+)
+
+files = [r.get("screenshot_path") for r in results if r.get("screenshot")]
+success_count = len(files)
+total_count = len({asset_list_repr})
+print("__CAPTURE_RESULT__" + json.dumps({{
+    "files": files,
+    "success_count": success_count,
+    "total_count": total_count,
+}}))
+'''
+    else:
+        return {"success": False, "error": f"Unknown mode: {mode}"}
+
+    result = manager.execute_with_auto_install(code, timeout=120.0)
+    return _parse_capture_result(result)
 
 
 def main():
