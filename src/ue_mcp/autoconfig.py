@@ -20,9 +20,9 @@ def get_bundled_site_packages() -> Path:
     in the UE5 editor's Python environment.
 
     Returns:
-        Path to the vendor/site-packages directory
+        Path to the extra/site-packages directory
     """
-    return Path(__file__).parent / "vendor" / "site-packages"
+    return Path(__file__).parent / "extra" / "site-packages"
 
 # INI file section for Python plugin settings
 PYTHON_PLUGIN_SECTION = "[/Script/PythonScriptPlugin.PythonScriptPluginSettings]"
