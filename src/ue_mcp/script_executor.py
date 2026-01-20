@@ -53,7 +53,14 @@ def execute_script(
     # repr({'a': True}) -> "{'a': True}" which is valid python code.
     # Let's use repr() for safer python code generation than json.dumps
     
-    params_code = f"__PARAMS__ = {repr(params)}\n\n"
+    # Inject __PARAMS__ into builtins so it's accessible from any module
+    # This is necessary because utils.py imports get_params() which needs access to __PARAMS__
+    # Simply defining __PARAMS__ in the script's global scope won't make it visible to imported modules
+    params_code = (
+        "import builtins\n"
+        f"builtins.__PARAMS__ = {repr(params)}\n"
+        f"__PARAMS__ = builtins.__PARAMS__\n\n"
+    )
     
     # We also need to add the scripts directory to sys.path so imports work
     # The 'extra/scripts' directory is creating a package structure 'capture'

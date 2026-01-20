@@ -16,7 +16,7 @@ Expected __PARAMS__:
 import time
 import editor_capture
 
-from capture.utils import get_params, ensure_level_loaded, output_result, error_handler
+from capture.utils import get_params, ensure_level_loaded, output_result
 
 
 def main():
