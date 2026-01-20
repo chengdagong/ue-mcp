@@ -365,9 +365,16 @@ def pip_install_packages(
 def _parse_capture_result(exec_result: dict[str, Any]) -> dict[str, Any]:
     """Parse capture result from execution output."""
     if not exec_result.get("success"):
+        # Check 'result' for proper exception details from UE
+        error_msg = exec_result.get("error", "Execution failed")
+        ue_result = exec_result.get("result")
+        if ue_result:
+             # If successful execution but returned False, result often contains the error/traceback
+             error_msg = f"{error_msg}. Details: {ue_result}"
+
         return {
             "success": False,
-            "error": exec_result.get("error", "Execution failed"),
+            "error": error_msg,
             "output": exec_result.get("output", ""),
         }
 
@@ -532,8 +539,8 @@ def capture_pie(
 
 @mcp.tool(name="editor.capture.window")
 def capture_window(
-    output_file: str,
     level: str,
+    output_file: Optional[str] = None,
     mode: str = "window",
     asset_path: Optional[str] = None,
     asset_list: Optional[list[str]] = None,
@@ -546,16 +553,16 @@ def capture_window(
     NOTE: This tool is Windows-only and uses Windows API for window capture.
 
     Args:
-        output_file: Output file path for screenshot (required for window/asset modes)
         level: Path to the level to load (required)
+        output_file: Output file path (required for "window" and "asset" modes)
         mode: Capture mode - one of:
             - "window": Capture the main UE5 editor window [default]
             - "asset": Open an asset editor and capture it
             - "batch": Capture multiple assets to a directory
         asset_path: Asset path to open (required for "asset" mode)
         asset_list: List of asset paths (required for "batch" mode)
-        output_dir: Output directory (required for "batch" mode, overrides output_file)
-        tab: Tab number to switch to before capture (1-9, optional)
+        output_dir: Output directory (required for "batch" mode)
+        tab: Tab number to switch to (1-9, optional)
 
     Returns:
         Result containing:
@@ -567,13 +574,22 @@ def capture_window(
     from .script_executor import execute_script
 
     params = {
-        "output_file": output_file,
         "level": level,
         "mode": mode,
         "tab": tab,
     }
+
+    if output_file:
+        params["output_file"] = output_file
     
-    if mode == "asset":
+    if mode == "window":
+        if not output_file:
+            return {"success": False, "error": "output_file is required for 'window' mode"}
+        # params["output_file"] is set above
+
+    elif mode == "asset":
+        if not output_file:
+            return {"success": False, "error": "output_file is required for 'asset' mode"}
         if not asset_path:
              return {"success": False, "error": "asset_path is required for 'asset' mode"}
         params["asset_path"] = asset_path

@@ -209,6 +209,21 @@ def pip_list(python_path: Optional[Path] = None) -> dict[str, Any]:
         }
 
 
+def _process_output(output: Any) -> str:
+    """
+    Process execution output into a single string, handling list of strings or dicts.
+    """
+    if isinstance(output, list):
+        processed_lines = []
+        for line in output:
+            if isinstance(line, dict):
+                processed_lines.append(str(line.get("output", "")))
+            else:
+                processed_lines.append(str(line))
+        return "\n".join(processed_lines)
+    return str(output)
+
+
 def is_import_error(result: dict[str, Any]) -> bool:
     """
     Check if an execution result contains an import/module error.
@@ -223,11 +238,7 @@ def is_import_error(result: dict[str, Any]) -> bool:
         return False
 
     error = result.get("error", "")
-    output = result.get("output", "")
-
-    # Combine error and output for checking
-    if isinstance(output, list):
-        output = "\n".join(output)
+    output = _process_output(result.get("output", ""))
 
     combined = f"{error}\n{output}"
 
@@ -256,11 +267,7 @@ def get_missing_module_from_result(result: dict[str, Any]) -> Optional[str]:
         Module name if found, None otherwise
     """
     error = result.get("error", "")
-    output = result.get("output", "")
-
-    # Combine error and output
-    if isinstance(output, list):
-        output = "\n".join(output)
+    output = _process_output(result.get("output", ""))
 
     combined = f"{error}\n{output}"
     return extract_missing_module(combined)

@@ -630,13 +630,22 @@ class EditorManager:
             result = self.execute("import unreal; print(unreal.get_interpreter_executable_path())", timeout=5.0)
             if result.get("success") and result.get("output"):
                 output = result["output"]
+                lines = []
                 if isinstance(output, list):
-                    output = "\n".join(output)
+                    for line in output:
+                        if isinstance(line, dict):
+                            lines.append(str(line.get("output", "")))
+                        else:
+                            lines.append(str(line))
+                else:
+                    lines = [str(output)]
+                
                 # Extract path from output
-                for line in output.strip().split("\n"):
-                    line = line.strip()
-                    if line and (line.endswith(".exe") or "python" in line.lower()):
-                        return Path(line)
+                for line in lines:
+                    for subline in line.strip().split("\n"):
+                        subline = subline.strip()
+                        if subline and (subline.endswith(".exe") or "python" in subline.lower()):
+                            return Path(subline)
         except Exception as e:
             logger.error(f"Failed to get Python path from editor: {e}")
         return None
