@@ -12,6 +12,11 @@ def get_scripts_dir() -> Path:
     return Path(__file__).parent / "extra" / "scripts" / "capture"
 
 
+def get_diagnostic_scripts_dir() -> Path:
+    """Get the diagnostic scripts directory."""
+    return Path(__file__).parent / "extra" / "scripts" / "diagnostic"
+
+
 def execute_script(
     manager,
     script_name: str,

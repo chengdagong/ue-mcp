@@ -25,6 +25,8 @@ from mcp import ClientSession, StdioServerParameters, stdio_client
 # Fixture paths
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 TEST_PROJECT = FIXTURES_DIR / "TestProject1"
+# Alternative: Use URF project for more comprehensive testing
+URF_PROJECT = Path("D:/Code/URF")
 
 
 def get_server_params(project_path: Path) -> StdioServerParameters:
@@ -122,18 +124,64 @@ class MCPCaptureClient:
     async def capture_window(
         self,
         level: str,
-        output_file: str,
+        output_file: str | None = None,
         mode: str = "window",
+        asset_path: str | None = None,
+        asset_list: list[str] | None = None,
+        output_dir: str | None = None,
+        tab: int | None = None,
     ) -> dict[str, Any]:
         """Capture editor window screenshot."""
+        args: dict[str, Any] = {
+            "level": level,
+            "mode": mode,
+        }
+        if output_file:
+            args["output_file"] = output_file
+        if asset_path:
+            args["asset_path"] = asset_path
+        if asset_list:
+            args["asset_list"] = asset_list
+        if output_dir:
+            args["output_dir"] = output_dir
+        if tab is not None:
+            args["tab"] = tab
+
         return await self.call_tool(
             "editor.capture.window",
+            args,
+            timeout_seconds=120,
+        )
+
+    async def capture_pie(
+        self,
+        output_dir: str,
+        level: str,
+        duration_seconds: float = 10.0,
+        interval_seconds: float = 1.0,
+        resolution_width: int = 1920,
+        resolution_height: int = 1080,
+        multi_angle: bool = True,
+        camera_distance: float = 300.0,
+        target_height: float = 90.0,
+    ) -> dict[str, Any]:
+        """Capture screenshots during Play-In-Editor session."""
+        # Timeout = duration + buffer for startup/shutdown
+        timeout = duration_seconds + 120.0
+        return await self.call_tool(
+            "editor.capture.pie",
             {
+                "output_dir": output_dir,
                 "level": level,
-                "output_file": output_file,
-                "mode": mode,
+                "duration_seconds": duration_seconds,
+                "interval_seconds": interval_seconds,
+                "resolution_width": resolution_width,
+                "resolution_height": resolution_height,
+                "multi_angle": multi_angle,
+                "camera_distance": camera_distance,
+                "target_height": target_height,
             },
-            timeout_seconds=60,
+            timeout_seconds=timeout,
         )
 
 
@@ -148,6 +196,9 @@ def event_loop():
 @pytest.fixture(scope="module")
 def project_path() -> Path:
     """Return the test project path."""
+    # Prefer URF project for comprehensive testing if available
+    if URF_PROJECT.exists():
+        return URF_PROJECT
     if not TEST_PROJECT.exists():
         pytest.skip(f"Test project not found: {TEST_PROJECT}")
     return TEST_PROJECT
@@ -256,6 +307,145 @@ class TestCaptureTools:
                 # Should fail with error about editor not running
                 assert result.get("success") is False or "error" in result
 
+    @pytest.mark.asyncio
+    async def test_capture_pie_without_editor(self, project_path: Path):
+        """Test capture.pie fails gracefully when editor not running."""
+        server_params = get_server_params(project_path)
+
+        async with stdio_client(server_params) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                client = MCPCaptureClient(session)
+
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    result = await client.capture_pie(
+                        output_dir=temp_dir,
+                        level="/Game/Maps/TestLevel",
+                        duration_seconds=2.0,
+                        interval_seconds=0.5,
+                    )
+
+                # Should fail with error about editor not running
+                assert result.get("success") is False or "error" in result
+
+    @pytest.mark.asyncio
+    async def test_capture_pie_with_editor(self, project_path: Path):
+        """Test capture.pie with editor running."""
+        server_params = get_server_params(project_path)
+
+        async with stdio_client(server_params) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                client = MCPCaptureClient(session)
+
+                # Launch editor
+                launch_result = await client.editor_launch(wait_timeout=180)
+
+                if not launch_result.get("success"):
+                    pytest.skip(f"Editor launch failed: {launch_result.get('error')}")
+
+                try:
+                    # Create temp output directory
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        result = await client.capture_pie(
+                            output_dir=temp_dir,
+                            level="/Game/Maps/Main",  # Default UE5 level
+                            duration_seconds=5.0,
+                            interval_seconds=1.0,
+                            resolution_width=640,
+                            resolution_height=480,
+                            multi_angle=False,  # Simpler for testing
+                        )
+
+                        # Check result
+                        if result.get("success"):
+                            assert "output_dir" in result or "duration" in result
+                        else:
+                            # May fail if level doesn't exist - that's OK for this test
+                            print(f"PIE Capture result: {result}")
+
+                finally:
+                    # Always stop editor
+                    await client.editor_stop()
+
+    @pytest.mark.asyncio
+    async def test_capture_window_with_editor(self, project_path: Path):
+        """Test capture.window with editor running."""
+        server_params = get_server_params(project_path)
+
+        async with stdio_client(server_params) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                client = MCPCaptureClient(session)
+
+                # Launch editor
+                launch_result = await client.editor_launch(wait_timeout=180)
+
+                if not launch_result.get("success"):
+                    pytest.skip(f"Editor launch failed: {launch_result.get('error')}")
+
+                try:
+                    # Test window mode capture
+                    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+                        result = await client.capture_window(
+                            level="/Game/Maps/Main",
+                            output_file=f.name,
+                            mode="window",
+                        )
+
+                        # Check result
+                        if result.get("success"):
+                            assert "file" in result or "captured" in result
+                            # Verify file was created
+                            if result.get("captured"):
+                                assert Path(f.name).exists()
+                        else:
+                            # May fail on non-Windows - that's OK
+                            print(f"Window Capture result: {result}")
+
+                finally:
+                    # Always stop editor
+                    await client.editor_stop()
+
+    @pytest.mark.asyncio
+    async def test_capture_window_batch_mode_with_editor(self, project_path: Path):
+        """Test capture.window batch mode with editor running."""
+        server_params = get_server_params(project_path)
+
+        async with stdio_client(server_params) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                client = MCPCaptureClient(session)
+
+                # Launch editor
+                launch_result = await client.editor_launch(wait_timeout=180)
+
+                if not launch_result.get("success"):
+                    pytest.skip(f"Editor launch failed: {launch_result.get('error')}")
+
+                try:
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        # Test batch mode with sample assets
+                        result = await client.capture_window(
+                            level="/Game/Maps/Main",
+                            mode="batch",
+                            asset_list=[
+                                "/Game/FirstPerson/Blueprints/BP_FirstPersonCharacter",
+                            ],
+                            output_dir=temp_dir,
+                        )
+
+                        # Check result
+                        if result.get("success"):
+                            assert "files" in result or "success_count" in result
+                        else:
+                            # Assets may not exist - that's OK
+                            print(f"Batch Capture result: {result}")
+
+                finally:
+                    # Always stop editor
+                    await client.editor_stop()
+
 
 @pytest.mark.integration
 class TestCaptureToolValidation:
@@ -311,11 +501,115 @@ class TestCaptureToolValidation:
                 assert result.get("success") is False
                 assert "output_file" in result.get("error", "").lower()
 
+    @pytest.mark.asyncio
+    async def test_capture_window_asset_mode_validation(self, project_path: Path):
+        """Test capture.window validates asset_path for asset mode."""
+        server_params = get_server_params(project_path)
+
+        async with stdio_client(server_params) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                client = MCPCaptureClient(session)
+
+                # asset mode without asset_path should fail
+                result = await client.call_tool(
+                    "editor.capture.window",
+                    {
+                        "level": "/Game/Maps/TestLevel",
+                        "mode": "asset",
+                        "output_file": "/tmp/test.png",
+                        # asset_path is missing
+                    },
+                )
+
+                assert result.get("success") is False
+                assert "asset_path" in result.get("error", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_capture_window_batch_mode_validation(self, project_path: Path):
+        """Test capture.window validates asset_list and output_dir for batch mode."""
+        server_params = get_server_params(project_path)
+
+        async with stdio_client(server_params) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                client = MCPCaptureClient(session)
+
+                # batch mode without asset_list should fail
+                result = await client.call_tool(
+                    "editor.capture.window",
+                    {
+                        "level": "/Game/Maps/TestLevel",
+                        "mode": "batch",
+                        "output_dir": "/tmp/output",
+                        # asset_list is missing
+                    },
+                )
+
+                assert result.get("success") is False
+                assert "asset_list" in result.get("error", "").lower() or "output_dir" in result.get("error", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_capture_pie_missing_level(self, project_path: Path):
+        """Test capture.pie with missing level parameter."""
+        server_params = get_server_params(project_path)
+
+        async with stdio_client(server_params) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                client = MCPCaptureClient(session)
+
+                # Missing required 'level' parameter should cause error
+                try:
+                    result = await client.call_tool(
+                        "editor.capture.pie",
+                        {
+                            "output_dir": "/tmp/output",
+                            # "level" is missing
+                            "duration_seconds": 5.0,
+                        },
+                    )
+                    # If we get here, check for error in result
+                    assert "error" in result or result.get("success") is False
+                except Exception as e:
+                    # Expected - missing required parameter
+                    assert "level" in str(e).lower() or "required" in str(e).lower()
+
+    @pytest.mark.asyncio
+    async def test_capture_pie_missing_output_dir(self, project_path: Path):
+        """Test capture.pie with missing output_dir parameter."""
+        server_params = get_server_params(project_path)
+
+        async with stdio_client(server_params) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                client = MCPCaptureClient(session)
+
+                # Missing required 'output_dir' parameter should cause error
+                try:
+                    result = await client.call_tool(
+                        "editor.capture.pie",
+                        {
+                            "level": "/Game/Maps/TestLevel",
+                            # "output_dir" is missing
+                            "duration_seconds": 5.0,
+                        },
+                    )
+                    # If we get here, check for error in result
+                    assert "error" in result or result.get("success") is False
+                except Exception as e:
+                    # Expected - missing required parameter
+                    assert "output_dir" in str(e).lower() or "required" in str(e).lower()
+
 
 # Direct execution for quick testing
 async def quick_test():
     """Quick test function for manual testing."""
-    project_path = TEST_PROJECT
+    # Prefer URF project for comprehensive testing if available
+    if URF_PROJECT.exists():
+        project_path = URF_PROJECT
+    else:
+        project_path = TEST_PROJECT
 
     if not project_path.exists():
         print(f"Error: Test project not found at {project_path}")

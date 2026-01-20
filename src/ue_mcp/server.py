@@ -86,6 +86,7 @@ Available tools:
 - editor.capture.orbital: Capture multi-angle screenshots around a target location
 - editor.capture.pie: Capture screenshots during Play-In-Editor session
 - editor.capture.window: Capture editor window screenshots (Windows only)
+- editor.asset.diagnostic: Run diagnostics on a UE5 asset to detect common issues
 - project.build: Build the UE5 project using UnrealBuildTool (supports Editor, Game, etc.)
 """,
 )
@@ -610,6 +611,108 @@ def capture_window(
         timeout=120.0,
     )
     return _parse_capture_result(result)
+
+
+# =============================================================================
+# Diagnostic Tools
+# =============================================================================
+
+
+def _parse_diagnostic_result(exec_result: dict[str, Any]) -> dict[str, Any]:
+    """Parse diagnostic result from execution output."""
+    if not exec_result.get("success"):
+        error_msg = exec_result.get("error", "Execution failed")
+        ue_result = exec_result.get("result")
+        if ue_result:
+            error_msg = f"{error_msg}. Details: {ue_result}"
+        return {
+            "success": False,
+            "error": error_msg,
+            "output": exec_result.get("output", ""),
+        }
+
+    output = exec_result.get("output", "")
+    if isinstance(output, list):
+        processed_lines = []
+        for line in output:
+            if isinstance(line, dict):
+                processed_lines.append(str(line.get("output", "")))
+            else:
+                processed_lines.append(str(line))
+        output = "\n".join(processed_lines)
+
+    marker = "__DIAGNOSTIC_RESULT__"
+    if marker in output:
+        import json
+        try:
+            json_str = output.split(marker)[1].strip().split("\n")[0]
+            result_data = json.loads(json_str)
+            return result_data
+        except (json.JSONDecodeError, IndexError) as e:
+            return {
+                "success": True,
+                "warning": f"Could not parse result: {e}",
+                "output": output,
+            }
+
+    return {
+        "success": False,
+        "error": "No diagnostic result returned from editor script",
+        "output": output,
+    }
+
+
+@mcp.tool(name="editor.asset.diagnostic")
+def diagnose_asset(asset_path: str) -> dict[str, Any]:
+    """
+    Run diagnostics on a UE5 asset to detect common issues.
+
+    The tool automatically detects the asset type and runs appropriate
+    diagnostics. Supported types include: Level, Blueprint, Material,
+    StaticMesh, SkeletalMesh, Texture, and more.
+
+    Args:
+        asset_path: Path to the asset to diagnose (e.g., /Game/Maps/TestLevel)
+
+    Returns:
+        Diagnostic result containing:
+        - success: Whether diagnostic ran successfully
+        - asset_path: Path of diagnosed asset
+        - asset_type: Detected asset type (Level, Blueprint, etc.)
+        - asset_name: Name of the asset
+        - errors: Number of errors found
+        - warnings: Number of warnings found
+        - issues: List of issues, each with severity, category, message, actor, details, suggestion
+        - summary: Optional summary message
+        - metadata: Additional asset metadata
+    """
+    manager = _get_editor_manager()
+
+    from .script_executor import get_diagnostic_scripts_dir
+
+    scripts_dir = get_diagnostic_scripts_dir()
+    script_path = scripts_dir / "diagnostic_runner.py"
+
+    if not script_path.exists():
+        return {"success": False, "error": f"Script not found: {script_path}"}
+
+    try:
+        script_content = script_path.read_text(encoding="utf-8")
+    except Exception as e:
+        return {"success": False, "error": f"Failed to read script: {e}"}
+
+    # Inject parameters
+    params = {"asset_path": asset_path}
+    params_code = (
+        "import builtins\n"
+        f"builtins.__PARAMS__ = {repr(params)}\n"
+        f"__PARAMS__ = builtins.__PARAMS__\n\n"
+    )
+
+    full_code = params_code + script_content
+    result = manager.execute_with_auto_install(full_code, timeout=120.0)
+
+    return _parse_diagnostic_result(result)
 
 
 def main():
