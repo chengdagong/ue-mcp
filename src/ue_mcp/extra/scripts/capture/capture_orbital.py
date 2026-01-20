@@ -14,7 +14,7 @@ Expected __PARAMS__:
 import unreal
 import editor_capture
 
-from capture.utils import get_params, ensure_level_loaded, output_result
+from capture.utils import get_params, ensure_level_loaded, output_result, error_handler
 
 
 def main():
@@ -24,7 +24,8 @@ def main():
     ensure_level_loaded(params["level"])
 
     # Get editor world
-    world = unreal.EditorLevelLibrary.get_editor_world()
+    # Get editor world using UnrealEditorSubsystem (modern API)
+    world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
     if not world:
         raise RuntimeError("Could not get editor world")
 

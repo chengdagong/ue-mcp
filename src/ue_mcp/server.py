@@ -372,6 +372,15 @@ def _parse_capture_result(exec_result: dict[str, Any]) -> dict[str, Any]:
         }
 
     output = exec_result.get("output", "")
+    if isinstance(output, list):
+        # Handle list of strings or list of dicts (if UE returns structured log)
+        processed_lines = []
+        for line in output:
+            if isinstance(line, dict):
+                processed_lines.append(str(line.get("output", "")))
+            else:
+                processed_lines.append(str(line))
+        output = "\n".join(processed_lines)
     marker = "__CAPTURE_RESULT__"
 
     if marker in output:
@@ -388,7 +397,11 @@ def _parse_capture_result(exec_result: dict[str, Any]) -> dict[str, Any]:
                 "output": output,
             }
 
-    return {"success": True, "output": output}
+    return {
+        "success": False,
+        "error": "No capture result returned from editor script", 
+        "output": output
+    }
 
 
 @mcp.tool(name="editor.capture.orbital")
