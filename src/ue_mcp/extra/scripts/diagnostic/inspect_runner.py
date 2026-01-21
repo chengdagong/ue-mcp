@@ -5,11 +5,12 @@ Inspects a UE5 asset and returns all its properties as structured JSON.
 
 Expected __PARAMS__:
     asset_path: str - Asset path to inspect (e.g., /Game/Meshes/MyMesh)
+    component_name: str (optional) - Name of a specific component to inspect (for Blueprints)
 """
 import json
 
 import unreal
-from asset_diagnostic import detect_asset_type, load_asset, get_asset_references
+from asset_diagnostic import detect_asset_type, load_asset, get_asset_references, AssetType
 
 
 def get_params() -> dict:
@@ -231,10 +232,155 @@ def get_asset_metadata(asset_path: str) -> dict:
     return metadata
 
 
+def get_blueprint_components(blueprint) -> list:
+    """
+    Get all components defined in a Blueprint with hierarchy information.
+
+    Args:
+        blueprint: The loaded Blueprint asset
+
+    Returns:
+        List of component info dictionaries with name, class, parent, children
+    """
+    components = []
+
+    try:
+        # Get the generated class from the Blueprint
+        generated_class = blueprint.generated_class()
+        if generated_class is None:
+            return components
+
+        # Get the Class Default Object (CDO)
+        cdo = unreal.get_default_object(generated_class)
+        if cdo is None:
+            return components
+
+        # Get all components (ActorComponent is the base class for all components)
+        all_components = cdo.get_components_by_class(unreal.ActorComponent)
+        if not all_components:
+            return components
+
+        # Build a mapping from component name to component info
+        comp_map = {}
+        for comp in all_components:
+            comp_name = comp.get_name()
+            comp_info = {
+                "name": comp_name,
+                "class": comp.get_class().get_name(),
+                "parent": None,
+                "children": [],
+            }
+            comp_map[comp_name] = comp_info
+
+        # Build hierarchy by checking attachment parent (for SceneComponents)
+        for comp in all_components:
+            comp_name = comp.get_name()
+            # Check if this is a SceneComponent with attachment info
+            if hasattr(comp, "get_attach_parent"):
+                try:
+                    parent_comp = comp.get_attach_parent()
+                    if parent_comp is not None:
+                        parent_name = parent_comp.get_name()
+                        comp_map[comp_name]["parent"] = parent_name
+                        # Add to parent's children list
+                        if parent_name in comp_map:
+                            comp_map[parent_name]["children"].append(comp_name)
+                except Exception:
+                    pass
+
+        components = list(comp_map.values())
+
+    except Exception as e:
+        unreal.log(f"[WARNING] Failed to get Blueprint components: {e}")
+
+    return components
+
+
+def get_component_properties(blueprint, component_name: str, max_depth=3) -> dict:
+    """
+    Get properties of a specific component in a Blueprint.
+
+    Args:
+        blueprint: The loaded Blueprint asset
+        component_name: Name of the component to inspect
+        max_depth: Maximum depth for nested property serialization
+
+    Returns:
+        Dictionary with component info and properties, or error info
+    """
+    try:
+        generated_class = blueprint.generated_class()
+        if generated_class is None:
+            return {"error": "Blueprint has no generated class"}
+
+        cdo = unreal.get_default_object(generated_class)
+        if cdo is None:
+            return {"error": "Could not get Class Default Object (CDO)"}
+
+        # Get all components
+        all_components = cdo.get_components_by_class(unreal.ActorComponent)
+        if not all_components:
+            return {"error": "No components found in Blueprint"}
+
+        # Find the target component by name
+        target_component = None
+        available_names = []
+        for comp in all_components:
+            name = comp.get_name()
+            available_names.append(name)
+            if name == component_name:
+                target_component = comp
+                break
+
+        if target_component is None:
+            return {
+                "error": f"Component '{component_name}' not found",
+                "available_components": available_names,
+            }
+
+        # Build component info with properties
+        comp_info = {
+            "name": target_component.get_name(),
+            "class": target_component.get_class().get_name(),
+            "parent": None,
+            "children": [],
+        }
+
+        # Get parent attachment info
+        if hasattr(target_component, "get_attach_parent"):
+            try:
+                parent_comp = target_component.get_attach_parent()
+                if parent_comp is not None:
+                    comp_info["parent"] = parent_comp.get_name()
+            except Exception:
+                pass
+
+        # Get children
+        for comp in all_components:
+            if hasattr(comp, "get_attach_parent"):
+                try:
+                    parent = comp.get_attach_parent()
+                    if parent is not None and parent.get_name() == component_name:
+                        comp_info["children"].append(comp.get_name())
+                except Exception:
+                    pass
+
+        # Extract properties
+        properties = get_asset_properties(target_component, max_depth)
+        comp_info["properties"] = properties
+        comp_info["property_count"] = len(properties)
+
+        return comp_info
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def main():
     """Main entry point for asset inspection."""
     params = get_params()
     asset_path = params["asset_path"]
+    component_name = params.get("component_name")  # Optional parameter
 
     # Detect asset type
     asset_type = detect_asset_type(asset_path)
@@ -258,27 +404,44 @@ def main():
     # Extract asset name from path
     asset_name = asset_path.rsplit("/", 1)[-1] if "/" in asset_path else asset_path
 
-    # Get all properties
-    properties = get_asset_properties(asset)
-
-    # Get metadata
-    metadata = get_asset_metadata(asset_path)
-
-    # Get references
-    references = get_asset_references(asset_path)
-
-    # Output the result
-    output_result({
+    # Base result structure
+    result = {
         "success": True,
         "asset_path": asset_path,
         "asset_type": asset_type.value,
         "asset_name": asset_name,
         "asset_class": asset_class,
-        "properties": properties,
-        "property_count": len(properties),
-        "metadata": metadata,
-        "references": references,
-    })
+    }
+
+    # Handle Blueprint-specific inspection
+    if asset_type == AssetType.BLUEPRINT:
+        if component_name:
+            # Inspect a specific component
+            comp_result = get_component_properties(asset, component_name)
+            if "error" in comp_result:
+                result["success"] = False
+                result["error"] = comp_result["error"]
+                if "available_components" in comp_result:
+                    result["available_components"] = comp_result["available_components"]
+            else:
+                result["component_info"] = comp_result
+                result["property_count"] = comp_result.get("property_count", 0)
+        else:
+            # List all components and get asset-level properties
+            result["components"] = get_blueprint_components(asset)
+            result["properties"] = get_asset_properties(asset)
+            result["property_count"] = len(result["properties"])
+    else:
+        # Non-Blueprint: standard property extraction
+        result["properties"] = get_asset_properties(asset)
+        result["property_count"] = len(result["properties"])
+
+    # Add metadata and references
+    result["metadata"] = get_asset_metadata(asset_path)
+    result["references"] = get_asset_references(asset_path)
+
+    # Output the result
+    output_result(result)
 
 
 if __name__ == "__main__":

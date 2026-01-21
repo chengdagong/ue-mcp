@@ -985,15 +985,21 @@ def diagnose_asset(asset_path: str) -> dict[str, Any]:
 
 
 @mcp.tool(name="editor_asset_inspect")
-def inspect_asset(asset_path: str) -> dict[str, Any]:
+def inspect_asset(asset_path: str, component_name: str | None = None) -> dict[str, Any]:
     """
     Inspect a UE5 asset and return all its properties.
 
     This tool loads an asset and extracts all accessible properties,
     metadata, and reference information.
 
+    For Blueprint assets, you can optionally specify a component to inspect.
+    When no component is specified for Blueprints, the response includes a list
+    of available components with their names, class types, and hierarchy.
+
     Args:
         asset_path: Path to the asset (e.g., /Game/Meshes/MyStaticMesh)
+        component_name: Optional name of a specific component to inspect
+                       (only valid for Blueprint assets)
 
     Returns:
         Inspection result containing:
@@ -1004,6 +1010,8 @@ def inspect_asset(asset_path: str) -> dict[str, Any]:
         - asset_class: UE5 class name of the asset
         - properties: Dictionary of all accessible properties with their values
         - property_count: Number of properties found
+        - components: (For Blueprints) List of available components with hierarchy
+        - component_info: (When component_name specified) Details of the component
         - metadata: Asset registry metadata (package info, etc.)
         - references: Dependencies and referencers
     """
@@ -1024,6 +1032,8 @@ def inspect_asset(asset_path: str) -> dict[str, Any]:
 
     # Inject parameters
     params = {"asset_path": asset_path}
+    if component_name is not None:
+        params["component_name"] = component_name
     params_code = (
         "import builtins\n"
         f"builtins.__PARAMS__ = {repr(params)}\n"
