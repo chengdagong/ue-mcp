@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__ue-mcp__editor_launch",
+      "mcp__ue-mcp__editor_capture_pie",
+      "mcp__ue-mcp__editor_execute",
+      "WebFetch(domain:gemini.google.com)",
+      "mcp__ue-mcp__editor_status",
+      "mcp__ue-mcp__editor_stop",
+      "Bash(dir:*)"
+    ]
+  }
+}
