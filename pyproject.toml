@@ -3,7 +3,7 @@ name = "ue-mcp"
 version = "0.1.0"
 description = "MCP server for Unreal Editor interaction"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "UE-MCP Contributors" }]
 keywords = ["unreal", "ue5", "mcp", "fastmcp", "editor", "automation"]
@@ -17,6 +17,15 @@ dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "ruff>=0.1.0",
+    "pyyaml>=6.0",
+]
+
+[tool.uv.sources]
+mcp-pytest = { path = "../mcp-test/mcp-pytest", editable = true }
+
+[dependency-groups]
+dev = [
+    "mcp-pytest",
 ]
 
 [project.scripts]
