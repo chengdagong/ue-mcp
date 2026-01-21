@@ -260,9 +260,13 @@ def check_additional_paths(
     """
     Check and optionally add AdditionalPaths settings in DefaultEngine.ini.
 
+    IMPORTANT: The first path in the `paths` list (typically the bundled site-packages)
+    must be the FIRST AdditionalPaths entry in the INI file to ensure it takes priority
+    over any other paths that might contain conflicting modules.
+
     Args:
         ini_path: Path to DefaultEngine.ini
-        paths: List of paths to add
+        paths: List of paths to add (first path gets highest priority)
         auto_fix: Whether to automatically fix issues
 
     Returns:
@@ -283,33 +287,75 @@ def check_additional_paths(
     if not _section_exists(lines, PYTHON_PLUGIN_SECTION):
         return False, False, ["Section missing"]
 
-    # Check which paths are already configured
-    missing_paths = []
-    for path in paths:
-        path_normalized = path.replace("\\", "/")
-        found = False
-        for line in lines:
-            if (
-                "additionalpaths" in line.lower()
-                and path_normalized.lower() in line.lower().replace("\\", "/")
-            ):
-                found = True
-                break
-        if not found:
-            missing_paths.append(path_normalized)
+    # Normalize requested paths
+    paths_normalized = [p.replace("\\", "/") for p in paths]
+    primary_path = paths_normalized[0] if paths_normalized else None
 
-    if not missing_paths:
+    # Find all existing AdditionalPaths entries and their positions
+    existing_paths = []  # List of (line_index, path)
+    for i, line in enumerate(lines):
+        if "additionalpaths" in line.lower():
+            # Extract path from line like: +AdditionalPaths=(Path="...")
+            import re
+            match = re.search(r'Path\s*=\s*"([^"]+)"', line, re.IGNORECASE)
+            if match:
+                existing_paths.append((i, match.group(1).replace("\\", "/")))
+
+    # Check which paths are missing
+    existing_path_values = [p for _, p in existing_paths]
+    missing_paths = [p for p in paths_normalized if p.lower() not in [e.lower() for e in existing_path_values]]
+
+    # Check if primary path needs to be moved to first position
+    needs_reorder = False
+    if primary_path and existing_paths:
+        first_existing = existing_paths[0][1]
+        if first_existing.lower() != primary_path.lower():
+            # Check if our primary path exists but is not first
+            for _, path in existing_paths:
+                if path.lower() == primary_path.lower():
+                    needs_reorder = True
+                    break
+
+    if not missing_paths and not needs_reorder:
         return True, False, ["All AdditionalPaths correctly configured"]
 
     if not auto_fix:
-        return False, False, [f"AdditionalPaths missing: {', '.join(missing_paths)}"]
+        issues = []
+        if missing_paths:
+            issues.append(f"AdditionalPaths missing: {', '.join(missing_paths)}")
+        if needs_reorder:
+            issues.append(f"Primary path '{primary_path}' should be first but is not")
+        return False, False, issues
 
     try:
-        entries = [f'+AdditionalPaths=(Path="{p}")' for p in missing_paths]
-        content = _insert_into_section(lines, PYTHON_PLUGIN_SECTION, entries)
+        changes = []
+
+        if needs_reorder:
+            # Remove all AdditionalPaths entries and re-add them in correct order
+            new_lines = [line for i, line in enumerate(lines) if i not in [idx for idx, _ in existing_paths]]
+
+            # Collect all paths to add: primary first, then others (excluding primary)
+            all_paths_to_add = [primary_path]
+            for _, path in existing_paths:
+                if path.lower() != primary_path.lower():
+                    all_paths_to_add.append(path)
+            # Add any missing paths
+            for mp in missing_paths:
+                if mp.lower() not in [p.lower() for p in all_paths_to_add]:
+                    all_paths_to_add.append(mp)
+
+            entries = [f'+AdditionalPaths=(Path="{p}")' for p in all_paths_to_add]
+            content = _insert_into_section(new_lines, PYTHON_PLUGIN_SECTION, entries)
+            changes.append(f"Reordered AdditionalPaths with '{primary_path}' first")
+        else:
+            # Just add missing paths
+            entries = [f'+AdditionalPaths=(Path="{p}")' for p in missing_paths]
+            content = _insert_into_section(lines, PYTHON_PLUGIN_SECTION, entries)
+            changes.append(f"Added AdditionalPaths: {', '.join(missing_paths)}")
+
         with open(ini_path, "w", encoding="utf-8") as f:
             f.write(content)
-        return True, True, [f"Added AdditionalPaths: {', '.join(missing_paths)}"]
+        return True, True, changes
     except Exception as e:
         return False, False, [f"Write Failed: {e}"]
 
