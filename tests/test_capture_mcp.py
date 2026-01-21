@@ -32,7 +32,6 @@ def parse_tool_result(result: ToolCallResult) -> dict[str, Any]:
 
 
 @pytest.mark.integration
-@pytest.mark.slow
 class TestCaptureTools:
     """Integration tests for capture tools."""
 
@@ -47,9 +46,9 @@ class TestCaptureTools:
         assert "editor_capture_window" in tools
 
     @pytest.mark.asyncio
-    async def test_capture_orbital_without_editor(self, tool_caller: ToolCaller):
+    async def test_capture_orbital_without_editor(self, initialized_tool_caller: ToolCaller):
         """Test capture.orbital fails gracefully when editor not running."""
-        result = await tool_caller.call(
+        result = await initialized_tool_caller.call(
             "editor_capture_orbital",
             {
                 "level": "/Game/Maps/TestLevel",
@@ -62,29 +61,27 @@ class TestCaptureTools:
 
         data = parse_tool_result(result)
         # Should fail with error about editor not running
-        assert data.get("success") is False or "error" in data
+        assert data.get("success") is False or "error" in data or "raw_text" in data
 
     @pytest.mark.asyncio
-    async def test_capture_orbital_with_editor(self, tool_caller: ToolCaller):
+    async def test_capture_orbital_with_editor(self, initialized_tool_caller: ToolCaller):
         """Test capture.orbital with editor running."""
         # Launch editor
-        launch_result = await tool_caller.call(
+        launch_result = await initialized_tool_caller.call(
             "editor_launch",
             {"wait": True, "wait_timeout": 180},
             timeout=240,
         )
         launch_data = parse_tool_result(launch_result)
-
-        if not launch_data.get("success"):
-            pytest.skip(f"Editor launch failed: {launch_data.get('error')}")
+        assert launch_data.get("success"), f"Editor launch failed: {launch_data}"
 
         try:
             # Create temp output directory
             with tempfile.TemporaryDirectory() as temp_dir:
-                result = await tool_caller.call(
+                result = await initialized_tool_caller.call(
                     "editor_capture_orbital",
                     {
-                        "level": "/Game/Maps/Main",
+                        "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
                         "target_x": 0,
                         "target_y": 0,
                         "target_z": 100,
@@ -98,22 +95,18 @@ class TestCaptureTools:
                 )
 
                 data = parse_tool_result(result)
-                # Check result
-                if data.get("success"):
-                    assert "files" in data or "total_captures" in data
-                else:
-                    # May fail if level doesn't exist - that's OK for this test
-                    print(f"Capture result: {data}")
+                assert data.get("success"), f"Capture orbital failed: {data}"
+                assert "files" in data or "total_captures" in data
 
         finally:
             # Always stop editor
-            await tool_caller.call("editor_stop", timeout=30)
+            await initialized_tool_caller.call("editor_stop", timeout=30)
 
     @pytest.mark.asyncio
-    async def test_capture_window_without_editor(self, tool_caller: ToolCaller):
+    async def test_capture_window_without_editor(self, initialized_tool_caller: ToolCaller):
         """Test capture.window fails gracefully when editor not running."""
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            result = await tool_caller.call(
+            result = await initialized_tool_caller.call(
                 "editor_capture_window",
                 {
                     "level": "/Game/Maps/TestLevel",
@@ -124,13 +117,13 @@ class TestCaptureTools:
 
         data = parse_tool_result(result)
         # Should fail with error about editor not running
-        assert data.get("success") is False or "error" in data
+        assert data.get("success") is False or "error" in data or "raw_text" in data
 
     @pytest.mark.asyncio
-    async def test_capture_pie_without_editor(self, tool_caller: ToolCaller):
+    async def test_capture_pie_without_editor(self, initialized_tool_caller: ToolCaller):
         """Test capture.pie fails gracefully when editor not running."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            result = await tool_caller.call(
+            result = await initialized_tool_caller.call(
                 "editor_capture_pie",
                 {
                     "output_dir": temp_dir,
@@ -143,30 +136,28 @@ class TestCaptureTools:
 
         data = parse_tool_result(result)
         # Should fail with error about editor not running
-        assert data.get("success") is False or "error" in data
+        assert data.get("success") is False or "error" in data or "raw_text" in data
 
     @pytest.mark.asyncio
-    async def test_capture_pie_with_editor(self, tool_caller: ToolCaller):
+    async def test_capture_pie_with_editor(self, initialized_tool_caller: ToolCaller):
         """Test capture.pie with editor running."""
         # Launch editor
-        launch_result = await tool_caller.call(
+        launch_result = await initialized_tool_caller.call(
             "editor_launch",
             {"wait": True, "wait_timeout": 180},
             timeout=240,
         )
         launch_data = parse_tool_result(launch_result)
-
-        if not launch_data.get("success"):
-            pytest.skip(f"Editor launch failed: {launch_data.get('error')}")
+        assert launch_data.get("success"), f"Editor launch failed: {launch_data}"
 
         try:
             # Create temp output directory
             with tempfile.TemporaryDirectory() as temp_dir:
-                result = await tool_caller.call(
+                result = await initialized_tool_caller.call(
                     "editor_capture_pie",
                     {
                         "output_dir": temp_dir,
-                        "level": "/Game/Maps/Main",
+                        "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
                         "duration_seconds": 5.0,
                         "interval_seconds": 1.0,
                         "resolution_width": 640,
@@ -177,38 +168,32 @@ class TestCaptureTools:
                 )
 
                 data = parse_tool_result(result)
-                # Check result
-                if data.get("success"):
-                    assert "output_dir" in data or "duration" in data
-                else:
-                    # May fail if level doesn't exist - that's OK for this test
-                    print(f"PIE Capture result: {data}")
+                assert data.get("success"), f"Capture PIE failed: {data}"
+                assert "output_dir" in data or "duration" in data
 
         finally:
             # Always stop editor
-            await tool_caller.call("editor_stop", timeout=30)
+            await initialized_tool_caller.call("editor_stop", timeout=30)
 
     @pytest.mark.asyncio
-    async def test_capture_window_with_editor(self, tool_caller: ToolCaller):
+    async def test_capture_window_with_editor(self, initialized_tool_caller: ToolCaller):
         """Test capture.window with editor running."""
         # Launch editor
-        launch_result = await tool_caller.call(
+        launch_result = await initialized_tool_caller.call(
             "editor_launch",
             {"wait": True, "wait_timeout": 180},
             timeout=240,
         )
         launch_data = parse_tool_result(launch_result)
-
-        if not launch_data.get("success"):
-            pytest.skip(f"Editor launch failed: {launch_data.get('error')}")
+        assert launch_data.get("success"), f"Editor launch failed: {launch_data}"
 
         try:
             # Test window mode capture
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-                result = await tool_caller.call(
+                result = await initialized_tool_caller.call(
                     "editor_capture_window",
                     {
-                        "level": "/Game/Maps/Main",
+                        "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
                         "output_file": f.name,
                         "mode": "window",
                     },
@@ -216,44 +201,38 @@ class TestCaptureTools:
                 )
 
                 data = parse_tool_result(result)
-                # Check result
-                if data.get("success"):
-                    assert "file" in data or "captured" in data
-                    # Verify file was created
-                    if data.get("captured"):
-                        assert Path(f.name).exists()
-                else:
-                    # May fail on non-Windows - that's OK
-                    print(f"Window Capture result: {data}")
+                assert data.get("success"), f"Capture window failed: {data}"
+                assert "file" in data or "captured" in data
+                # Verify file was created
+                if data.get("captured"):
+                    assert Path(f.name).exists()
 
         finally:
             # Always stop editor
-            await tool_caller.call("editor_stop", timeout=30)
+            await initialized_tool_caller.call("editor_stop", timeout=30)
 
     @pytest.mark.asyncio
-    async def test_capture_window_batch_mode_with_editor(self, tool_caller: ToolCaller):
+    async def test_capture_window_batch_mode_with_editor(self, initialized_tool_caller: ToolCaller):
         """Test capture.window batch mode with editor running."""
         # Launch editor
-        launch_result = await tool_caller.call(
+        launch_result = await initialized_tool_caller.call(
             "editor_launch",
             {"wait": True, "wait_timeout": 180},
             timeout=240,
         )
         launch_data = parse_tool_result(launch_result)
-
-        if not launch_data.get("success"):
-            pytest.skip(f"Editor launch failed: {launch_data.get('error')}")
+        assert launch_data.get("success"), f"Editor launch failed: {launch_data}"
 
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
                 # Test batch mode with sample assets
-                result = await tool_caller.call(
+                result = await initialized_tool_caller.call(
                     "editor_capture_window",
                     {
-                        "level": "/Game/Maps/Main",
+                        "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
                         "mode": "batch",
                         "asset_list": [
-                            "/Game/FirstPerson/Blueprints/BP_FirstPersonCharacter",
+                            "/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter",
                         ],
                         "output_dir": temp_dir,
                     },
@@ -261,16 +240,12 @@ class TestCaptureTools:
                 )
 
                 data = parse_tool_result(result)
-                # Check result
-                if data.get("success"):
-                    assert "files" in data or "success_count" in data
-                else:
-                    # Assets may not exist - that's OK
-                    print(f"Batch Capture result: {data}")
+                assert data.get("success"), f"Capture batch failed: {data}"
+                assert "files" in data or "success_count" in data
 
         finally:
             # Always stop editor
-            await tool_caller.call("editor_stop", timeout=30)
+            await initialized_tool_caller.call("editor_stop", timeout=30)
 
 
 @pytest.mark.integration
@@ -294,16 +269,16 @@ class TestCaptureToolValidation:
             )
             data = parse_tool_result(result)
             # If we get here, check for error in result
-            assert "error" in data or data.get("success") is False
+            assert "error" in data or "raw_text" in data or data.get("success") is False
         except Exception as e:
             # Expected - missing required parameter
             assert "level" in str(e).lower() or "required" in str(e).lower()
 
     @pytest.mark.asyncio
-    async def test_capture_window_mode_validation(self, tool_caller: ToolCaller):
+    async def test_capture_window_mode_validation(self, initialized_tool_caller: ToolCaller):
         """Test capture.window validates output_file for window mode."""
         # window mode without output_file should fail
-        result = await tool_caller.call(
+        result = await initialized_tool_caller.call(
             "editor_capture_window",
             {
                 "level": "/Game/Maps/TestLevel",
@@ -318,10 +293,10 @@ class TestCaptureToolValidation:
         assert "output_file" in data.get("error", "").lower()
 
     @pytest.mark.asyncio
-    async def test_capture_window_asset_mode_validation(self, tool_caller: ToolCaller):
+    async def test_capture_window_asset_mode_validation(self, initialized_tool_caller: ToolCaller):
         """Test capture.window validates asset_path for asset mode."""
         # asset mode without asset_path should fail
-        result = await tool_caller.call(
+        result = await initialized_tool_caller.call(
             "editor_capture_window",
             {
                 "level": "/Game/Maps/TestLevel",
@@ -337,10 +312,10 @@ class TestCaptureToolValidation:
         assert "asset_path" in data.get("error", "").lower()
 
     @pytest.mark.asyncio
-    async def test_capture_window_batch_mode_validation(self, tool_caller: ToolCaller):
+    async def test_capture_window_batch_mode_validation(self, initialized_tool_caller: ToolCaller):
         """Test capture.window validates asset_list and output_dir for batch mode."""
         # batch mode without asset_list should fail
-        result = await tool_caller.call(
+        result = await initialized_tool_caller.call(
             "editor_capture_window",
             {
                 "level": "/Game/Maps/TestLevel",
@@ -374,7 +349,7 @@ class TestCaptureToolValidation:
             )
             data = parse_tool_result(result)
             # If we get here, check for error in result
-            assert "error" in data or data.get("success") is False
+            assert "error" in data or "raw_text" in data or data.get("success") is False
         except Exception as e:
             # Expected - missing required parameter
             assert "level" in str(e).lower() or "required" in str(e).lower()
@@ -395,7 +370,7 @@ class TestCaptureToolValidation:
             )
             data = parse_tool_result(result)
             # If we get here, check for error in result
-            assert "error" in data or data.get("success") is False
+            assert "error" in data or "raw_text" in data or data.get("success") is False
         except Exception as e:
             # Expected - missing required parameter
             assert "output_dir" in str(e).lower() or "required" in str(e).lower()

@@ -11,6 +11,8 @@ Expected __PARAMS__:
     output_dir: str | None - Output directory
     resolution_width, resolution_height: int - Resolution
 """
+
+import gc
 import unreal
 import editor_capture
 
@@ -23,7 +25,6 @@ def main():
     # Ensure correct level is loaded
     ensure_level_loaded(params["level"])
 
-    # Get editor world
     # Get editor world using UnrealEditorSubsystem (modern API)
     world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
     if not world:
@@ -33,16 +34,17 @@ def main():
     results = editor_capture.take_orbital_screenshots_with_preset(
         loaded_world=world,
         preset=params["preset"],
-        target_location=unreal.Vector(
-            params["target_x"],
-            params["target_y"],
-            params["target_z"]
-        ),
+        target_location=unreal.Vector(params["target_x"], params["target_y"], params["target_z"]),
         distance=params["distance"],
         output_dir=params.get("output_dir"),
         resolution_width=params["resolution_width"],
         resolution_height=params["resolution_height"],
     )
+
+    # CRITICAL: Release UE object reference before function returns
+    # This prevents memory leaks when the level is changed later
+    del world
+    gc.collect()
 
     # Output result
     files = {k: list(v) if v else [] for k, v in results.items()}

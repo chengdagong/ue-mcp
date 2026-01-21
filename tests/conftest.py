@@ -96,10 +96,60 @@ def mcp_config(request: pytest.FixtureRequest):
     return MCPTestConfig.model_validate(data)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def project_template_path() -> Path:
-    """Return the path to EmptyProjectTemplate fixture."""
-    return Path(__file__).parent / "fixtures" / "EmptyProjectTemplate"
+    """Return the path to ThirdPersonTemplate fixture."""
+    return Path(__file__).parent / "fixtures" / "ThirdPersonTemplate"
+
+
+@pytest.fixture(scope="session")
+async def initialized_mcp_client(mcp_client, project_template_path):
+    """
+    MCP client with project path already set.
+
+    For Automatic-Testing clients, project_set_path must be called first.
+    This fixture handles that initialization.
+    """
+    from mcp_pytest import ToolCaller
+
+    # Check if project_set_path is available (it should be for Automatic-Testing)
+    tools = await mcp_client.list_tools()
+    tool_names = [t.name for t in tools]
+
+    if "project_set_path" in tool_names:
+        # Call project_set_path to initialize
+        result = await mcp_client.call_tool(
+            "project_set_path",
+            {"project_path": str(project_template_path)},
+        )
+        # Log the result for debugging
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info(f"project_set_path result: {result}")
+
+    return mcp_client
+
+
+@pytest.fixture(scope="session")
+async def initialized_tool_caller(
+    initialized_mcp_client,
+    mcp_config,
+    file_tracker,
+):
+    """
+    Tool caller with project path already set.
+
+    Use this instead of tool_caller when testing tools that require
+    the project to be initialized first.
+    """
+    from mcp_pytest import ToolCaller
+
+    return ToolCaller(
+        session=initialized_mcp_client,
+        default_timeout=mcp_config.default_timeout,
+        file_tracker=file_tracker,
+    )
 
 
 @pytest.fixture

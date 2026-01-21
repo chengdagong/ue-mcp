@@ -15,6 +15,7 @@ Expected __PARAMS__:
     asset_list: list[str] - Asset paths (for batch mode)
     tab: int | None - Tab number to switch to (for window/asset modes)
 """
+
 import time
 import editor_capture
 
@@ -32,10 +33,7 @@ def capture_mode_window(params):
             time.sleep(0.5)
 
     success = editor_capture.capture_ue5_window(output_file)
-    output_result({
-        "file": output_file,
-        "captured": success
-    })
+    output_result({"file": output_file, "captured": success})
 
 
 def capture_mode_asset(params):
@@ -44,21 +42,19 @@ def capture_mode_asset(params):
     tab = params.get("tab")
 
     # Prepare arguments for open_asset_and_screenshot
-    kwargs = {
-        "asset_path": asset_path,
-        "output_path": output_file,
-        "delay": 3.0
-    }
+    kwargs = {"asset_path": asset_path, "output_path": output_file, "delay": 3.0}
     if tab is not None:
         kwargs["tab_number"] = tab
 
     result = editor_capture.open_asset_and_screenshot(**kwargs)
-    
-    output_result({
-        "file": output_file,
-        "opened": result["opened"],
-        "captured": result["screenshot"],
-    })
+
+    output_result(
+        {
+            "file": output_file,
+            "opened": result["opened"],
+            "captured": result["screenshot"],
+        }
+    )
 
 
 def capture_mode_batch(params):
@@ -72,15 +68,20 @@ def capture_mode_batch(params):
         close_after=True,
     )
 
-    files = [r.get("screenshot_path") for r in results if r.get("screenshot")]
+    # batch_asset_screenshots returns {"success": [(path, screenshot_path)], "failed": [path]}
+    files = [screenshot_path for _, screenshot_path in results.get("success", [])]
     success_count = len(files)
+    failed_count = len(results.get("failed", []))
     total_count = len(asset_list)
 
-    output_result({
-        "files": files,
-        "success_count": success_count,
-        "total_count": total_count,
-    })
+    output_result(
+        {
+            "files": files,
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "total_count": total_count,
+        }
+    )
 
 
 def main():

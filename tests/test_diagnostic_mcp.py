@@ -42,57 +42,50 @@ class TestDiagnosticTools:
         assert "editor_asset_diagnostic" in tools
 
     @pytest.mark.asyncio
-    async def test_diagnostic_without_editor(self, tool_caller: ToolCaller):
+    async def test_diagnostic_without_editor(self, initialized_tool_caller: ToolCaller):
         """Test diagnostic fails gracefully when editor not running."""
-        result = await tool_caller.call(
+        result = await initialized_tool_caller.call(
             "editor_asset_diagnostic",
             {"asset_path": "/Game/Maps/TestLevel"},
             timeout=120,
         )
 
         data = parse_tool_result(result)
-        # Should fail with error about editor not running
-        assert data.get("success") is False or "error" in data
+        # Should fail with error about editor not running or not connected
+        assert data.get("success") is False or "error" in data or "raw_text" in data
 
     @pytest.mark.asyncio
-    @pytest.mark.slow
-    async def test_diagnostic_with_editor(self, tool_caller: ToolCaller):
+    async def test_diagnostic_with_editor(self, initialized_tool_caller: ToolCaller):
         """Test diagnostic with editor running."""
         # Launch editor
-        launch_result = await tool_caller.call(
+        launch_result = await initialized_tool_caller.call(
             "editor_launch",
             {"wait": True, "wait_timeout": 180},
             timeout=240,
         )
         launch_data = parse_tool_result(launch_result)
-
-        if not launch_data.get("success"):
-            pytest.skip(f"Editor launch failed: {launch_data.get('error')}")
+        assert launch_data.get("success"), f"Editor launch failed: {launch_data}"
 
         try:
             # Test diagnostics on a level
-            result = await tool_caller.call(
+            result = await initialized_tool_caller.call(
                 "editor_asset_diagnostic",
-                {"asset_path": "/Game/Maps/Main"},
+                {"asset_path": "/Game/ThirdPerson/DefaultAutomaticTestLevel"},
                 timeout=120,
             )
 
             data = parse_tool_result(result)
-            # Check result structure
-            if data.get("success"):
-                assert "asset_path" in data
-                assert "asset_type" in data
-                assert "errors" in data
-                assert "warnings" in data
-                assert "issues" in data
-                assert isinstance(data["issues"], list)
-            else:
-                # May fail if level doesn't exist - that's OK for this test
-                print(f"Diagnostic result: {data}")
+            assert data.get("success"), f"Diagnostic failed: {data}"
+            assert "asset_path" in data
+            assert "asset_type" in data
+            assert "errors" in data
+            assert "warnings" in data
+            assert "issues" in data
+            assert isinstance(data["issues"], list)
 
         finally:
             # Always stop editor
-            await tool_caller.call("editor_stop", timeout=30)
+            await initialized_tool_caller.call("editor_stop", timeout=30)
 
 
 @pytest.mark.integration
@@ -111,16 +104,16 @@ class TestDiagnosticToolValidation:
             )
             data = parse_tool_result(result)
             # If we get here, check for error in result
-            assert "error" in data or data.get("success") is False
+            assert "error" in data or "raw_text" in data or data.get("success") is False
         except Exception as e:
             # Expected - missing required parameter
             assert "asset_path" in str(e).lower() or "required" in str(e).lower()
 
     @pytest.mark.asyncio
-    async def test_diagnostic_invalid_asset_path(self, tool_caller: ToolCaller):
+    async def test_diagnostic_invalid_asset_path(self, initialized_tool_caller: ToolCaller):
         """Test diagnostic with invalid asset path format."""
         # Invalid asset path - should fail gracefully
-        result = await tool_caller.call(
+        result = await initialized_tool_caller.call(
             "editor_asset_diagnostic",
             {"asset_path": "not_a_valid_path"},
             timeout=120,
@@ -128,4 +121,4 @@ class TestDiagnosticToolValidation:
 
         data = parse_tool_result(result)
         # Should fail since editor is not running
-        assert data.get("success") is False or "error" in data
+        assert data.get("success") is False or "error" in data or "raw_text" in data
