@@ -956,13 +956,20 @@ class EditorManager:
                 logger.warning(f"Failed to send notification: {notify_err}")
 
         try:
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                cwd=str(self.project_root),
-            )
+            # On Windows, hide the console window to prevent it from stealing focus
+            # and potentially causing subprocess hangs
+            import sys
+            kwargs: dict[str, Any] = {
+                "stdin": asyncio.subprocess.DEVNULL,
+                "stdout": asyncio.subprocess.PIPE,
+                "stderr": asyncio.subprocess.STDOUT,
+                "cwd": str(self.project_root),
+            }
+            if sys.platform == "win32":
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+            process = await asyncio.create_subprocess_exec(*cmd, **kwargs)
+            logger.info(f"Build subprocess started (PID: {process.pid})")
         except Exception as e:
             logger.error(f"Failed to start build process: {e}")
             await safe_notify("error", f"Failed to start build: {e}")

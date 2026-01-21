@@ -155,7 +155,7 @@ async def initialized_tool_caller(
 @pytest.fixture
 def temp_project(tmp_path: Path, project_template_path: Path) -> Path:
     """
-    Copy EmptyProjectTemplate to a temp directory before each test.
+    Copy ThirdPersonTemplate to a temp directory before each test.
 
     This ensures test isolation - each test gets a fresh copy of the project.
     The copy excludes DerivedDataCache, Intermediate, and Saved directories
@@ -180,7 +180,78 @@ def temp_project(tmp_path: Path, project_template_path: Path) -> Path:
 @pytest.fixture
 def temp_uproject(temp_project: Path) -> Path:
     """Return the path to the temp project's .uproject file."""
-    return temp_project / "EmptyProjectTemplate.uproject"
+    return temp_project / "thirdperson_template.uproject"
+
+
+@pytest.fixture(scope="session")
+def test_output_dir() -> Path:
+    """
+    Create a persistent test output directory for screenshot captures.
+
+    This directory is NOT automatically deleted, allowing inspection of
+    generated files after tests pass or fail.
+
+    Returns:
+        Path to the test output directory
+    """
+    tests_dir = Path(__file__).parent
+    output_dir = tests_dir / "test_output"
+    output_dir.mkdir(exist_ok=True)
+    return output_dir
+
+
+@pytest.fixture
+def temp_uproject(temp_project: Path) -> Path:
+    """Return the path to the temp project's .uproject file."""
+    return temp_project / "thirdperson_template.uproject"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def clean_test_output_dir():
+    """
+    Clean test output directory before test session starts.
+
+    This fixture runs automatically before all tests to ensure
+    a clean slate and prevent old screenshots from interfering
+    with verification.
+    """
+    import shutil
+
+    tests_dir = Path(__file__).parent
+    output_dir = tests_dir / "test_output"
+
+    # Clear directory if it exists
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+
+    yield
+
+    # Clean up after session
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+
+
+@pytest.fixture(scope="session")
+def test_output_dir() -> Path:
+    """
+    Test output directory for screenshots and test artifacts.
+
+    Directory is automatically cleaned at the start of each test session.
+
+    Directory structure:
+        tests/test_output/
+            ├── orbital/       - Orbital capture screenshots
+            ├── pie/          - PIE capture screenshots
+            ├── window/       - Window capture screenshots
+            └── batch/        - Batch capture screenshots
+
+    Returns:
+        Path to the test output directory
+    """
+    tests_dir = Path(__file__).parent
+    output_dir = tests_dir / "test_output"
+    output_dir.mkdir(exist_ok=True)
+    return output_dir
 
 
 @pytest.fixture

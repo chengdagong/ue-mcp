@@ -22,11 +22,16 @@ ENV/
 tests/fixtures/*/
 !tests/fixtures/EmptyCPPProject/
 !tests/fixtures/EmptyProjectTemplate/
+!tests/fixtures/ThirdPersonTemplate/
 
 # Ignore build artifacts within allowed fixture projects
 tests/fixtures/*/Saved/
 tests/fixtures/*/Intermediate/
+tests/fixtures/*/DerivedDataCache/
 tests/fixtures/*/Backup/
+tests/fixtures/*/Binaries/
+tests/fixtures/ThirdPersonTemplate/Content/__ExternalActors__/
+tests/fixtures/ThirdPersonTemplate/Content/__ExternalObjects__/
 tests/fixtures/*/.vs/
 tests/fixtures/*/*.sln
 tests/fixtures/*/*.xcode-project
@@ -63,3 +68,4 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+

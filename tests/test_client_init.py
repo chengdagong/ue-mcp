@@ -62,18 +62,21 @@ class TestProjectInitialization:
     """Test project initialization via project_set_path."""
 
     @pytest.mark.asyncio
-    async def test_set_path_with_invalid_path(self, tool_caller: ToolCaller):
-        """Test project.set_path with non-existent path fails gracefully."""
-        result = await tool_caller.call(
+    async def test_cannot_set_path_twice(self, initialized_tool_caller: ToolCaller):
+        """Test that project_set_path can only be called once per server lifetime."""
+        result = await initialized_tool_caller.call(
             "project_set_path",
-            {"project_path": "D:\\NonExistentPath\\12345"},
+            {"project_path": "D:\\SomeOtherPath\\Project"},
             timeout=30,
         )
 
         data = parse_tool_result(result)
-        # Should fail because path doesn't exist
+        # Should fail because path already set
         assert data.get("success") is False
-        assert "does not exist" in data.get("error", "").lower()
+        assert (
+            "already set" in data.get("error", "").lower()
+            or "once" in data.get("error", "").lower()
+        )
 
 
 @pytest.mark.integration
