@@ -239,8 +239,10 @@ def is_import_error(result: dict[str, Any]) -> bool:
 
     error = result.get("error", "")
     output = _process_output(result.get("output", ""))
+    # UE remote execution puts Python traceback in 'result' field
+    ue_result = str(result.get("result", ""))
 
-    combined = f"{error}\n{output}"
+    combined = f"{error}\n{output}\n{ue_result}"
 
     # Check for import error patterns
     patterns = [
@@ -268,6 +270,8 @@ def get_missing_module_from_result(result: dict[str, Any]) -> Optional[str]:
     """
     error = result.get("error", "")
     output = _process_output(result.get("output", ""))
+    # UE remote execution puts Python traceback in 'result' field
+    ue_result = str(result.get("result", ""))
 
-    combined = f"{error}\n{output}"
+    combined = f"{error}\n{output}\n{ue_result}"
     return extract_missing_module(combined)

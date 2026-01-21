@@ -967,6 +967,14 @@ class EditorManager:
             }
             if sys.platform == "win32":
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+                # Ensure TMP environment variable is set for Build.bat
+                # MCP clients may not inherit TMP, only TEMP, which causes
+                # Build.bat's lock mechanism to fail (it uses %tmp% for lock file path)
+                env = dict(os.environ)
+                if "TMP" not in env and "TEMP" in env:
+                    env["TMP"] = env["TEMP"]
+                    logger.debug(f"Set TMP={env['TMP']} for build subprocess")
+                kwargs["env"] = env
 
             process = await asyncio.create_subprocess_exec(*cmd, **kwargs)
             logger.info(f"Build subprocess started (PID: {process.pid})")

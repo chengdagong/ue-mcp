@@ -32,8 +32,19 @@ def capture_mode_window(params):
             editor_capture.switch_to_tab(tab, hwnd)
             time.sleep(0.5)
 
-    success = editor_capture.capture_ue5_window(output_file)
-    output_result({"file": output_file, "captured": success})
+    result = editor_capture.capture_ue5_window(output_file)
+
+    # Handle both old (bool) and new (dict) return formats for compatibility
+    if isinstance(result, dict):
+        captured = result.get("success", False)
+        error = result.get("error")
+        output = {"file": output_file, "captured": captured}
+        if error:
+            output["error"] = error
+        output_result(output)
+    else:
+        # Legacy bool return
+        output_result({"file": output_file, "captured": result})
 
 
 def capture_mode_asset(params):
