@@ -2,11 +2,11 @@
 # Used by mcp-pytest plugin
 
 servers:
-  # Default UE-MCP server using ThirdPersonTemplate
+  # Default UE-MCP server using EmptyProjectTemplate
   - name: ue-mcp
     command: uv
     args: ["run", "--project", "${PROJECT_ROOT}", "ue-mcp"]
-    cwd: ${TESTS_DIR}/fixtures/ThirdPersonTemplate
+    cwd: ${TESTS_DIR}/fixtures/EmptyProjectTemplate
     startup_timeout: 30
     shutdown_timeout: 10
 
