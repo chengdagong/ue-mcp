@@ -4,35 +4,68 @@ UE-MCP Server
 FastMCP-based MCP server for Unreal Editor interaction.
 """
 
+import asyncio
 import logging
 import sys
 from pathlib import Path
 from typing import Any, Optional
 
+import mcp.types as mt
 from fastmcp import Context, FastMCP
+from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
 from .autoconfig import get_bundled_site_packages
 from .editor_manager import EditorManager
 from .utils import find_uproject_file
 
 # Configure logging
+# 获取项目根目录（从当前文件向上两级）
+_log_dir = Path(__file__).parent.parent.parent.resolve()
+_log_file = _log_dir / "ue-mcp.log"
+
+# 先配置基础日志到stderr，以便能看到日志配置过程中的问题
 logging.basicConfig(
     level=logging.INFO,
     format="[%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stderr)]
 )
 logger = logging.getLogger(__name__)
 
+# 尝试添加文件handler
+try:
+    # 确保日志目录存在
+    _log_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 添加文件handler
+    file_handler = logging.FileHandler(_log_file, mode='a', encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter("[%(levelname)s] %(name)s: %(message)s"))
+    logging.getLogger().addHandler(file_handler)
+    
+    logger.info(f"Logging to file: {_log_file}")
+except Exception as e:
+    logger.error(f"Failed to setup file logging: {e}")
+    logger.info(f"Attempted log file path: {_log_file}")
+
 # Global state
 _editor_manager: Optional[EditorManager] = None
+_client_name: Optional[str] = None  # 客户端名称
+_project_path_set: bool = False  # 跟踪project.set_path是否已调用
 
 
 def _get_editor_manager() -> EditorManager:
     """Get the global EditorManager instance."""
     if _editor_manager is None:
-        raise RuntimeError(
-            "EditorManager not initialized. "
-            "MCP server must be started from a directory containing a UE5 project."
-        )
+        if _client_name in ["claude-ai", "Automatic-Testing"]:
+            raise RuntimeError(
+                "EditorManager not initialized. "
+                "Please call the 'project.set_path' tool first to set the UE5 project directory."
+            )
+        else:
+            raise RuntimeError(
+                "EditorManager not initialized. "
+                "MCP server must be started from a directory containing a UE5 project."
+            )
     return _editor_manager
 
 
@@ -64,35 +97,170 @@ def _initialize_server() -> Optional[EditorManager]:
     return _editor_manager
 
 
-# Initialize server on module load
-_initialize_server()
+async def _auto_launch_editor() -> None:
+    """为非Claude/非Testing客户端自动启动editor"""
+    try:
+        manager = _get_editor_manager()
+        logger.info("Auto-launching editor in background...")
+        await manager.launch_async(notify=None, wait_timeout=120.0)
+        logger.info("Editor auto-launch completed")
+    except Exception as e:
+        logger.error(f"自动启动editor失败: {e}")
+
+
+class ClientDetectionMiddleware(Middleware):
+    """检测MCP客户端类型并实现差异化初始化逻辑"""
+
+    async def on_initialize(
+        self,
+        context: MiddlewareContext[mt.InitializeRequest],
+        call_next: CallNext[mt.InitializeRequest, mt.InitializeResult | None],
+    ) -> mt.InitializeResult | None:
+        global _client_name, _editor_manager
+
+        # 提取客户端名称
+        client_info = context.message.params.clientInfo
+        _client_name = client_info.name if client_info else "unknown"
+        
+        # 打印客户端信息（会同时输出到日志文件和控制台）
+        logger.info("=" * 70)
+        logger.info(f"UE-MCP SERVER INITIALIZED - Client: {_client_name}")
+        logger.info("=" * 70)
+
+        # 调用下一个middleware/handler
+        result = await call_next(context)
+
+        # 对于非Claude/非Testing客户端，自动初始化并启动editor
+        if _client_name not in ["claude-ai", "Automatic-Testing"]:
+            logger.info(f"为客户端 '{_client_name}' 自动初始化并启动editor")
+            _initialize_server()  # 从当前工作目录检测项目
+            if _editor_manager:
+                # 异步启动editor（不阻塞初始化响应）
+                asyncio.create_task(_auto_launch_editor())
+
+        return result
+
+    async def on_list_tools(
+        self,
+        context: MiddlewareContext[mt.ListToolsRequest],
+        call_next: CallNext[mt.ListToolsRequest, Any],
+    ) -> Any:
+        """过滤工具列表：非授权客户端不显示project.set_path"""
+        # 调用下一个middleware/handler获取完整工具列表
+        tools = await call_next(context)
+
+        # 如果不是claude-ai或Automatic-Testing，过滤掉project_set_path
+        if _client_name not in ["claude-ai", "Automatic-Testing"]:
+            filtered_tools = [
+                tool for tool in tools if tool.name != "project_set_path"
+            ]
+            logger.debug(
+                f"Filtered out project_set_path for client: {_client_name}"
+            )
+            return filtered_tools
+
+        return tools
+
+
+# Note: _initialize_server() is now called conditionally based on client type
+# - For claude-ai/Automatic-Testing: called via project.set_path tool
+# - For other clients: called automatically during initialization
 
 # Create FastMCP instance
 mcp = FastMCP(
     name="ue-mcp",
+    middleware=[ClientDetectionMiddleware()],
     instructions="""
 UE-MCP is an MCP server for interacting with Unreal Editor.
 
-This server is bound to a specific UE5 project (detected from the working directory).
-All tools operate on the bound project's editor instance.
+**For claude-ai and Automatic-Testing clients:**
+- Use the 'project_set_path' tool to set your UE5 project directory before using other tools
+- This tool can only be called once per server session
+
+**For other clients:**
+- The server will auto-detect the project from the working directory and launch the editor automatically
 
 Available tools:
-- editor.launch: Start the Unreal Editor for the bound project
-- editor.status: Get the current editor status
-- editor.stop: Stop the running editor
-- editor.execute: Execute Python code in the editor
-- editor.configure: Check and fix project configuration
-- editor.pip_install: Install Python packages in UE5's Python environment
-- editor.capture.orbital: Capture multi-angle screenshots around a target location
-- editor.capture.pie: Capture screenshots during Play-In-Editor session
-- editor.capture.window: Capture editor window screenshots (Windows only)
-- editor.asset.diagnostic: Run diagnostics on a UE5 asset to detect common issues
-- project.build: Build the UE5 project using UnrealBuildTool (supports Editor, Game, etc.)
+- project_set_path: Set the UE5 project directory (claude-ai/Automatic-Testing only)
+- editor_launch: Start the Unreal Editor for the bound project
+- editor_status: Get the current editor status
+- editor_stop: Stop the running editor
+- editor_execute: Execute Python code in the editor
+- editor_configure: Check and fix project configuration
+- editor_pip_install: Install Python packages in UE5's Python environment
+- editor_capture_orbital: Capture multi-angle screenshots around a target location
+- editor_capture_pie: Capture screenshots during Play-In-Editor session
+- editor_capture_window: Capture editor window screenshots (Windows only)
+- editor_asset_diagnostic: Run diagnostics on a UE5 asset to detect common issues
+- project_build: Build the UE5 project using UnrealBuildTool (supports Editor, Game, etc.)
 """,
 )
 
 
-@mcp.tool(name="editor.launch")
+@mcp.tool(name="project_set_path")
+def set_project_path(project_path: str) -> dict[str, Any]:
+    """
+    Set the UE5 project path for the MCP server.
+
+    This tool is only available for claude-ai and Automatic-Testing clients.
+    It can only be called once during the server's lifetime.
+
+    Args:
+        project_path: Absolute path to the directory containing the .uproject file
+
+    Returns:
+        Result with success status and detected project information
+    """
+    global _editor_manager, _project_path_set
+
+    # 检查客户端类型
+    if _client_name not in ["claude-ai", "Automatic-Testing"]:
+        return {
+            "success": False,
+            "error": f"project.set_path is only available for claude-ai and Automatic-Testing clients. Current client: {_client_name}",
+        }
+
+    # 检查是否已经调用过
+    if _project_path_set:
+        return {
+            "success": False,
+            "error": "project.set_path can only be called once per server lifetime. Project path already set.",
+            "current_project": _editor_manager.project_name if _editor_manager else None,
+        }
+
+    # 验证路径
+    project_dir = Path(project_path)
+    if not project_dir.exists():
+        return {"success": False, "error": f"Path does not exist: {project_path}"}
+
+    if not project_dir.is_dir():
+        return {
+            "success": False,
+            "error": f"Path is not a directory: {project_path}",
+        }
+
+    # 在指定目录中查找.uproject文件
+    uproject_path = find_uproject_file(start_dir=project_dir)
+    if uproject_path is None:
+        return {
+            "success": False,
+            "error": f"No .uproject file found in: {project_path}",
+        }
+
+    # 初始化EditorManager
+    logger.info(f"Setting project path: {uproject_path}")
+    _editor_manager = EditorManager(uproject_path)
+    _project_path_set = True
+
+    return {
+        "success": True,
+        "project_name": _editor_manager.project_name,
+        "project_path": str(_editor_manager.project_root),
+        "uproject_file": str(uproject_path),
+    }
+
+
+@mcp.tool(name="editor_launch")
 async def launch_editor(
     ctx: Context,
     additional_paths: list[str] = [],
@@ -146,7 +314,7 @@ async def launch_editor(
         )
 
 
-@mcp.tool(name="editor.status")
+@mcp.tool(name="editor_status")
 def get_editor_status() -> dict[str, Any]:
     """
     Get the current status of the managed Unreal Editor.
@@ -164,7 +332,7 @@ def get_editor_status() -> dict[str, Any]:
     return manager.get_status()
 
 
-@mcp.tool(name="editor.stop")
+@mcp.tool(name="editor_stop")
 def stop_editor() -> dict[str, Any]:
     """
     Stop the managed Unreal Editor.
@@ -181,7 +349,7 @@ def stop_editor() -> dict[str, Any]:
     return manager.stop()
 
 
-@mcp.tool(name="editor.execute")
+@mcp.tool(name="editor_execute")
 def execute_code(code: str, timeout: float = 30.0) -> dict[str, Any]:
     """
     Execute Python code in the managed Unreal Editor.
@@ -207,7 +375,7 @@ def execute_code(code: str, timeout: float = 30.0) -> dict[str, Any]:
     return manager.execute(code, timeout=timeout)
 
 
-@mcp.tool(name="editor.configure")
+@mcp.tool(name="editor_configure")
 def configure_project(
     auto_fix: bool = True,
     additional_paths: list[str] = [],
@@ -241,7 +409,7 @@ def configure_project(
     )
 
 
-@mcp.tool(name="project.build")
+@mcp.tool(name="project_build")
 async def build_project(
     ctx: Context,
     target: str = "Editor",
@@ -329,7 +497,7 @@ async def build_project(
         )
 
 
-@mcp.tool(name="editor.pip_install")
+@mcp.tool(name="editor_pip_install")
 def pip_install_packages(
     packages: list[str],
     upgrade: bool = False,
@@ -412,7 +580,7 @@ def _parse_capture_result(exec_result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@mcp.tool(name="editor.capture.orbital")
+@mcp.tool(name="editor_capture_orbital")
 def capture_orbital(
     level: str,
     target_x: float,
@@ -476,7 +644,7 @@ def capture_orbital(
     return _parse_capture_result(result)
 
 
-@mcp.tool(name="editor.capture.pie")
+@mcp.tool(name="editor_capture_pie")
 def capture_pie(
     output_dir: str,
     level: str,
@@ -538,7 +706,7 @@ def capture_pie(
     return _parse_capture_result(result)
 
 
-@mcp.tool(name="editor.capture.window")
+@mcp.tool(name="editor_capture_window")
 def capture_window(
     level: str,
     output_file: Optional[str] = None,
@@ -662,7 +830,7 @@ def _parse_diagnostic_result(exec_result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@mcp.tool(name="editor.asset.diagnostic")
+@mcp.tool(name="editor_asset_diagnostic")
 def diagnose_asset(asset_path: str) -> dict[str, Any]:
     """
     Run diagnostics on a UE5 asset to detect common issues.
@@ -717,11 +885,10 @@ def diagnose_asset(asset_path: str) -> dict[str, Any]:
 
 def main():
     """Main entry point for the MCP server."""
-    if _editor_manager is None:
-        logger.error("Failed to initialize server. Exiting.")
-        sys.exit(1)
-
-    logger.info(f"Starting UE-MCP server for project: {_editor_manager.project_name}")
+    # Note: For claude-ai/Automatic-Testing clients, _editor_manager is initialized
+    # via project.set_path tool, not at startup. For other clients, it's initialized
+    # automatically in ClientDetectionMiddleware.on_initialize().
+    logger.info("Starting UE-MCP server...")
     mcp.run()
 
 
