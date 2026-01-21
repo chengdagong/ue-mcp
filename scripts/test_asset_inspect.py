@@ -139,22 +139,66 @@ async def run_test(project_path: str | None = None):
                 except json.JSONDecodeError:
                     print(f"  Response: {inspect_text}")
 
-                # Test 4: Try to inspect a project asset (if exists)
-                print("\n[Test 4] Inspecting /Game/Maps/Main (if exists)...")
-                inspect_result2 = await session.call_tool(
+                # Test 4: Try to inspect a Blueprint asset (BP_ThirdPersonCharacter)
+                print("\n[Test 4] Inspecting Blueprint: /Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter...")
+                bp_result = await session.call_tool(
                     "editor_asset_inspect",
-                    {"asset_path": "/Game/Maps/Main"},
+                    {"asset_path": "/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter"},
                 )
-                inspect_text2 = inspect_result2.content[0].text if inspect_result2.content else ""
+                bp_text = bp_result.content[0].text if bp_result.content else ""
                 try:
-                    data2 = json.loads(inspect_text2)
-                    if data2.get("success"):
-                        print(f"  Asset type: {data2.get('asset_type')}")
-                        print(f"  Property count: {data2.get('property_count')}")
+                    bp_data = json.loads(bp_text)
+                    if bp_data.get("success"):
+                        print(f"  Asset type: {bp_data.get('asset_type')}")
+                        print(f"  Asset class: {bp_data.get('asset_class')}")
+                        print(f"  Is Blueprint: {bp_data.get('is_blueprint')}")
+                        print(f"  Generated class: {bp_data.get('generated_class_name')}")
+                        print(f"  CDO class: {bp_data.get('cdo_class')}")
+                        print(f"  Blueprint property count: {bp_data.get('blueprint_property_count', 0)}")
+                        print(f"  CDO property count: {bp_data.get('cdo_property_count', 0)}")
+
+                        # Show CDO error if any
+                        if bp_data.get("cdo_error"):
+                            print(f"  CDO Error: {bp_data.get('cdo_error')}")
+
+                        # Print first few CDO properties
+                        cdo_props = bp_data.get("cdo_properties", {})
+                        if cdo_props:
+                            print(f"\n  Sample CDO properties (first 10):")
+                            for i, (key, value) in enumerate(list(cdo_props.items())[:10]):
+                                print(f"    {key}: {value}")
+                        else:
+                            print("\n  No CDO properties available")
+
+                        # Print first few Blueprint properties
+                        bp_props = bp_data.get("blueprint_properties", {})
+                        if bp_props:
+                            print(f"\n  Sample Blueprint properties (first 5):")
+                            for i, (key, value) in enumerate(list(bp_props.items())[:5]):
+                                print(f"    {key}: {value}")
                     else:
-                        print(f"  Result: {data2.get('error', 'Asset may not exist')}")
+                        print(f"  Result: {bp_data.get('error', 'Asset may not exist')}")
                 except json.JSONDecodeError:
-                    print(f"  Response: {inspect_text2}")
+                    print(f"  Response: {bp_text}")
+
+                # Test 5: Try to inspect another Blueprint (GameMode)
+                print("\n[Test 5] Inspecting Blueprint: /Game/ThirdPerson/Blueprints/BP_ThirdPersonGameMode...")
+                gm_result = await session.call_tool(
+                    "editor_asset_inspect",
+                    {"asset_path": "/Game/ThirdPerson/Blueprints/BP_ThirdPersonGameMode"},
+                )
+                gm_text = gm_result.content[0].text if gm_result.content else ""
+                try:
+                    gm_data = json.loads(gm_text)
+                    if gm_data.get("success"):
+                        print(f"  Is Blueprint: {gm_data.get('is_blueprint')}")
+                        print(f"  Generated class: {gm_data.get('generated_class_name')}")
+                        print(f"  CDO class: {gm_data.get('cdo_class')}")
+                        print(f"  CDO property count: {gm_data.get('cdo_property_count', 0)}")
+                    else:
+                        print(f"  Result: {gm_data.get('error', 'Asset may not exist')}")
+                except json.JSONDecodeError:
+                    print(f"  Response: {gm_text}")
 
             finally:
                 # Always stop the editor

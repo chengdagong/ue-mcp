@@ -136,6 +136,59 @@ def serialize_value(value, depth=0, max_depth=3):
         return f"<{type(value).__name__}>"
 
 
+def is_blueprint_asset(asset) -> bool:
+    """
+    Check if the loaded asset is a Blueprint type.
+
+    Args:
+        asset: The loaded UE5 asset object
+
+    Returns:
+        True if asset is a Blueprint (including AnimBlueprint, WidgetBlueprint, etc.)
+    """
+    return isinstance(asset, unreal.Blueprint)
+
+
+def get_blueprint_cdo(asset):
+    """
+    Get the Class Default Object (CDO) for a Blueprint asset.
+
+    The CDO represents the default property values for instances of the
+    blueprint-generated class.
+
+    Args:
+        asset: The loaded Blueprint asset (unreal.Blueprint or subclass)
+
+    Returns:
+        tuple: (cdo, generated_class, error_message)
+            - cdo: The CDO object, or None if unavailable
+            - generated_class: The BlueprintGeneratedClass, or None
+            - error_message: Error string if CDO retrieval failed, or None
+    """
+    try:
+        # Get the generated class from the Blueprint
+        generated_class = asset.generated_class()
+
+        if generated_class is None:
+            return (
+                None,
+                None,
+                "Blueprint has no generated_class (may have compile errors or be abstract)",
+            )
+
+        # Get the CDO using unreal.get_default_object
+        try:
+            cdo = unreal.get_default_object(generated_class)
+            if cdo is None:
+                return None, generated_class, "get_default_object returned None"
+            return cdo, generated_class, None
+        except Exception as e:
+            return None, generated_class, f"Failed to get CDO: {str(e)}"
+
+    except Exception as e:
+        return None, None, f"Failed to get generated_class: {str(e)}"
+
+
 def get_asset_properties(asset, max_depth=3) -> dict:
     """
     Extract all accessible properties from an asset.
@@ -189,6 +242,24 @@ def get_asset_properties(asset, max_depth=3) -> dict:
                 pass
 
     return properties
+
+
+def get_cdo_properties(cdo, max_depth=3) -> dict:
+    """
+    Extract all accessible properties from a Class Default Object (CDO).
+
+    This function is similar to get_asset_properties but specifically for CDOs.
+    CDOs represent the default values for blueprint-generated class instances.
+
+    Args:
+        cdo: The Class Default Object
+        max_depth: Maximum depth for nested property serialization
+
+    Returns:
+        Dictionary of property names to serialized values
+    """
+    # CDO properties are extracted using the same logic as asset properties
+    return get_asset_properties(cdo, max_depth)
 
 
 def get_asset_metadata(asset_path: str) -> dict:
@@ -258,27 +329,85 @@ def main():
     # Extract asset name from path
     asset_name = asset_path.rsplit("/", 1)[-1] if "/" in asset_path else asset_path
 
-    # Get all properties
-    properties = get_asset_properties(asset)
-
     # Get metadata
     metadata = get_asset_metadata(asset_path)
 
     # Get references
     references = get_asset_references(asset_path)
 
-    # Output the result
-    output_result({
-        "success": True,
-        "asset_path": asset_path,
-        "asset_type": asset_type.value,
-        "asset_name": asset_name,
-        "asset_class": asset_class,
-        "properties": properties,
-        "property_count": len(properties),
-        "metadata": metadata,
-        "references": references,
-    })
+    # Check if this is a Blueprint asset
+    if is_blueprint_asset(asset):
+        # Get Blueprint asset properties (metadata about the blueprint itself)
+        blueprint_properties = get_asset_properties(asset)
+
+        # Get CDO (Class Default Object) which contains default instance properties
+        cdo, generated_class, cdo_error = get_blueprint_cdo(asset)
+
+        # Prepare result with Blueprint-specific fields
+        result = {
+            "success": True,
+            "asset_path": asset_path,
+            "asset_type": asset_type.value,
+            "asset_name": asset_name,
+            "asset_class": asset_class,
+            "is_blueprint": True,
+            "blueprint_properties": blueprint_properties,
+            "blueprint_property_count": len(blueprint_properties),
+            "metadata": metadata,
+            "references": references,
+        }
+
+        # Add generated class info
+        if generated_class is not None:
+            try:
+                result["generated_class_name"] = generated_class.get_name()
+            except Exception:
+                result["generated_class_name"] = None
+        else:
+            result["generated_class_name"] = None
+
+        # Add CDO properties if available
+        if cdo is not None:
+            cdo_properties = get_cdo_properties(cdo)
+            result["cdo_properties"] = cdo_properties
+            result["cdo_property_count"] = len(cdo_properties)
+
+            # Try to get CDO class info
+            try:
+                result["cdo_class"] = cdo.get_class().get_name()
+            except Exception:
+                result["cdo_class"] = None
+
+            # For Blueprints, use CDO properties as the main properties output
+            result["properties"] = cdo_properties
+            result["property_count"] = len(cdo_properties)
+        else:
+            # CDO not available - report error and use blueprint properties
+            result["cdo_properties"] = None
+            result["cdo_property_count"] = 0
+            result["cdo_class"] = None
+            result["cdo_error"] = cdo_error
+            # Fall back to blueprint properties
+            result["properties"] = blueprint_properties
+            result["property_count"] = len(blueprint_properties)
+
+        output_result(result)
+    else:
+        # Non-Blueprint asset - use standard property extraction
+        properties = get_asset_properties(asset)
+
+        output_result({
+            "success": True,
+            "asset_path": asset_path,
+            "asset_type": asset_type.value,
+            "asset_name": asset_name,
+            "asset_class": asset_class,
+            "is_blueprint": False,
+            "properties": properties,
+            "property_count": len(properties),
+            "metadata": metadata,
+            "references": references,
+        })
 
 
 if __name__ == "__main__":
