@@ -192,6 +192,7 @@ Available tools:
 - editor_capture_pie: Capture screenshots during Play-In-Editor session
 - editor_capture_window: Capture editor window screenshots (Windows only)
 - editor_asset_diagnostic: Run diagnostics on a UE5 asset to detect common issues
+- editor_asset_inspect: Inspect a UE5 asset and return all its properties
 - project_build: Build the UE5 project using UnrealBuildTool (supports Editor, Game, etc.)
 """,
 )
@@ -860,6 +861,58 @@ def diagnose_asset(asset_path: str) -> dict[str, Any]:
 
     scripts_dir = get_diagnostic_scripts_dir()
     script_path = scripts_dir / "diagnostic_runner.py"
+
+    if not script_path.exists():
+        return {"success": False, "error": f"Script not found: {script_path}"}
+
+    try:
+        script_content = script_path.read_text(encoding="utf-8")
+    except Exception as e:
+        return {"success": False, "error": f"Failed to read script: {e}"}
+
+    # Inject parameters
+    params = {"asset_path": asset_path}
+    params_code = (
+        "import builtins\n"
+        f"builtins.__PARAMS__ = {repr(params)}\n"
+        f"__PARAMS__ = builtins.__PARAMS__\n\n"
+    )
+
+    full_code = params_code + script_content
+    result = manager.execute_with_auto_install(full_code, timeout=120.0)
+
+    return _parse_diagnostic_result(result)
+
+
+@mcp.tool(name="editor_asset_inspect")
+def inspect_asset(asset_path: str) -> dict[str, Any]:
+    """
+    Inspect a UE5 asset and return all its properties.
+
+    This tool loads an asset and extracts all accessible properties,
+    metadata, and reference information.
+
+    Args:
+        asset_path: Path to the asset (e.g., /Game/Meshes/MyStaticMesh)
+
+    Returns:
+        Inspection result containing:
+        - success: Whether inspection succeeded
+        - asset_path: Path of inspected asset
+        - asset_type: Detected asset type (Level, Blueprint, StaticMesh, etc.)
+        - asset_name: Name of the asset
+        - asset_class: UE5 class name of the asset
+        - properties: Dictionary of all accessible properties with their values
+        - property_count: Number of properties found
+        - metadata: Asset registry metadata (package info, etc.)
+        - references: Dependencies and referencers
+    """
+    manager = _get_editor_manager()
+
+    from .script_executor import get_diagnostic_scripts_dir
+
+    scripts_dir = get_diagnostic_scripts_dir()
+    script_path = scripts_dir / "inspect_runner.py"
 
     if not script_path.exists():
         return {"success": False, "error": f"Script not found: {script_path}"}
