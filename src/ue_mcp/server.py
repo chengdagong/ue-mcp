@@ -188,6 +188,8 @@ Available tools:
 - editor_execute: Execute Python code in the editor
 - editor_configure: Check and fix project configuration
 - editor_pip_install: Install Python packages in UE5's Python environment
+- editor_start_pie: Start a Play-In-Editor (PIE) session
+- editor_stop_pie: Stop the current Play-In-Editor (PIE) session
 - editor_capture_orbital: Capture multi-angle screenshots around a target location
 - editor_capture_pie: Capture screenshots during Play-In-Editor session
 - editor_capture_window: Capture editor window screenshots (Windows only)
@@ -579,6 +581,104 @@ def _parse_capture_result(exec_result: dict[str, Any]) -> dict[str, Any]:
         "error": "No capture result returned from editor script", 
         "output": output
     }
+
+
+@mcp.tool(name="editor_start_pie")
+def start_pie() -> dict[str, Any]:
+    """
+    Start a Play-In-Editor (PIE) session.
+
+    This will request the editor to begin playing the current level in PIE mode.
+    If PIE is already running, it will return a warning.
+
+    Returns:
+        Result containing:
+        - success: Whether PIE start was requested successfully
+        - message: Status message
+        - error: Error message (if failed)
+    """
+    manager = _get_editor_manager()
+
+    code = """
+import editor_capture.pie_capture as pie_capture
+
+result = pie_capture.start_pie_session()
+if result:
+    print("__PIE_RESULT__SUCCESS")
+else:
+    # Check if already running
+    if pie_capture.is_pie_running():
+        print("__PIE_RESULT__ALREADY_RUNNING")
+    else:
+        print("__PIE_RESULT__FAILED")
+"""
+    exec_result = manager.execute(code, timeout=10.0)
+
+    if not exec_result.get("success"):
+        return {
+            "success": False,
+            "error": exec_result.get("error", "Failed to execute PIE start command"),
+        }
+
+    output = exec_result.get("output", "")
+    if isinstance(output, list):
+        output = "\n".join(str(line) for line in output)
+
+    if "__PIE_RESULT__SUCCESS" in output:
+        return {"success": True, "message": "PIE session started"}
+    elif "__PIE_RESULT__ALREADY_RUNNING" in output:
+        return {"success": False, "message": "PIE is already running"}
+    else:
+        return {"success": False, "error": "Failed to start PIE session"}
+
+
+@mcp.tool(name="editor_stop_pie")
+def stop_pie() -> dict[str, Any]:
+    """
+    Stop the current Play-In-Editor (PIE) session.
+
+    This will request the editor to stop the current PIE session.
+    If PIE is not running, it will return a warning.
+
+    Returns:
+        Result containing:
+        - success: Whether PIE stop was requested successfully
+        - message: Status message
+        - error: Error message (if failed)
+    """
+    manager = _get_editor_manager()
+
+    code = """
+import editor_capture.pie_capture as pie_capture
+
+result = pie_capture.stop_pie_session()
+if result:
+    print("__PIE_RESULT__SUCCESS")
+else:
+    # Check if not running
+    if not pie_capture.is_pie_running():
+        print("__PIE_RESULT__NOT_RUNNING")
+    else:
+        print("__PIE_RESULT__FAILED")
+"""
+    exec_result = manager.execute(code, timeout=10.0)
+
+    if not exec_result.get("success"):
+        return {
+            "success": False,
+            "error": exec_result.get("error", "Failed to execute PIE stop command"),
+        }
+
+    output = exec_result.get("output", "")
+    if isinstance(output, list):
+        output = "\n".join(str(line) for line in output)
+
+    if "__PIE_RESULT__SUCCESS" in output:
+        return {"success": True, "message": "PIE session stopped"}
+    elif "__PIE_RESULT__NOT_RUNNING" in output:
+        return {"success": False, "message": "PIE is not running"}
+    else:
+        return {"success": False, "error": "Failed to stop PIE session"}
 
 
 @mcp.tool(name="editor_capture_orbital")

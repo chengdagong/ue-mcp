@@ -21,7 +21,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-mcp-pytest = { path = "../mcp-test/mcp-pytest", editable = true }
+mcp-pytest = { path = "D:/Code/mcp-test/mcp-pytest", editable = true }
 
 [dependency-groups]
 dev = [
