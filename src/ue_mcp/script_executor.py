@@ -9,7 +9,7 @@ from typing import Any
 
 def get_scripts_dir() -> Path:
     """Get the capture scripts directory."""
-    return Path(__file__).parent / "extra" / "scripts" / "capture"
+    return Path(__file__).parent / "extra" / "scripts" / "ue_mcp_capture"
 
 
 def get_diagnostic_scripts_dir() -> Path:
@@ -74,9 +74,9 @@ def execute_script(
     
     # However, 'extra/scripts' contains 'site-packages', 'scripts', etc.
     # In server.py we typically add 'get_bundled_site_packages()' to path.
-    # We should also add the directory containing our 'capture' package.
+    # We should also add the directory containing our 'ue_mcp_capture' package.
     
-    # Our scripts do `from capture.utils import ...`
+    # Our scripts do `from ue_mcp_capture.utils import ...`
     # So we need to add `.../src/ue_mcp/extra/scripts` to sys.path
     
     scripts_base_dir = scripts_dir.parent

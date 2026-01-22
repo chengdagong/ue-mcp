@@ -19,7 +19,7 @@ Expected __PARAMS__:
 import time
 import editor_capture
 
-from capture.utils import get_params, ensure_level_loaded, output_result
+from ue_mcp_capture.utils import get_params, ensure_level_loaded, output_result
 
 
 def capture_mode_window(params):
