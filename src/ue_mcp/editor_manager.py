@@ -409,7 +409,7 @@ class EditorManager:
                 creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
 
             process = subprocess.Popen(
-                [str(editor_path), str(self.project_path), f"-LOG={log_file_path}"],
+                [str(editor_path), str(self.project_path), f"-ABSLOG={log_file_path}"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
