@@ -46,6 +46,9 @@ class EditorInstance:
     status: str = "starting"  # "starting" | "ready" | "stopped"
     remote_client: Optional[RemoteExecutionClient] = None
     node_id: Optional[str] = None  # UE5 remote execution node ID
+    # Launch parameters for auto-restart
+    additional_paths: Optional[list[str]] = None
+    wait_timeout: float = 120.0
 
 
 class EditorManager:
@@ -54,6 +57,11 @@ class EditorManager:
 
     This class is designed for one-to-one binding: one EditorManager per project.
     """
+
+    # Auto-restart configuration
+    MAX_RESTART_ATTEMPTS = 3
+    RESTART_COOLDOWN_SECONDS = 10.0
+    HEALTH_CHECK_INTERVAL = 5.0
 
     def __init__(self, project_path: Path):
         """
@@ -67,6 +75,13 @@ class EditorManager:
         self.project_name = get_project_name(self.project_path)
         self._editor: Optional[EditorInstance] = None
 
+        # Health monitor state
+        self._monitor_task: Optional[asyncio.Task] = None
+        self._notify_callback: Optional[NotifyCallback] = None
+        self._restart_count = 0
+        self._last_restart_time: Optional[float] = None
+        self._intentional_stop = False  # Flag to prevent restart on intentional stop
+
         # Register cleanup on exit
         atexit.register(self._cleanup)
 
@@ -75,8 +90,10 @@ class EditorManager:
 
     def _cleanup(self) -> None:
         """Clean up editor instance on exit."""
+        self._stop_health_monitor()
         if self._editor is not None:
             logger.info("Cleaning up editor instance...")
+            self._intentional_stop = True
             self.stop()
 
     def get_status(self) -> dict[str, Any]:
@@ -222,8 +239,9 @@ class EditorManager:
 
                 plugin_name = plugin_dir.name
                 plugin_dll = plugin_dir / "Binaries" / "Win64" / f"UnrealEditor-{plugin_name}.dll"
+                alternative_plugin_dll = plugin_dir / "Binaries" / "Win64" / f"UnrealEditor-{plugin_name.replace('-', '')}.dll"
 
-                if not plugin_dll.exists():
+                if not plugin_dll.exists() and not alternative_plugin_dll.exists():
                     return True, f"Plugin '{plugin_name}' binary not found"
 
                 # Check if plugin source is newer than binary
@@ -252,6 +270,7 @@ class EditorManager:
     async def _prepare_launch(
         self,
         additional_paths: Optional[list[str]] = None,
+        wait_timeout: float = 120.0,
     ) -> Any:
         """Shared preparation logic for launching the editor."""
         if self.is_running():
@@ -331,9 +350,63 @@ class EditorManager:
                 "error": f"Failed to launch editor: {e}",
             }
 
-        self._editor = EditorInstance(process=process, status="starting")
+        # Save launch parameters for potential restart
+        self._editor = EditorInstance(
+            process=process,
+            status="starting",
+            additional_paths=additional_paths,
+            wait_timeout=wait_timeout,
+        )
         logger.info(f"Editor process started (PID: {process.pid})")
         return process, config_result
+
+    async def _launch_internal(
+        self,
+        notify: Optional[NotifyCallback] = None,
+        additional_paths: Optional[list[str]] = None,
+        wait_timeout: float = 120.0,
+        reset_restart_state: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Internal launch implementation shared by launch(), launch_async(), and restart.
+
+        Args:
+            notify: Optional async callback to send notifications
+            additional_paths: Optional list of additional Python paths
+            wait_timeout: Maximum time to wait for editor connection
+            reset_restart_state: If True, reset restart counter (for fresh launches)
+
+        Returns:
+            Launch result dictionary
+        """
+        # Reset restart state on fresh launch (not on auto-restart)
+        if reset_restart_state:
+            self._restart_count = 0
+            self._last_restart_time = None
+            self._intentional_stop = False
+
+        prep_result = await self._prepare_launch(additional_paths, wait_timeout)
+        if isinstance(prep_result, dict):
+            return prep_result
+
+        process, config_result = prep_result
+
+        # Helper for null notify
+        async def null_notify(level: str, message: str) -> None:
+            pass
+        actual_notify = notify or null_notify
+
+        result = await self._wait_for_connection_async(
+            process=process,
+            notify=actual_notify,
+            wait_timeout=wait_timeout,
+        )
+
+        # Start health monitor after launch attempt
+        if result.get("success") or result.get("background_connecting"):
+            self._start_health_monitor(actual_notify)
+
+        return result
 
     async def launch(
         self,
@@ -343,22 +416,20 @@ class EditorManager:
     ) -> dict[str, Any]:
         """
         Launch Unreal Editor and wait for connection (synchronous startup).
+
+        Args:
+            notify: Optional async callback to send notifications
+            additional_paths: Optional list of additional Python paths
+            wait_timeout: Maximum time to wait for editor connection
+
+        Returns:
+            Launch result dictionary
         """
-        prep_result = await self._prepare_launch(additional_paths)
-        if isinstance(prep_result, dict):
-            return prep_result
-        
-        process, config_result = prep_result
-
-        # Helper for null notify
-        async def null_notify(level: str, message: str) -> None:
-            pass
-        actual_notify = notify or null_notify
-
-        return await self._wait_for_connection_async(
-            process=process,
-            notify=actual_notify,
+        return await self._launch_internal(
+            notify=notify,
+            additional_paths=additional_paths,
             wait_timeout=wait_timeout,
+            reset_restart_state=True,
         )
 
     async def launch_async(
@@ -369,11 +440,24 @@ class EditorManager:
     ) -> dict[str, Any]:
         """
         Launch Unreal Editor asynchronously (returns immediately).
+
+        Args:
+            notify: Async callback to send notifications
+            additional_paths: Optional list of additional Python paths
+            wait_timeout: Maximum time to wait for editor connection
+
+        Returns:
+            Initial launch result (editor starting in background)
         """
-        prep_result = await self._prepare_launch(additional_paths)
+        # Reset restart state on fresh launch
+        self._restart_count = 0
+        self._last_restart_time = None
+        self._intentional_stop = False
+
+        prep_result = await self._prepare_launch(additional_paths, wait_timeout)
         if isinstance(prep_result, dict):
             return prep_result
-        
+
         process, config_result = prep_result
 
         # Start background task to wait for connection
@@ -384,6 +468,9 @@ class EditorManager:
                 wait_timeout=wait_timeout,
             )
         )
+
+        # Start health monitor
+        self._start_health_monitor(notify)
 
         return {
             "success": True,
@@ -567,6 +654,207 @@ class EditorManager:
             "status": self.get_status(),
         }
 
+    # =========================================================================
+    # Health Monitor Methods
+    # =========================================================================
+
+    def _start_health_monitor(self, notify: NotifyCallback) -> None:
+        """
+        Start the health monitor background task.
+
+        Args:
+            notify: Async callback to send notifications to MCP client
+        """
+        # Only start if not already running
+        if self._monitor_task is not None and not self._monitor_task.done():
+            logger.debug("Health monitor already running")
+            return
+
+        self._notify_callback = notify
+        self._intentional_stop = False  # Reset flag
+        self._monitor_task = asyncio.create_task(self._health_monitor_loop())
+        logger.info("Health monitor started")
+
+    def _stop_health_monitor(self) -> None:
+        """
+        Stop the health monitor background task.
+        """
+        if self._monitor_task is not None:
+            self._monitor_task.cancel()
+            self._monitor_task = None
+
+        self._notify_callback = None
+        logger.info("Health monitor stopped")
+
+    async def _health_monitor_loop(self) -> None:
+        """
+        Background coroutine that monitors editor health.
+
+        Periodically checks if the editor process is alive.
+        If the process crashes, sends notification and attempts restart.
+        """
+        logger.info("Health monitor loop started")
+
+        try:
+            while True:
+                await asyncio.sleep(self.HEALTH_CHECK_INTERVAL)
+
+                # Check if editor instance exists
+                if self._editor is None:
+                    logger.debug("No editor instance, monitor exiting")
+                    break
+
+                # Check if process is still running
+                exit_code = self._editor.process.poll()
+                if exit_code is not None:
+                    # Process has exited
+                    self._editor.status = "stopped"
+
+                    # Check if this was an intentional stop
+                    if self._intentional_stop:
+                        logger.info("Editor stopped intentionally, no restart needed")
+                        break
+
+                    # Editor crashed - notify and attempt restart
+                    logger.warning(
+                        f"Editor process exited unexpectedly (exit code: {exit_code})"
+                    )
+
+                    if self._notify_callback:
+                        try:
+                            await self._notify_callback(
+                                "warning",
+                                f"Editor process crashed (exit code: {exit_code}). "
+                                f"Attempting automatic restart...",
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to send crash notification: {e}")
+
+                    # Attempt restart
+                    restart_success = await self._attempt_restart()
+
+                    if not restart_success:
+                        # Restart failed, exit monitor loop
+                        if self._notify_callback:
+                            try:
+                                await self._notify_callback(
+                                    "error",
+                                    f"Failed to restart editor after {self._restart_count} attempts. "
+                                    f"Please restart manually using editor_launch.",
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to send restart failure notification: {e}"
+                                )
+                        break
+
+                    # Restart succeeded, continue monitoring
+
+        except asyncio.CancelledError:
+            logger.info("Health monitor cancelled")
+        except Exception as e:
+            logger.error(f"Health monitor error: {e}")
+        finally:
+            logger.info("Health monitor loop exited")
+
+    async def _attempt_restart(self) -> bool:
+        """
+        Attempt to restart the editor after a crash.
+
+        Implements:
+        - Restart count limiting (MAX_RESTART_ATTEMPTS)
+        - Cooldown period (RESTART_COOLDOWN_SECONDS)
+        - Uses saved launch parameters from EditorInstance
+
+        Returns:
+            True if restart succeeded, False if restart failed or not allowed
+        """
+        # Check restart count
+        if self._restart_count >= self.MAX_RESTART_ATTEMPTS:
+            logger.error(
+                f"Maximum restart attempts ({self.MAX_RESTART_ATTEMPTS}) reached"
+            )
+            return False
+
+        # Check cooldown
+        current_time = time.time()
+        if self._last_restart_time is not None:
+            elapsed = current_time - self._last_restart_time
+            if elapsed < self.RESTART_COOLDOWN_SECONDS:
+                # Still in cooldown, wait for remaining time
+                remaining = self.RESTART_COOLDOWN_SECONDS - elapsed
+                logger.info(f"Restart cooldown: waiting {remaining:.1f}s")
+                await asyncio.sleep(remaining)
+
+        # Save launch parameters before cleanup
+        if self._editor is None:
+            logger.error("No editor instance to restart from")
+            return False
+
+        additional_paths = self._editor.additional_paths
+        wait_timeout = self._editor.wait_timeout
+
+        # Clean up old connection (but not the process - it's already dead)
+        if self._editor.remote_client:
+            self._editor.remote_client._cleanup_sockets()
+        self._editor = None
+
+        # Update restart tracking
+        self._restart_count += 1
+        self._last_restart_time = time.time()
+
+        logger.info(
+            f"Attempting restart {self._restart_count}/{self.MAX_RESTART_ATTEMPTS}..."
+        )
+
+        # Send restart notification
+        if self._notify_callback:
+            try:
+                await self._notify_callback(
+                    "info",
+                    f"Restarting editor (attempt {self._restart_count}/{self.MAX_RESTART_ATTEMPTS})...",
+                )
+            except Exception as e:
+                logger.error(f"Failed to send restart notification: {e}")
+
+        # Attempt to launch (don't reset restart count here)
+        try:
+            result = await self._launch_internal(
+                notify=self._notify_callback,
+                additional_paths=additional_paths,
+                wait_timeout=wait_timeout,
+                reset_restart_state=False,  # Keep restart count
+            )
+
+            if result.get("success") or result.get("background_connecting"):
+                logger.info("Editor restart successful")
+                return True
+            else:
+                logger.error(f"Editor restart failed: {result.get('error')}")
+
+                # Check if requires_build - don't keep trying
+                if result.get("requires_build"):
+                    logger.error(
+                        "Editor requires build. Cannot auto-restart until built."
+                    )
+                    if self._notify_callback:
+                        try:
+                            await self._notify_callback(
+                                "error",
+                                "Editor restart failed: project needs to be built. "
+                                "Run 'project_build' and then 'editor_launch' manually.",
+                            )
+                        except Exception:
+                            pass
+                    # Exhaust restart attempts to prevent further attempts
+                    self._restart_count = self.MAX_RESTART_ATTEMPTS
+
+                return False
+
+        except Exception as e:
+            logger.error(f"Exception during restart: {e}")
+            return False
+
     def stop(self) -> dict[str, Any]:
         """
         Stop the managed editor instance.
@@ -576,6 +864,12 @@ class EditorManager:
         Returns:
             Stop result dictionary
         """
+        # Mark as intentional stop BEFORE anything else to prevent auto-restart
+        self._intentional_stop = True
+
+        # Stop health monitor
+        self._stop_health_monitor()
+
         if self._editor is None:
             return {
                 "success": False,
