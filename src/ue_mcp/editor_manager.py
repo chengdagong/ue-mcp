@@ -150,10 +150,23 @@ class EditorManager:
         Check if the project is a C++ project.
 
         Returns:
-            True if project has a 'Source' directory, False otherwise.
+            True if project has a 'Source' directory or C++ plugins, False otherwise.
         """
+        # Check project's own Source directory
         source_dir = self.project_root / "Source"
-        return source_dir.exists() and source_dir.is_dir()
+        if source_dir.exists() and source_dir.is_dir():
+            return True
+
+        # Check for C++ plugins in Plugins directory
+        plugins_dir = self.project_root / "Plugins"
+        if plugins_dir.exists() and plugins_dir.is_dir():
+            for plugin_dir in plugins_dir.iterdir():
+                if plugin_dir.is_dir():
+                    plugin_source = plugin_dir / "Source"
+                    if plugin_source.exists() and plugin_source.is_dir():
+                        return True
+
+        return False
 
     def needs_build(self) -> tuple[bool, str]:
         """
@@ -165,38 +178,74 @@ class EditorManager:
         if not self.is_cpp_project():
             return False, ""
 
-        # Default Development Editor DLL path
-        # Note: This checks the standard Binaries location for the main project module
+        # Check project's own binary
         dll_name = f"UnrealEditor-{self.project_name}.dll"
         dll_path = self.project_root / "Binaries" / "Win64" / dll_name
 
-        if not dll_path.exists():
-            return True, f"Project binary not found: {dll_name}"
+        # For projects with Source directory, check project binary
+        source_dir = self.project_root / "Source"
+        if source_dir.exists() and source_dir.is_dir():
+            if not dll_path.exists():
+                return True, f"Project binary not found: {dll_name}"
 
-        # Check modification times
-        try:
-            dll_mtime = dll_path.stat().st_mtime
-            
-            source_dir = self.project_root / "Source"
-            latest_source_mtime = 0.0
-            latest_source_file = ""
+            # Check modification times for project source
+            try:
+                dll_mtime = dll_path.stat().st_mtime
+                latest_source_mtime = 0.0
+                latest_source_file = ""
 
-            for root, _, files in os.walk(source_dir):
-                for file in files:
-                    if file.endswith((".cpp", ".h", ".cs")):
-                        file_path = Path(root) / file
-                        mtime = file_path.stat().st_mtime
-                        if mtime > latest_source_mtime:
-                            latest_source_mtime = mtime
-                            latest_source_file = file
-            
-            if latest_source_mtime > dll_mtime:
-                return True, f"Source file '{latest_source_file}' is newer than project binary"
+                for root, _, files in os.walk(source_dir):
+                    for file in files:
+                        if file.endswith((".cpp", ".h", ".cs")):
+                            file_path = Path(root) / file
+                            mtime = file_path.stat().st_mtime
+                            if mtime > latest_source_mtime:
+                                latest_source_mtime = mtime
+                                latest_source_file = file
 
-        except Exception as e:
-            logger.warning(f"Error checking build status: {e}")
-            # If we can't check, assume safe to launch
-            return False, ""
+                if latest_source_mtime > dll_mtime:
+                    return True, f"Source file '{latest_source_file}' is newer than project binary"
+
+            except Exception as e:
+                logger.warning(f"Error checking project build status: {e}")
+
+        # Check C++ plugins
+        plugins_dir = self.project_root / "Plugins"
+        if plugins_dir.exists() and plugins_dir.is_dir():
+            for plugin_dir in plugins_dir.iterdir():
+                if not plugin_dir.is_dir():
+                    continue
+
+                plugin_source = plugin_dir / "Source"
+                if not plugin_source.exists() or not plugin_source.is_dir():
+                    continue
+
+                plugin_name = plugin_dir.name
+                plugin_dll = plugin_dir / "Binaries" / "Win64" / f"UnrealEditor-{plugin_name}.dll"
+
+                if not plugin_dll.exists():
+                    return True, f"Plugin '{plugin_name}' binary not found"
+
+                # Check if plugin source is newer than binary
+                try:
+                    plugin_dll_mtime = plugin_dll.stat().st_mtime
+                    latest_plugin_source_mtime = 0.0
+                    latest_plugin_source_file = ""
+
+                    for root, _, files in os.walk(plugin_source):
+                        for file in files:
+                            if file.endswith((".cpp", ".h", ".cs")):
+                                file_path = Path(root) / file
+                                mtime = file_path.stat().st_mtime
+                                if mtime > latest_plugin_source_mtime:
+                                    latest_plugin_source_mtime = mtime
+                                    latest_plugin_source_file = file
+
+                    if latest_plugin_source_mtime > plugin_dll_mtime:
+                        return True, f"Plugin '{plugin_name}' source file '{latest_plugin_source_file}' is newer than binary"
+
+                except Exception as e:
+                    logger.warning(f"Error checking plugin '{plugin_name}' build status: {e}")
 
         return False, ""
 
@@ -217,7 +266,8 @@ class EditorManager:
         if needs_build:
             return {
                 "success": False,
-                "error": f"Project needs to be built: {reason}. Please run 'project.build' first.",
+                "error": f"Project needs to be built: {reason}. Please run 'project_build' first.",
+                "requires_build": True,
             }
 
         # Run autoconfig
@@ -235,6 +285,18 @@ class EditorManager:
 
         if config_result["status"] == "fixed":
             logger.info(f"Configuration fixed: {config_result['summary']}")
+
+            # If plugin was installed, re-check if build is needed
+            # (needs_build will detect the missing plugin binary)
+            extra_apis_info = config_result.get("extra_python_apis", {})
+            if extra_apis_info.get("modified", False):
+                needs_build, reason = self.needs_build()
+                if needs_build:
+                    return {
+                        "success": False,
+                        "error": f"Project needs to be built: {reason}. Please run 'project_build' first.",
+                        "requires_build": True,
+                    }
 
         # Find editor executable
         editor_path = find_ue5_editor_for_project(self.project_path)
@@ -348,43 +410,49 @@ class EditorManager:
         logger.info("Starting background connection loop...")
         remote_client = RemoteExecutionClient(project_name=self.project_name)
 
-        while True:
-            # Check if process crashed
-            if process.poll() is not None:
-                logger.info("Editor process exited, stopping background connection loop")
-                if self._editor:
-                    self._editor.status = "stopped"
-                return
+        try:
+            while True:
+                # Check if process crashed
+                if process.poll() is not None:
+                    logger.info("Editor process exited, stopping background connection loop")
+                    if self._editor:
+                        self._editor.status = "stopped"
+                    return
 
-            # Check if already connected (by another path, e.g., execute() reconnect)
-            if self._editor and self._editor.status == "ready":
-                logger.info("Editor already connected, stopping background connection loop")
-                return
+                # Check if already connected (by another path, e.g., execute() reconnect)
+                if self._editor and self._editor.status == "ready":
+                    logger.info("Editor already connected, stopping background connection loop")
+                    return
 
-            # Try to connect
-            if remote_client.find_unreal_instance(timeout=2.0):
-                if remote_client.open_connection():
-                    if remote_client.verify_pid(process.pid):
-                        # Success!
-                        if self._editor:
-                            self._editor.node_id = remote_client.get_node_id()
-                            self._editor.remote_client = remote_client
-                            self._editor.status = "ready"
+                # Try to connect
+                if remote_client.find_unreal_instance(timeout=2.0):
+                    if remote_client.open_connection():
+                        if remote_client.verify_pid(process.pid):
+                            # Success! Transfer ownership to _editor
+                            if self._editor:
+                                self._editor.node_id = remote_client.get_node_id()
+                                self._editor.remote_client = remote_client
+                                self._editor.status = "ready"
 
-                        logger.info(
-                            f"Background connect succeeded (node_id: {remote_client.get_node_id()})"
-                        )
-                        await notify(
-                            "info",
-                            f"Editor connected successfully in background! "
-                            f"(PID: {process.pid}, node_id: {remote_client.get_node_id()})"
-                        )
-                        return
-                    else:
-                        logger.debug("PID mismatch in background connect, retrying...")
-                        remote_client.close_connection()
+                            logger.info(
+                                f"Background connect succeeded (node_id: {remote_client.get_node_id()})"
+                            )
+                            await notify(
+                                "info",
+                                f"Editor connected successfully in background! "
+                                f"(PID: {process.pid}, node_id: {remote_client.get_node_id()})"
+                            )
+                            # Don't cleanup - remote_client is now owned by _editor
+                            return
+                        else:
+                            logger.debug("PID mismatch in background connect, retrying...")
+                            remote_client.close_connection()
 
-            await asyncio.sleep(retry_interval)
+                await asyncio.sleep(retry_interval)
+        finally:
+            # Clean up if we exit without successful connection
+            if self._editor is None or self._editor.remote_client is not remote_client:
+                remote_client._cleanup_sockets()
 
     async def _wait_for_connection_async(
         self,
@@ -415,6 +483,7 @@ class EditorManager:
                 if self._editor:
                     self._editor.status = "stopped"
                 logger.error(f"Editor process exited unexpectedly (exit code: {process.returncode})")
+                remote_client._cleanup_sockets()
                 await notify(
                     "error",
                     f"Editor process exited unexpectedly (exit code: {process.returncode})"
@@ -447,6 +516,10 @@ class EditorManager:
             )
             if self._editor:
                 self._editor.status = "starting"
+
+            # Clean up the current remote_client before starting background loop
+            # (background loop creates its own client)
+            remote_client._cleanup_sockets()
 
             # Start background connection loop to keep trying
             asyncio.create_task(
@@ -583,6 +656,12 @@ class EditorManager:
         ):
             # Try to reconnect using stored node_id
             logger.info("Remote client disconnected, attempting to reconnect...")
+
+            # Clean up old remote_client if it exists
+            if self._editor.remote_client is not None:
+                self._editor.remote_client._cleanup_sockets()
+                self._editor.remote_client = None
+
             remote_client = RemoteExecutionClient(
                 project_name=self.project_name,
                 expected_node_id=self._editor.node_id,  # Only accept known node
@@ -599,11 +678,13 @@ class EditorManager:
                             "error": "PID mismatch during reconnect. Original editor may have crashed.",
                         }
                 else:
+                    remote_client._cleanup_sockets()
                     return {
                         "success": False,
                         "error": "Failed to reconnect to editor",
                     }
             else:
+                remote_client._cleanup_sockets()
                 return {
                     "success": False,
                     "error": "Failed to find editor instance. Editor may have crashed.",
@@ -802,7 +883,7 @@ class EditorManager:
             logger.info(f"Project {self.project_name} is a Blueprint-only project. Skipping build.")
             return {
                 "success": True,
-                "message": f"Project '{self.project_name}' is a Blueprint-only project (no Source directory). No C++ compilation required.",
+                "message": f"Project '{self.project_name}' is a Blueprint-only project (no Source directory or C++ plugins). No C++ compilation required.",
                 "is_cpp": False,
             }
 
@@ -887,7 +968,7 @@ class EditorManager:
             logger.info(f"Project {self.project_name} is a Blueprint-only project. Skipping build.")
             return {
                 "success": True,
-                "message": f"Project '{self.project_name}' is a Blueprint-only project (no Source directory). No C++ compilation required.",
+                "message": f"Project '{self.project_name}' is a Blueprint-only project (no Source directory or C++ plugins). No C++ compilation required.",
                 "is_cpp": False,
             }
 

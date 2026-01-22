@@ -6,6 +6,7 @@ Automatically detect and fix UE5 project configuration for Python remote executi
 
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import Any, Optional
 
@@ -24,8 +25,78 @@ def get_bundled_site_packages() -> Path:
     """
     return Path(__file__).parent / "extra" / "site-packages"
 
+
+def get_bundled_plugin_path() -> Path:
+    """
+    Get the path to the bundled ExtraPythonAPIs plugin.
+
+    Returns:
+        Path to the extra/plugin/ExtraPythonAPIs directory
+    """
+    return Path(__file__).parent / "extra" / "plugin" / "ExtraPythonAPIs"
+
 # INI file section for Python plugin settings
 PYTHON_PLUGIN_SECTION = "[/Script/PythonScriptPlugin.PythonScriptPluginSettings]"
+
+# Extra Python APIs plugin name
+EXTRA_PYTHON_APIS_PLUGIN = "ExtraPythonAPIs"
+
+
+def check_extra_python_apis_plugin(
+    project_root: Path, auto_fix: bool = False
+) -> tuple[bool, bool, str]:
+    """
+    Check and optionally install the ExtraPythonAPIs plugin.
+
+    This plugin provides extra Python-accessible APIs for UE5 that are not
+    exposed by default.
+
+    Args:
+        project_root: Path to UE5 project root directory
+        auto_fix: Whether to automatically copy the plugin if missing
+
+    Returns:
+        (installed, modified, message)
+    """
+    plugins_dir = project_root / "Plugins"
+    target_plugin_dir = plugins_dir / EXTRA_PYTHON_APIS_PLUGIN
+    source_plugin_dir = get_bundled_plugin_path()
+
+    # Check if source plugin exists
+    if not source_plugin_dir.exists():
+        return False, False, f"Bundled plugin not found at {source_plugin_dir}"
+
+    # Check if plugin already exists in project
+    if target_plugin_dir.exists():
+        # Verify it has the .uplugin file
+        uplugin_file = target_plugin_dir / f"{EXTRA_PYTHON_APIS_PLUGIN}.uplugin"
+        if uplugin_file.exists():
+            return True, False, f"{EXTRA_PYTHON_APIS_PLUGIN} plugin already installed"
+        else:
+            if not auto_fix:
+                return False, False, f"{EXTRA_PYTHON_APIS_PLUGIN} directory exists but missing .uplugin file"
+            # Remove corrupted directory and reinstall
+            try:
+                shutil.rmtree(target_plugin_dir)
+            except Exception as e:
+                return False, False, f"Failed to remove corrupted plugin directory: {e}"
+
+    if not auto_fix:
+        return False, False, f"{EXTRA_PYTHON_APIS_PLUGIN} plugin not installed"
+
+    # Create Plugins directory if it doesn't exist
+    try:
+        plugins_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        return False, False, f"Failed to create Plugins directory: {e}"
+
+    # Copy the plugin
+    try:
+        shutil.copytree(source_plugin_dir, target_plugin_dir)
+        logger.info(f"Installed {EXTRA_PYTHON_APIS_PLUGIN} plugin to {target_plugin_dir}")
+        return True, True, f"Installed {EXTRA_PYTHON_APIS_PLUGIN} plugin"
+    except Exception as e:
+        return False, False, f"Failed to copy plugin: {e}"
 
 
 def check_python_plugin(
@@ -418,6 +489,12 @@ def run_config_check(
             "modified": False,
             "message": "",
         },
+        "extra_python_apis": {
+            "path": None,
+            "installed": False,
+            "modified": False,
+            "message": "",
+        },
         "restart_needed": False,
         "summary": "",
     }
@@ -459,6 +536,16 @@ def run_config_check(
         result["additional_paths"]["configured"] = True
         result["additional_paths"]["message"] = "No additional paths requested"
 
+    # Check ExtraPythonAPIs Plugin
+    result["extra_python_apis"]["path"] = str(
+        (project_root / "Plugins" / EXTRA_PYTHON_APIS_PLUGIN).relative_to(project_root)
+    )
+    installed, modified, message = check_extra_python_apis_plugin(project_root, auto_fix)
+    result["extra_python_apis"].update(
+        installed=installed, modified=modified, message=message
+    )
+    _update_status(result, modified, installed)
+
     # Generate summary
     if result["status"] == "fixed":
         fix_count = sum(
@@ -466,6 +553,7 @@ def run_config_check(
                 result["python_plugin"]["modified"],
                 result["remote_execution"]["modified"],
                 result["additional_paths"]["modified"],
+                result["extra_python_apis"]["modified"],
             ]
         )
         result["summary"] = f"Fixed {fix_count} issue(s)."

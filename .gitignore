@@ -30,6 +30,7 @@ tests/fixtures/*/Intermediate/
 tests/fixtures/*/DerivedDataCache/
 tests/fixtures/*/Backup/
 tests/fixtures/*/Binaries/
+tests/fixtures/*/Plugins/*
 tests/fixtures/ThirdPersonTemplate/Content/__ExternalActors__/
 tests/fixtures/ThirdPersonTemplate/Content/__ExternalObjects__/
 tests/fixtures/*/.vs/
