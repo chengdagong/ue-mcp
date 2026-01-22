@@ -26,6 +26,19 @@ def get_bundled_site_packages() -> Path:
     return Path(__file__).parent / "extra" / "site-packages"
 
 
+def get_bundled_scripts_path() -> Path:
+    """
+    Get the path to the bundled scripts directory.
+
+    This directory contains the ue_mcp_capture package and other
+    script modules that need to be importable in UE5.
+
+    Returns:
+        Path to the extra/scripts directory
+    """
+    return Path(__file__).parent / "extra" / "scripts"
+
+
 def get_bundled_plugin_path() -> Path:
     """
     Get the path to the bundled ExtraPythonAPIs plugin.
@@ -460,7 +473,7 @@ def run_config_check(
     """
     additional_paths = list(additional_paths) if additional_paths else []
 
-    # Include bundled site-packages by default
+    # Include bundled site-packages and scripts by default
     if include_bundled_packages:
         bundled_path = get_bundled_site_packages()
         if bundled_path.exists():
@@ -468,6 +481,14 @@ def run_config_check(
             if bundled_path_str not in additional_paths:
                 additional_paths.insert(0, bundled_path_str)
                 logger.info(f"Including bundled site-packages: {bundled_path_str}")
+
+        # Also include scripts directory for ue_mcp_capture package
+        scripts_path = get_bundled_scripts_path()
+        if scripts_path.exists():
+            scripts_path_str = str(scripts_path.resolve())
+            if scripts_path_str not in additional_paths:
+                additional_paths.append(scripts_path_str)
+                logger.info(f"Including bundled scripts: {scripts_path_str}")
 
     result: dict[str, Any] = {
         "status": "ok",
