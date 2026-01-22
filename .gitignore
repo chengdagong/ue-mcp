@@ -38,6 +38,8 @@ tests/fixtures/*/*.sln
 tests/fixtures/*/*.xcode-project
 tests/fixtures/*/*.code-workspace
 
+#Screenshots
+Screenshots/
 
 
 # Environment variables
