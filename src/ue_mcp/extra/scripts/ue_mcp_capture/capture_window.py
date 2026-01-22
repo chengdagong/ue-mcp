@@ -6,7 +6,22 @@ Supports three modes:
 - "asset": Open an asset editor and capture it
 - "batch": Capture multiple assets to a directory
 
-Expected __PARAMS__:
+Usage (CLI):
+    # Window mode (default):
+    python capture_window.py --level=/Game/Maps/TestLevel --output-file=screenshot.png
+
+    # Asset mode:
+    python capture_window.py --level=/Game/Maps/TestLevel --mode=asset \\
+        --asset-path=/Game/Blueprints/BP_Test --output-file=asset.png
+
+    # Batch mode:
+    python capture_window.py --level=/Game/Maps/TestLevel --mode=batch \\
+        --asset-list='["/Game/BP1", "/Game/BP2"]' --output-dir=/path/to/output
+
+    Optional arguments:
+        --tab=<n>             Tab number to switch to (1-9)
+
+MCP mode (__PARAMS__):
     level: str - Level path to load
     mode: str - "window", "asset", or "batch"
     output_file: str - Output file path (for window/asset modes)
@@ -19,7 +34,23 @@ Expected __PARAMS__:
 import time
 import editor_capture
 
+from module_reload_utils import reload_recursive
+reload_recursive(editor_capture)
+
 from ue_mcp_capture.utils import get_params, ensure_level_loaded, output_result
+
+# Default parameter values for CLI mode
+DEFAULTS = {
+    "mode": "window",
+    "output_file": None,
+    "output_dir": None,
+    "asset_path": None,
+    "asset_list": None,
+    "tab": None,
+}
+
+# Required parameters (level is always required, others depend on mode)
+REQUIRED = ["level"]
 
 
 def capture_mode_window(params):
@@ -96,12 +127,34 @@ def capture_mode_batch(params):
 
 
 def main():
-    params = get_params()
+    params = get_params(defaults=DEFAULTS, required=REQUIRED)
+
+    # Validate mode-specific required parameters
+    mode = params.get("mode", "window")
+    if mode in ("window", "asset") and not params.get("output_file"):
+        raise RuntimeError(
+            f"Mode '{mode}' requires --output-file parameter.\n"
+            f"Example: python capture_window.py --level=/Game/Maps/Test --output-file=screenshot.png"
+        )
+    if mode == "asset" and not params.get("asset_path"):
+        raise RuntimeError(
+            "Mode 'asset' requires --asset-path parameter.\n"
+            "Example: python capture_window.py --mode=asset --asset-path=/Game/BP_Test --output-file=out.png"
+        )
+    if mode == "batch":
+        if not params.get("asset_list"):
+            raise RuntimeError(
+                "Mode 'batch' requires --asset-list parameter.\n"
+                'Example: python capture_window.py --mode=batch --asset-list=\'["/Game/BP1"]\' --output-dir=./out'
+            )
+        if not params.get("output_dir"):
+            raise RuntimeError(
+                "Mode 'batch' requires --output-dir parameter.\n"
+                'Example: python capture_window.py --mode=batch --asset-list=\'["/Game/BP1"]\' --output-dir=./out'
+            )
 
     # Ensure correct level is loaded
     ensure_level_loaded(params["level"])
-
-    mode = params.get("mode", "window")
 
     if mode == "window":
         capture_mode_window(params)

@@ -4,7 +4,10 @@ Asset diagnostic runner script for MCP.
 Runs asset_diagnostic.diagnose() on the specified asset path
 and outputs structured JSON result for the MCP server to parse.
 
-Expected __PARAMS__:
+Usage (CLI):
+    python diagnostic_runner.py --asset-path=/Game/Maps/TestLevel
+
+MCP mode (__PARAMS__):
     asset_path: str - Asset path to diagnose (e.g., /Game/Maps/TestLevel)
 """
 import json
@@ -19,20 +22,95 @@ for mod_name in modules_to_remove:
 
 import asset_diagnostic
 
+# Flag to track if running in MCP mode (vs CLI mode)
+_mcp_mode = None
+
+
+def _is_mcp_mode() -> bool:
+    """Check if running in MCP mode (vs CLI mode)."""
+    global _mcp_mode
+    if _mcp_mode is None:
+        import builtins
+        _mcp_mode = hasattr(builtins, "__PARAMS__")
+    return _mcp_mode
+
+
+def _parse_cli_value(value_str: str):
+    """Parse a CLI argument value string to appropriate Python type."""
+    if value_str.lower() in ("none", "null"):
+        return None
+    if value_str.lower() in ("true", "yes", "1"):
+        return True
+    if value_str.lower() in ("false", "no", "0"):
+        return False
+    try:
+        return int(value_str)
+    except ValueError:
+        pass
+    try:
+        return float(value_str)
+    except ValueError:
+        pass
+    return value_str
+
 
 def get_params() -> dict:
-    """Get parameters injected by MCP server."""
+    """
+    Get parameters from MCP server or CLI arguments.
+
+    The MCP server injects __PARAMS__ into builtins before executing the script.
+    For direct execution, parameters are parsed from sys.argv.
+    """
     import builtins
+
+    # Check MCP mode first
     if hasattr(builtins, "__PARAMS__"):
         return builtins.__PARAMS__
-    raise RuntimeError(
-        "__PARAMS__ not found. If testing manually, set builtins.__PARAMS__ = {...} first."
-    )
+
+    # CLI mode: parse arguments
+    params = {}
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg.startswith("--"):
+            arg = arg[2:]
+            if "=" in arg:
+                key, value = arg.split("=", 1)
+                params[key.replace("-", "_")] = _parse_cli_value(value)
+            elif i + 1 < len(args) and not args[i + 1].startswith("--"):
+                key = arg.replace("-", "_")
+                params[key] = _parse_cli_value(args[i + 1])
+                i += 1
+            else:
+                params[arg.replace("-", "_")] = True
+        i += 1
+
+    # Validate required parameters
+    if "asset_path" not in params:
+        raise RuntimeError(
+            "Missing required parameter: asset_path\n"
+            "Usage: python diagnostic_runner.py --asset-path=/Game/Maps/TestLevel"
+        )
+
+    return params
 
 
 def output_result(data: dict) -> None:
-    """Output result in format expected by MCP server."""
-    print("__DIAGNOSTIC_RESULT__" + json.dumps(data))
+    """
+    Output result in format appropriate for current mode.
+
+    In MCP mode: Outputs JSON with special prefix for parsing.
+    In CLI mode: Outputs human-readable formatted JSON.
+    """
+    if _is_mcp_mode():
+        print("__DIAGNOSTIC_RESULT__" + json.dumps(data))
+    else:
+        print("\n" + "=" * 60)
+        print("DIAGNOSTIC RESULT")
+        print("=" * 60)
+        print(json.dumps(data, indent=2))
+        print("=" * 60)
 
 
 def serialize_result(result) -> dict:

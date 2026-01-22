@@ -3,7 +3,17 @@ Orbital capture script for UE Editor.
 
 Can be run directly in UE or via MCP server.
 
-Expected __PARAMS__:
+Usage (CLI):
+    python capture_orbital.py --level=/Game/Maps/TestLevel --target-x=0 --target-y=0 --target-z=100
+
+    Optional arguments:
+        --distance=500        Camera distance from target (default: 500)
+        --preset=orthographic View preset: all, perspective, orthographic, birdseye, horizontal, technical
+        --output-dir=path     Output directory (default: auto-generated)
+        --resolution-width=800   Screenshot width (default: 800)
+        --resolution-height=600  Screenshot height (default: 600)
+
+MCP mode (__PARAMS__):
     level: str - Level path to load
     target_x, target_y, target_z: float - Target location
     distance: float - Camera distance
@@ -16,11 +26,26 @@ import gc
 import unreal
 import editor_capture
 
+from module_reload_utils import reload_recursive
+reload_recursive(editor_capture)
+
 from ue_mcp_capture.utils import get_params, ensure_level_loaded, output_result
+
+# Default parameter values for CLI mode
+DEFAULTS = {
+    "distance": 500.0,
+    "preset": "orthographic",
+    "output_dir": None,
+    "resolution_width": 800,
+    "resolution_height": 600,
+}
+
+# Required parameters
+REQUIRED = ["level", "target_x", "target_y", "target_z"]
 
 
 def main():
-    params = get_params()
+    params = get_params(defaults=DEFAULTS, required=REQUIRED)
 
     # Ensure correct level is loaded
     ensure_level_loaded(params["level"])
