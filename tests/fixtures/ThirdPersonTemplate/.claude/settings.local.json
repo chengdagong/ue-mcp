@@ -3,11 +3,18 @@
     "allow": [
       "mcp__ue-mcp__editor_launch",
       "mcp__ue-mcp__editor_capture_pie",
-      "mcp__ue-mcp__editor_execute",
+      "mcp__ue-mcp__editor_execute_code",
+      "mcp__ue-mcp__editor_execute_script",
       "WebFetch(domain:gemini.google.com)",
       "mcp__ue-mcp__editor_status",
       "mcp__ue-mcp__editor_stop",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Skill(ue5-dev-tools:ue5-vscode-debugger)",
+      "Bash(python:*)",
+      "mcp__ue-mcp__editor_pip_install",
+      "Skill(ue5-dev-tools:ue5-python-executor)",
+      "Skill(ue5-dev-tools:ue5-python-executor:*)",
+      "Bash(python3:*)"
     ]
   }
 }

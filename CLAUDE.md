@@ -21,7 +21,8 @@ UE-MCP 服务器提供以下工具：
 ### Python 执行
 | 工具 | 描述 |
 |------|------|
-| `editor_execute` | 在编辑器中执行 Python 代码 |
+| `editor_execute_code` | 在编辑器中执行 Python 代码 |
+| `editor_execute_script` | 在编辑器中执行 Python 脚本文件 |
 | `editor_pip_install` | 在 UE5 的嵌入式 Python 环境中安装包 |
 
 ### PIE (Play-In-Editor) 控制

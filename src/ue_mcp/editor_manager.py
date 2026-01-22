@@ -552,9 +552,11 @@ class EditorManager:
             "message": "Editor stopped",
         }
 
-    def execute(self, code: str, timeout: float = 30.0) -> dict[str, Any]:
+    def _execute(self, code: str, timeout: float = 30.0) -> dict[str, Any]:
         """
-        Execute Python code in the managed editor.
+        Execute Python code in the managed editor (internal use only).
+
+        External callers should use execute_with_auto_install() instead.
 
         Args:
             code: Python code to execute
@@ -628,7 +630,7 @@ class EditorManager:
             Path to Python interpreter, or None if failed
         """
         try:
-            result = self.execute("import unreal; print(unreal.get_interpreter_executable_path())", timeout=5.0)
+            result = self._execute("import unreal; print(unreal.get_interpreter_executable_path())", timeout=5.0)
             if result.get("success") and result.get("output"):
                 output = result["output"]
                 lines = []
@@ -696,7 +698,7 @@ class EditorManager:
             # Step 3: Try executing imports, install missing modules and retry
             attempts = 0
             while attempts <= max_install_attempts:
-                result = self.execute(import_code, timeout=10.0)
+                result = self._execute(import_code, timeout=10.0)
 
                 if result.get("success"):
                     # All imports succeeded
@@ -737,7 +739,7 @@ class EditorManager:
                 attempts += 1
 
         # Step 4: Execute the full code
-        result = self.execute(code, timeout=timeout)
+        result = self._execute(code, timeout=timeout)
 
         # Add installation info
         if installed_packages:

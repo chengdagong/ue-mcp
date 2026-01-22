@@ -352,7 +352,7 @@ def stop_editor() -> dict[str, Any]:
     return manager.stop()
 
 
-@mcp.tool(name="editor_execute")
+@mcp.tool(name="editor_execute_code")
 def execute_code(code: str, timeout: float = 30.0) -> dict[str, Any]:
     """
     Execute Python code in the managed Unreal Editor.
@@ -375,7 +375,58 @@ def execute_code(code: str, timeout: float = 30.0) -> dict[str, Any]:
         execute_code("import unreal; print(unreal.EditorAssetLibrary.list_assets('/Game/'))")
     """
     manager = _get_editor_manager()
-    return manager.execute(code, timeout=timeout)
+    return manager.execute_with_auto_install(code, timeout=timeout)
+
+
+@mcp.tool(name="editor_execute_script")
+def execute_script(script_path: str, timeout: float = 30.0) -> dict[str, Any]:
+    """
+    Execute a Python script file in the managed Unreal Editor.
+
+    The script is read from the file system and executed in the editor's Python
+    environment with access to the 'unreal' module and all editor APIs.
+    Missing modules will be automatically installed.
+
+    Args:
+        script_path: Path to the Python script file to execute
+        timeout: Execution timeout in seconds (default: 30)
+
+    Returns:
+        Execution result containing:
+        - success: Whether execution succeeded
+        - result: Return value (if any)
+        - output: Console output from the script
+        - error: Error message (if failed)
+        - auto_installed: List of packages that were auto-installed (if any)
+
+    Example:
+        execute_script("/path/to/my_script.py")
+    """
+    from pathlib import Path
+
+    path = Path(script_path)
+    if not path.exists():
+        return {
+            "success": False,
+            "error": f"Script file not found: {script_path}",
+        }
+
+    if not path.is_file():
+        return {
+            "success": False,
+            "error": f"Path is not a file: {script_path}",
+        }
+
+    try:
+        code = path.read_text(encoding="utf-8")
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to read script file: {e}",
+        }
+
+    manager = _get_editor_manager()
+    return manager.execute_with_auto_install(code, timeout=timeout)
 
 
 @mcp.tool(name="editor_configure")

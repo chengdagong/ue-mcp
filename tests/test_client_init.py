@@ -42,7 +42,8 @@ class TestToolListing:
         assert "editor_launch" in tools
         assert "editor_stop" in tools
         assert "editor_status" in tools
-        assert "editor_execute" in tools
+        assert "editor_execute_code" in tools
+        assert "editor_execute_script" in tools
         assert "editor_configure" in tools
         assert "project_build" in tools
 
