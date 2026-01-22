@@ -663,7 +663,7 @@ else:
     else:
         print("__PIE_RESULT__FAILED")
 """
-    exec_result = manager.execute(code, timeout=10.0)
+    exec_result = manager.execute_with_auto_install(code, timeout=10.0)
 
     if not exec_result.get("success"):
         return {
@@ -712,7 +712,7 @@ else:
     else:
         print("__PIE_RESULT__FAILED")
 """
-    exec_result = manager.execute(code, timeout=10.0)
+    exec_result = manager.execute_with_auto_install(code, timeout=10.0)
 
     if not exec_result.get("success"):
         return {
