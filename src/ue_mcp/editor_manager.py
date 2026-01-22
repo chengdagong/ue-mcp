@@ -1057,7 +1057,23 @@ class EditorManager:
                     "error": "Failed to find editor instance. Editor may have crashed.",
                 }
 
-        result = self._editor.remote_client.execute(code, timeout=timeout)
+        # Wrap multi-line code in exec() since EXECUTE_STATEMENT only handles single statements
+        # For single-line code without newlines, execute directly
+        if "\n" in code:
+            # Escape the code for use in exec()
+            escaped_code = code.replace("\\", "\\\\").replace("'", "\\'")
+            wrapped_code = f"exec('''{escaped_code}''')"
+            result = self._editor.remote_client.execute(
+                wrapped_code,
+                exec_type=self._editor.remote_client.ExecTypes.EXECUTE_STATEMENT,
+                timeout=timeout,
+            )
+        else:
+            result = self._editor.remote_client.execute(
+                code,
+                exec_type=self._editor.remote_client.ExecTypes.EXECUTE_STATEMENT,
+                timeout=timeout,
+            )
 
         # Check for crash
         if result.get("crashed", False):

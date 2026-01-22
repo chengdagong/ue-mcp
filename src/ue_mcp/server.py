@@ -798,6 +798,7 @@ async def capture_pie(
     multi_angle: bool = True,
     camera_distance: float = 300.0,
     target_height: float = 90.0,
+    target_actor: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Capture screenshots during Play-In-Editor (PIE) session.
@@ -816,12 +817,16 @@ async def capture_pie(
         multi_angle: Enable multi-angle capture around player (default: True)
         camera_distance: Camera distance from player for multi-angle (default: 300)
         target_height: Target height offset for camera (default: 90)
+        target_actor: Name of the actor to capture (actor label or object name).
+                      If not specified, captures around player character.
+                      If specified but not found, returns error with available actors.
 
     Returns:
         Result containing:
         - success: Whether capture succeeded
         - output_dir: Directory containing captured screenshots
         - duration: Actual capture duration
+        - available_actors: (on error) List of actors in level with label, name, type
     """
     manager = _get_editor_manager()
 
@@ -845,6 +850,7 @@ async def capture_pie(
             "multi_angle": multi_angle,
             "camera_distance": camera_distance,
             "target_height": target_height,
+            "target_actor": target_actor,
         },
         timeout=30.0,  # Short timeout since script returns immediately
     )
@@ -880,12 +886,119 @@ async def capture_pie(
             "output_dir": output_dir,
         }
 
-    return {
+    result = {
         "success": capture_result.get("success", False),
         "output_dir": capture_result.get("output_dir", output_dir),
         "duration": capture_result.get("duration", 0),
         "interval": capture_result.get("interval", interval_seconds),
         "screenshot_count": capture_result.get("screenshot_count", 0),
+    }
+
+    # Pass through error info if capture failed (e.g., target_actor not found)
+    if not result["success"]:
+        if "error" in capture_result:
+            result["error"] = capture_result["error"]
+        if "available_actors" in capture_result:
+            result["available_actors"] = capture_result["available_actors"]
+
+    return result
+
+
+@mcp.tool(name="editor_trace_actors_in_pie")
+async def trace_actors_in_pie(
+    ctx: Context,
+    output_file: str,
+    level: str,
+    actor_names: list[str],
+    duration_seconds: float = 10.0,
+    interval_seconds: float = 0.1,
+) -> dict[str, Any]:
+    """
+    Trace actor transforms during Play-In-Editor (PIE) session.
+
+    Automatically starts PIE, periodically samples specified actors'
+    positions, rotations, and velocities, then stops PIE and returns
+    a JSON report.
+
+    Args:
+        output_file: Output JSON file path (required)
+        level: Path to the level to load (required)
+        actor_names: List of actor names to track (required)
+        duration_seconds: How long to trace in seconds (default: 10)
+        interval_seconds: Time between samples in seconds (default: 0.1)
+
+    Returns:
+        Result containing:
+        - success: Whether tracing succeeded
+        - output_file: Path to JSON trace file
+        - duration: Actual trace duration
+        - interval: Sampling interval used
+        - sample_count: Number of samples collected
+        - actor_count: Number of actors successfully tracked
+        - actors_not_found: List of actor names that weren't found
+    """
+    manager = _get_editor_manager()
+
+    from .script_executor import execute_script
+
+    # Generate unique task_id for this trace
+    task_id = str(uuid.uuid4())[:8]
+
+    # Start tracer (returns immediately, tracing runs via tick callbacks)
+    result = execute_script(
+        manager,
+        "trace_actors_pie",
+        params={
+            "task_id": task_id,
+            "output_file": output_file,
+            "level": level,
+            "actor_names": actor_names,
+            "duration_seconds": duration_seconds,
+            "interval_seconds": interval_seconds,
+        },
+        timeout=30.0,  # Short timeout since script returns immediately
+    )
+
+    if not result.get("success", False):
+        return _parse_capture_result(result)
+
+    # Notify that tracing has started
+    await ctx.log(f"PIE actor tracing started (task_id={task_id}), monitoring for completion...", level="info")
+
+    # Watch for completion file
+    # Timeout = duration + buffer for PIE startup/shutdown
+    watch_timeout = duration_seconds + 60.0
+
+    async def on_complete(trace_result: dict[str, Any]) -> None:
+        """Called when tracing completes."""
+        await ctx.log(
+            f"PIE tracing completed: {trace_result.get('sample_count', 0)} samples "
+            f"for {trace_result.get('actor_count', 0)} actors",
+            level="info",
+        )
+
+    trace_result = await watch_pie_capture_complete(
+        project_root=manager.project_root,
+        task_id=task_id,
+        callback=on_complete,
+        timeout=watch_timeout,
+    )
+
+    if trace_result is None:
+        return {
+            "success": False,
+            "error": f"Timeout waiting for PIE tracing completion after {watch_timeout}s",
+            "output_file": output_file,
+        }
+
+    return {
+        "success": trace_result.get("success", False),
+        "output_file": trace_result.get("output_file", output_file),
+        "duration": trace_result.get("duration", 0),
+        "interval": trace_result.get("interval", interval_seconds),
+        "sample_count": trace_result.get("sample_count", 0),
+        "actor_count": trace_result.get("actor_count", 0),
+        "actors_not_found": trace_result.get("actors_not_found", []),
     }
 
 
