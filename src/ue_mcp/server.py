@@ -154,7 +154,8 @@ UE-MCP is an MCP server for interacting with Unreal Editor.
 Available tools:
 - project_set_path: Set the UE5 project directory (can be called from any directory)
 - editor_launch: Start the Unreal Editor for the bound project
-- editor_status: Get the current editor status
+- editor_status: Get the current editor status (includes log_file_path)
+- editor_read_log: Read the editor log file content
 - editor_stop: Stop the running editor
 - editor_execute: Execute Python code in the editor
 - editor_configure: Check and fix project configuration
@@ -294,9 +295,34 @@ def get_editor_status() -> dict[str, Any]:
         - pid: Process ID (if running)
         - started_at: Timestamp when editor was started (if running)
         - connected: Whether remote execution is connected (if running)
+        - log_file_path: Path to the editor log file (if launched)
     """
     manager = _get_editor_manager()
     return manager.get_status()
+
+
+@mcp.tool(name="editor_read_log")
+def read_editor_log(tail_lines: Optional[int] = None) -> dict[str, Any]:
+    """
+    Read the Unreal Editor log file content.
+
+    The log file is created when the editor is launched via editor_launch.
+    Each launch creates a unique log file with the project name and timestamp.
+
+    Args:
+        tail_lines: If specified, only return the last N lines of the log.
+                   Useful for large log files. If not specified, returns entire log.
+
+    Returns:
+        Result containing:
+        - success: Whether read succeeded
+        - log_file_path: Path to the log file
+        - content: Log file content (or last N lines if tail_lines specified)
+        - file_size: Size of the log file in bytes
+        - error: Error message (if failed)
+    """
+    manager = _get_editor_manager()
+    return manager.read_log(tail_lines=tail_lines)
 
 
 @mcp.tool(name="editor_stop")

@@ -48,6 +48,7 @@ class EditorInstance:
     status: str = "starting"  # "starting" | "ready" | "stopped"
     remote_client: Optional[RemoteExecutionClient] = None
     node_id: Optional[str] = None  # UE5 remote execution node ID
+    log_file_path: Optional[Path] = None  # Path to editor log file
     # Launch parameters for auto-restart
     additional_paths: Optional[list[str]] = None
     wait_timeout: float = 120.0
@@ -127,7 +128,70 @@ class EditorManager:
                 if self._editor.remote_client
                 else False
             ),
+            "log_file_path": (
+                str(self._editor.log_file_path)
+                if self._editor.log_file_path
+                else None
+            ),
         }
+
+    def read_log(self, tail_lines: Optional[int] = None) -> dict[str, Any]:
+        """
+        Read the editor log file content.
+
+        Args:
+            tail_lines: If specified, only return the last N lines of the log
+
+        Returns:
+            Dictionary containing:
+            - success: Whether read succeeded
+            - log_file_path: Path to the log file
+            - content: Log file content (or last N lines if tail_lines specified)
+            - file_size: Size of the log file in bytes
+            - error: Error message (if failed)
+        """
+        # Get log file path from current or previous editor instance
+        log_path: Optional[Path] = None
+        if self._editor and self._editor.log_file_path:
+            log_path = self._editor.log_file_path
+
+        if log_path is None:
+            return {
+                "success": False,
+                "error": "No log file path available. Editor may not have been launched yet.",
+            }
+
+        if not log_path.exists():
+            return {
+                "success": False,
+                "error": f"Log file does not exist: {log_path}",
+                "log_file_path": str(log_path),
+            }
+
+        try:
+            file_size = log_path.stat().st_size
+
+            if tail_lines is not None and tail_lines > 0:
+                # Read only last N lines
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+                    content = "".join(lines[-tail_lines:])
+            else:
+                # Read entire file
+                content = log_path.read_text(encoding="utf-8", errors="replace")
+
+            return {
+                "success": True,
+                "log_file_path": str(log_path),
+                "content": content,
+                "file_size": file_size,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to read log file: {e}",
+                "log_file_path": str(log_path),
+            }
 
     def _try_connect(self) -> bool:
         """
@@ -330,6 +394,12 @@ class EditorManager:
         logger.info(f"Launching editor: {editor_path}")
         logger.info(f"Project: {self.project_path}")
 
+        # Generate log file path for engine logs (includes project name and timestamp)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_filename = f"ue-mcp-{self.project_name}-{timestamp}.log"
+        log_file_path = self.project_root / "Saved" / "Logs" / log_filename
+        logger.info(f"Editor log file: {log_file_path}")
+
         # Launch editor process
         try:
             # On Windows, use DETACHED_PROCESS to fully separate from parent
@@ -337,9 +407,9 @@ class EditorManager:
             creationflags = 0
             if sys.platform == "win32":
                 creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-            
+
             process = subprocess.Popen(
-                [str(editor_path), str(self.project_path)],
+                [str(editor_path), str(self.project_path), f"-LOG={log_file_path}"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
@@ -356,6 +426,7 @@ class EditorManager:
         self._editor = EditorInstance(
             process=process,
             status="starting",
+            log_file_path=log_file_path,
             additional_paths=additional_paths,
             wait_timeout=wait_timeout,
         )
