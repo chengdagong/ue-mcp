@@ -92,35 +92,7 @@ For diagnosing current level or selected assets, use Python API directly:
     args = parser.parse_args()
 
     # Import asset_diagnostic module (must be done in UE5 Python environment)
-    try:
-        import asset_diagnostic
-
-        # Fix module reload issue in remote execution environment
-        # Use recursive reload to ensure all submodules use the same instance
-        try:
-            from module_reload_utils import reload_recursive
-            reload_recursive(asset_diagnostic)
-        except ImportError:
-            # module_reload_utils not available, continue without reload
-            # This may cause issues in remote execution environment
-            pass
-
-    except ImportError as e:
-        print("=" * 60, file=sys.stderr)
-        print("ERROR: Failed to import asset_diagnostic module", file=sys.stderr)
-        print("=" * 60, file=sys.stderr)
-        print(f"Import error: {e}", file=sys.stderr)
-        print("", file=sys.stderr)
-        print("This script must run in a UE5 Python environment with asset_diagnostic installed.", file=sys.stderr)
-        print("", file=sys.stderr)
-        print("Troubleshooting:", file=sys.stderr)
-        print("1. Ensure the script is executed via remote-execute.py", file=sys.stderr)
-        print("2. Check that asset_diagnostic is in site-packages:", file=sys.stderr)
-        print(f"   {site_packages}/asset_diagnostic", file=sys.stderr)
-        print("3. Verify Python path includes:", file=sys.stderr)
-        print(f"   {site_packages}", file=sys.stderr)
-        print("=" * 60, file=sys.stderr)
-        sys.exit(1)
+    import asset_diagnostic
 
     # Run diagnostic
     try:

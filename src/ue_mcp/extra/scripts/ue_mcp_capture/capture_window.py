@@ -34,8 +34,6 @@ MCP mode (__PARAMS__):
 import time
 import editor_capture
 
-from module_reload_utils import reload_recursive
-reload_recursive(editor_capture)
 
 from ue_mcp_capture.utils import get_params, ensure_level_loaded, output_result
 

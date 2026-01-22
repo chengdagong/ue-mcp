@@ -19,8 +19,6 @@ import sys
 import unreal
 import asset_diagnostic
 
-from module_reload_utils import reload_recursive
-reload_recursive(asset_diagnostic)
 
 from asset_diagnostic import detect_asset_type, load_asset, get_asset_references, AssetType
 
