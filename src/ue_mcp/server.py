@@ -93,17 +93,6 @@ def _initialize_server() -> Optional[EditorManager]:
     return _editor_manager
 
 
-async def _auto_launch_editor() -> None:
-    """为非Claude/非Testing客户端自动启动editor"""
-    try:
-        manager = _get_editor_manager()
-        logger.info("Auto-launching editor in background...")
-        await manager.launch_async(notify=None, wait_timeout=120.0)
-        logger.info("Editor auto-launch completed")
-    except Exception as e:
-        logger.error(f"自动启动editor失败: {e}")
-
-
 class ClientDetectionMiddleware(Middleware):
     """检测MCP客户端类型"""
 
@@ -129,9 +118,7 @@ class ClientDetectionMiddleware(Middleware):
         # 尝试从当前工作目录自动检测项目
         manager = _initialize_server()
         if manager:
-            logger.info(f"自动检测到项目，为客户端 '{_client_name}' 启动editor")
-            # 异步启动editor（不阻塞初始化响应）
-            asyncio.create_task(_auto_launch_editor())
+            logger.info(f"自动检测到项目: {manager.project_name}")
         else:
             logger.info(
                 f"未检测到UE5项目，客户端 '{_client_name}' 需要调用 project_set_path 设置项目路径"
