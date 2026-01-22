@@ -15,8 +15,8 @@ build/
 venv/
 ENV/
 
-#
-.claude/settings.local.json
+# Claude Code local settings (machine-specific)
+**/.claude/settings.local.json
 
 # Test fixtures - ignore all except template projects
 tests/fixtures/*/
