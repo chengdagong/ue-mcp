@@ -737,7 +737,7 @@ wheels = [
 [[package]]
 name = "mcp-pytest"
 version = "0.2.0"
-source = { editable = "../mcp-test/mcp-pytest" }
+source = { editable = "../../Code/mcp-test/mcp-pytest" }
 dependencies = [
     { name = "mcp" },
     { name = "pydantic" },
@@ -1574,7 +1574,7 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "mcp-pytest", editable = "../mcp-test/mcp-pytest" }]
+dev = [{ name = "mcp-pytest", editable = "../../Code/mcp-test/mcp-pytest" }]
 
 [[package]]
 name = "urllib3"

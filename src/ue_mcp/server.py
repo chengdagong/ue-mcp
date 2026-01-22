@@ -7,6 +7,7 @@ FastMCP-based MCP server for Unreal Editor interaction.
 import asyncio
 import logging
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Optional
 
@@ -16,6 +17,7 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
 from .autoconfig import get_bundled_site_packages
 from .editor_manager import EditorManager
+from .log_watcher import watch_pie_capture_complete
 from .utils import find_uproject_file
 
 # Configure logging
@@ -56,16 +58,10 @@ _project_path_set: bool = False  # 跟踪project.set_path是否已调用
 def _get_editor_manager() -> EditorManager:
     """Get the global EditorManager instance."""
     if _editor_manager is None:
-        if _client_name in ["claude-ai", "Automatic-Testing"]:
-            raise RuntimeError(
-                "EditorManager not initialized. "
-                "Please call the 'project.set_path' tool first to set the UE5 project directory."
-            )
-        else:
-            raise RuntimeError(
-                "EditorManager not initialized. "
-                "MCP server must be started from a directory containing a UE5 project."
-            )
+        raise RuntimeError(
+            "EditorManager not initialized. "
+            "Please call the 'project_set_path' tool first to set the UE5 project directory."
+        )
     return _editor_manager
 
 
@@ -109,7 +105,7 @@ async def _auto_launch_editor() -> None:
 
 
 class ClientDetectionMiddleware(Middleware):
-    """检测MCP客户端类型并实现差异化初始化逻辑"""
+    """检测MCP客户端类型"""
 
     async def on_initialize(
         self,
@@ -121,7 +117,7 @@ class ClientDetectionMiddleware(Middleware):
         # 提取客户端名称
         client_info = context.message.params.clientInfo
         _client_name = client_info.name if client_info else "unknown"
-        
+
         # 打印客户端信息（会同时输出到日志文件和控制台）
         logger.info("=" * 70)
         logger.info(f"UE-MCP SERVER INITIALIZED - Client: {_client_name}")
@@ -130,13 +126,16 @@ class ClientDetectionMiddleware(Middleware):
         # 调用下一个middleware/handler
         result = await call_next(context)
 
-        # 对于非Claude/非Testing客户端，自动初始化并启动editor
-        if _client_name not in ["claude-ai", "Automatic-Testing"]:
-            logger.info(f"为客户端 '{_client_name}' 自动初始化并启动editor")
-            _initialize_server()  # 从当前工作目录检测项目
-            if _editor_manager:
-                # 异步启动editor（不阻塞初始化响应）
-                asyncio.create_task(_auto_launch_editor())
+        # 尝试从当前工作目录自动检测项目
+        manager = _initialize_server()
+        if manager:
+            logger.info(f"自动检测到项目，为客户端 '{_client_name}' 启动editor")
+            # 异步启动editor（不阻塞初始化响应）
+            asyncio.create_task(_auto_launch_editor())
+        else:
+            logger.info(
+                f"未检测到UE5项目，客户端 '{_client_name}' 需要调用 project_set_path 设置项目路径"
+            )
 
         return result
 
@@ -145,26 +144,13 @@ class ClientDetectionMiddleware(Middleware):
         context: MiddlewareContext[mt.ListToolsRequest],
         call_next: CallNext[mt.ListToolsRequest, Any],
     ) -> Any:
-        """过滤工具列表：非授权客户端不显示project.set_path"""
-        # 调用下一个middleware/handler获取完整工具列表
-        tools = await call_next(context)
-
-        # 如果不是claude-ai或Automatic-Testing，过滤掉project_set_path
-        if _client_name not in ["claude-ai", "Automatic-Testing"]:
-            filtered_tools = [
-                tool for tool in tools if tool.name != "project_set_path"
-            ]
-            logger.debug(
-                f"Filtered out project_set_path for client: {_client_name}"
-            )
-            return filtered_tools
-
-        return tools
+        """返回完整工具列表，project_set_path对所有客户端可用"""
+        return await call_next(context)
 
 
-# Note: _initialize_server() is now called conditionally based on client type
-# - For claude-ai/Automatic-Testing: called via project.set_path tool
-# - For other clients: called automatically during initialization
+# Note: _initialize_server() is called during initialization for all clients.
+# - If a .uproject is found in the working directory, auto-initialize and launch editor
+# - If not found, user can call project_set_path to set the project path manually
 
 # Create FastMCP instance
 mcp = FastMCP(
@@ -173,15 +159,13 @@ mcp = FastMCP(
     instructions="""
 UE-MCP is an MCP server for interacting with Unreal Editor.
 
-**For claude-ai and Automatic-Testing clients:**
-- Use the 'project_set_path' tool to set your UE5 project directory before using other tools
-- This tool can only be called once per server session
-
-**For other clients:**
-- The server will auto-detect the project from the working directory and launch the editor automatically
+**Project Initialization:**
+- If started from a UE5 project directory, the server auto-detects and launches the editor
+- If started from any other directory, use the 'project_set_path' tool to set your UE5 project directory
+- The 'project_set_path' tool can only be called once per server session
 
 Available tools:
-- project_set_path: Set the UE5 project directory (claude-ai/Automatic-Testing only)
+- project_set_path: Set the UE5 project directory (can be called from any directory)
 - editor_launch: Start the Unreal Editor for the bound project
 - editor_status: Get the current editor status
 - editor_stop: Stop the running editor
@@ -205,7 +189,7 @@ def set_project_path(project_path: str) -> dict[str, Any]:
     """
     Set the UE5 project path for the MCP server.
 
-    This tool is only available for claude-ai and Automatic-Testing clients.
+    This tool can be called from any directory to specify which UE5 project to use.
     It can only be called once during the server's lifetime.
 
     Args:
@@ -215,13 +199,6 @@ def set_project_path(project_path: str) -> dict[str, Any]:
         Result with success status and detected project information
     """
     global _editor_manager, _project_path_set
-
-    # 检查客户端类型
-    if _client_name not in ["claude-ai", "Automatic-Testing"]:
-        return {
-            "success": False,
-            "error": f"project.set_path is only available for claude-ai and Automatic-Testing clients. Current client: {_client_name}",
-        }
 
     # 检查是否已经调用过
     if _project_path_set:
@@ -797,7 +774,8 @@ def capture_orbital(
 
 
 @mcp.tool(name="editor_capture_pie")
-def capture_pie(
+async def capture_pie(
+    ctx: Context,
     output_dir: str,
     level: str,
     duration_seconds: float = 10.0,
@@ -836,13 +814,15 @@ def capture_pie(
 
     from .script_executor import execute_script
 
-    # Timeout = duration + buffer for startup/shutdown
-    timeout = duration_seconds + 60.0
-    
+    # Generate unique task_id for this capture
+    task_id = str(uuid.uuid4())[:8]
+
+    # Start capture (returns immediately, capture runs via tick callbacks)
     result = execute_script(
         manager,
         "capture_pie",
         params={
+            "task_id": task_id,
             "output_dir": output_dir,
             "level": level,
             "duration_seconds": duration_seconds,
@@ -853,9 +833,47 @@ def capture_pie(
             "camera_distance": camera_distance,
             "target_height": target_height,
         },
-        timeout=timeout,
+        timeout=30.0,  # Short timeout since script returns immediately
     )
-    return _parse_capture_result(result)
+
+    if not result.get("success", False):
+        return _parse_capture_result(result)
+
+    # Notify that capture has started
+    await ctx.log(f"PIE capture started (task_id={task_id}), monitoring for completion...", level="info")
+
+    # Watch for completion file
+    # Timeout = duration + buffer for PIE startup/shutdown
+    watch_timeout = duration_seconds + 60.0
+
+    async def on_complete(capture_result: dict[str, Any]) -> None:
+        """Called when capture completes."""
+        await ctx.log(
+            f"PIE capture completed: {capture_result.get('screenshot_count', 0)} screenshots",
+            level="info",
+        )
+
+    capture_result = await watch_pie_capture_complete(
+        project_root=manager.project_root,
+        task_id=task_id,
+        callback=on_complete,
+        timeout=watch_timeout,
+    )
+
+    if capture_result is None:
+        return {
+            "success": False,
+            "error": f"Timeout waiting for PIE capture completion after {watch_timeout}s",
+            "output_dir": output_dir,
+        }
+
+    return {
+        "success": capture_result.get("success", False),
+        "output_dir": capture_result.get("output_dir", output_dir),
+        "duration": capture_result.get("duration", 0),
+        "interval": capture_result.get("interval", interval_seconds),
+        "screenshot_count": capture_result.get("screenshot_count", 0),
+    }
 
 
 @mcp.tool(name="editor_capture_window")

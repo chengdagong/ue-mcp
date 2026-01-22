@@ -24,6 +24,9 @@ MODULE_TO_PACKAGE = {
     "bs4": "beautifulsoup4",
 }
 
+# Bundled modules in our custom site-packages that should be auto-reloaded
+BUNDLED_MODULES = frozenset({"asset_diagnostic", "editor_capture"})
+
 
 def extract_missing_module(error_text: str) -> Optional[str]:
     """
@@ -99,6 +102,80 @@ def extract_import_statements(code: str) -> Tuple[list[str], Optional[str]]:
         return statements, None
     except SyntaxError as e:
         return [], f"SyntaxError: {e.msg} (line {e.lineno})"
+
+
+def extract_bundled_module_imports(code: str) -> set[str]:
+    """
+    Extract bundled module imports from Python code using AST.
+
+    Detects imports of modules from our custom site-packages (asset_diagnostic,
+    editor_capture) so they can be reloaded before execution.
+
+    Handles all import forms:
+    - import module
+    - import module.submodule
+    - from module import name
+    - from module.submodule import name
+
+    Args:
+        code: Python source code
+
+    Returns:
+        Set of top-level bundled module names that are imported
+    """
+    bundled_imports: set[str] = set()
+
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        # Syntax error will be caught by extract_import_statements
+        return bundled_imports
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            # import X, import X.Y.Z
+            for alias in node.names:
+                top_level = alias.name.split(".")[0]
+                if top_level in BUNDLED_MODULES:
+                    bundled_imports.add(top_level)
+
+        elif isinstance(node, ast.ImportFrom):
+            # from X import Y, from X.Y import Z
+            if node.module:
+                top_level = node.module.split(".")[0]
+                if top_level in BUNDLED_MODULES:
+                    bundled_imports.add(top_level)
+
+    return bundled_imports
+
+
+def generate_module_unload_code(modules: set[str]) -> str:
+    """
+    Generate Python code to remove modules from sys.modules.
+
+    This ensures fresh import of the bundled modules when the code executes.
+    Removes both the top-level module and all submodules (anything starting
+    with 'module.').
+
+    Args:
+        modules: Set of top-level module names to unload
+
+    Returns:
+        Python code that removes matching modules from sys.modules,
+        or empty string if no modules to unload
+    """
+    if not modules:
+        return ""
+
+    modules_list = sorted(modules)  # Sort for deterministic output
+
+    return f"""import sys as _sys
+_bundled_to_unload = {modules_list!r}
+_keys_to_remove = [_k for _k in list(_sys.modules.keys()) if any(_k == _m or _k.startswith(_m + '.') for _m in _bundled_to_unload)]
+for _k in _keys_to_remove:
+    del _sys.modules[_k]
+del _bundled_to_unload, _keys_to_remove, _sys
+"""
 
 
 def pip_install(

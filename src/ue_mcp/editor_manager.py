@@ -18,7 +18,9 @@ from typing import Any, Callable, Coroutine, Optional
 
 from .autoconfig import run_config_check
 from .pip_install import (
+    extract_bundled_module_imports,
     extract_import_statements,
+    generate_module_unload_code,
     get_missing_module_from_result,
     is_import_error,
     module_to_package,
@@ -1035,14 +1037,21 @@ class EditorManager:
         max_install_attempts: int = 3,
     ) -> dict[str, Any]:
         """
-        Execute Python code with automatic missing module installation.
+        Execute Python code with automatic missing module installation
+        and bundled module reloading.
 
-        New flow:
+        Flow:
         1. Extract import statements from code (also checks syntax)
         2. If syntax error, return error immediately
+        2.5. Detect bundled module imports and inject unload code
         3. Execute import statements in UE to detect missing modules
         4. Auto-install missing modules and retry imports
         5. Execute the full code
+
+        The bundled module reload feature (step 2.5) detects imports of modules
+        from our custom site-packages (asset_diagnostic, editor_capture) and
+        removes them from sys.modules before execution, ensuring the latest
+        code is always used without requiring editor restart.
 
         Args:
             code: Python code to execute
@@ -1065,6 +1074,14 @@ class EditorManager:
                 "success": False,
                 "error": syntax_error,
             }
+
+        # Step 2.5: Detect and prepare bundled module reload
+        # This ensures bundled modules are reloaded to pick up latest code changes
+        bundled_imports = extract_bundled_module_imports(code)
+        if bundled_imports:
+            unload_code = generate_module_unload_code(bundled_imports)
+            code = unload_code + code
+            logger.debug(f"Injected unload code for bundled modules: {bundled_imports}")
 
         if import_statements:
             # Combine all import statements into one code block

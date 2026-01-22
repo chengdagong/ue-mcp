@@ -62,6 +62,31 @@ class RemoteExecutionClient:
         self.cmd_sock: Optional[socket.socket] = None
         self.cmd_connection: Optional[socket.socket] = None
 
+    def __del__(self) -> None:
+        """Clean up sockets on garbage collection."""
+        self._cleanup_sockets()
+
+    def _cleanup_sockets(self) -> None:
+        """Close all sockets without sending close message."""
+        if self.cmd_connection is not None:
+            try:
+                self.cmd_connection.close()
+            except Exception:
+                pass
+            self.cmd_connection = None
+        if self.cmd_sock is not None:
+            try:
+                self.cmd_sock.close()
+            except Exception:
+                pass
+            self.cmd_sock = None
+        if self.mcast_sock is not None:
+            try:
+                self.mcast_sock.close()
+            except Exception:
+                pass
+            self.mcast_sock = None
+
     def _create_multicast_socket(self) -> socket.socket:
         """Create and configure multicast socket."""
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -154,7 +179,11 @@ class RemoteExecutionClient:
             True if instance found, False otherwise
         """
         try:
-            self.mcast_sock = self._create_multicast_socket()
+            # Reuse existing multicast socket if available, otherwise create new one
+            # This is safe because multicast sockets can be shared across processes
+            # (each process joins the multicast group independently)
+            if self.mcast_sock is None:
+                self.mcast_sock = self._create_multicast_socket()
 
             logger.info("Searching for UE5 instances...")
             if self.project_name:
