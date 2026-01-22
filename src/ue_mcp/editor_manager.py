@@ -18,6 +18,7 @@ from typing import Any, Callable, Coroutine, Optional
 
 from .autoconfig import run_config_check
 from .pip_install import (
+    extract_import_statements,
     get_missing_module_from_result,
     is_import_error,
     module_to_package,
@@ -659,10 +660,12 @@ class EditorManager:
         """
         Execute Python code with automatic missing module installation.
 
-        If execution fails due to a missing module, this method will:
-        1. Detect the missing module name
-        2. Install it via pip using UE5's embedded Python
-        3. Retry the execution
+        New flow:
+        1. Extract import statements from code (also checks syntax)
+        2. If syntax error, return error immediately
+        3. Execute import statements in UE to detect missing modules
+        4. Auto-install missing modules and retry imports
+        5. Execute the full code
 
         Args:
             code: Python code to execute
@@ -675,57 +678,71 @@ class EditorManager:
             - auto_installed: List of packages that were auto-installed
         """
         installed_packages: list[str] = []
-        attempts = 0
 
-        while attempts <= max_install_attempts:
-            result = self.execute(code, timeout=timeout)
+        # Step 1: Extract import statements (also validates syntax)
+        import_statements, syntax_error = extract_import_statements(code)
 
-            # If successful or not an import error, return immediately
-            if result.get("success", False) or not is_import_error(result):
-                if installed_packages:
-                    result["auto_installed"] = installed_packages
-                return result
+        # Step 2: If syntax error, return immediately
+        if syntax_error:
+            return {
+                "success": False,
+                "error": syntax_error,
+            }
 
-            # Extract missing module
-            missing_module = get_missing_module_from_result(result)
-            if not missing_module:
-                logger.warning("Import error detected but could not extract module name")
-                if installed_packages:
-                    result["auto_installed"] = installed_packages
-                return result
+        if import_statements:
+            # Combine all import statements into one code block
+            import_code = "\n".join(import_statements)
 
-            # Convert module name to package name
-            package_name = module_to_package(missing_module)
+            # Step 3: Try executing imports, install missing modules and retry
+            attempts = 0
+            while attempts <= max_install_attempts:
+                result = self.execute(import_code, timeout=10.0)
 
-            # Check if we've already tried this package
-            if package_name in installed_packages:
-                logger.warning(f"Already attempted to install {package_name}, giving up")
-                if installed_packages:
-                    result["auto_installed"] = installed_packages
-                return result
+                if result.get("success"):
+                    # All imports succeeded
+                    break
 
-            # Get Python path from running editor
-            python_path = self._get_python_path()
+                # Check if it's an ImportError
+                if not is_import_error(result):
+                    # Not an import error, skip pre-installation
+                    break
 
-            # Attempt to install the package
-            logger.info(f"Auto-installing missing package: {package_name}")
-            install_result = pip_install([package_name], python_path=python_path)
+                # Extract missing module name
+                missing_module = get_missing_module_from_result(result)
+                if not missing_module:
+                    logger.warning("Import error detected but could not extract module name")
+                    break
 
-            if not install_result.get("success", False):
-                logger.error(f"Failed to install {package_name}: {install_result.get('error')}")
-                result["install_error"] = install_result
-                if installed_packages:
-                    result["auto_installed"] = installed_packages
-                return result
+                # Convert to package name
+                package_name = module_to_package(missing_module)
 
-            installed_packages.append(package_name)
-            logger.info(f"Successfully installed {package_name}, retrying execution...")
-            attempts += 1
+                # Prevent duplicate installation
+                if package_name in installed_packages:
+                    logger.warning(f"Already attempted to install {package_name}, giving up")
+                    break
 
-        # Max attempts reached
+                # Get Python path from running editor
+                python_path = self._get_python_path()
+
+                # Install the missing package
+                logger.info(f"Pre-installing missing package: {package_name}")
+                install_result = pip_install([package_name], python_path=python_path)
+
+                if not install_result.get("success", False):
+                    logger.warning(f"Failed to install {package_name}: {install_result.get('error')}")
+                    break
+
+                installed_packages.append(package_name)
+                logger.info(f"Successfully pre-installed {package_name}, retrying imports...")
+                attempts += 1
+
+        # Step 4: Execute the full code
         result = self.execute(code, timeout=timeout)
+
+        # Add installation info
         if installed_packages:
             result["auto_installed"] = installed_packages
+
         return result
 
     def pip_install_packages(

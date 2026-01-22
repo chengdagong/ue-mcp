@@ -4,11 +4,12 @@ UE-MCP Pip Install Module
 Utilities for installing Python packages in UE5's embedded Python environment.
 """
 
+import ast
 import logging
 import re
 import subprocess
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 from .utils import find_ue5_python, find_ue5_python_for_editor
 
@@ -69,6 +70,35 @@ def module_to_package(module_name: str) -> str:
         Pip package name (e.g., 'Pillow', 'opencv-python')
     """
     return MODULE_TO_PACKAGE.get(module_name, module_name)
+
+
+def extract_import_statements(code: str) -> Tuple[list[str], Optional[str]]:
+    """
+    Extract all import statements from Python code.
+
+    Args:
+        code: Python source code
+
+    Returns:
+        Tuple of (import_statements, error):
+        - Success: (["import os", "from PIL import Image"], None)
+        - Syntax error: ([], "SyntaxError: ...")
+    """
+    statements = []
+    try:
+        tree = ast.parse(code)
+        lines = code.splitlines()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                # Get the original text of this statement
+                if hasattr(node, "lineno") and hasattr(node, "end_lineno"):
+                    start = node.lineno - 1
+                    end = node.end_lineno
+                    stmt = "\n".join(lines[start:end])
+                    statements.append(stmt)
+        return statements, None
+    except SyntaxError as e:
+        return [], f"SyntaxError: {e.msg} (line {e.lineno})"
 
 
 def pip_install(
