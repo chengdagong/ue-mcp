@@ -82,7 +82,9 @@ class InspectionResult:
         for issue in self.issues:
             # Header with severity and checker
             if issue.line_number:
-                lines.append(f"[{issue.severity.value}] {issue.checker} (line {issue.line_number}):")
+                lines.append(
+                    f"[{issue.severity.value}] {issue.checker} (line {issue.line_number}):"
+                )
             else:
                 lines.append(f"[{issue.severity.value}] {issue.checker}:")
 
@@ -199,7 +201,7 @@ class BlockingCallChecker(BaseChecker):
                     module, func = blocking_call
                     issues.append(
                         InspectionIssue(
-                            severity=IssueSeverity.ERROR,
+                            severity=IssueSeverity.WARNING,
                             checker=self.name,
                             message=f"Detected '{module}.{func}()' call which blocks the Unreal Engine main thread.",
                             line_number=node.lineno,

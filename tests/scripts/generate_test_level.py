@@ -9,6 +9,7 @@ The generated level includes:
 - PlayerStart (for PIE session spawn)
 - Multiple BP_ThirdPersonCharacter (for actor tracing, PIE capture, and fuzzy matching)
 - Multiple StaticMeshActors (for fuzzy matching tests)
+- PhysicsSphere and PhysicsCube (physics-enabled objects that fall when game starts)
 - DirectionalLight and SkyLight (for basic lighting)
 - SkyAtmosphere (for realistic blue sky)
 - VolumetricCloud (for white clouds)
@@ -42,9 +43,7 @@ def check_level_exists():
 def create_floor(actor_subsystem):
     """Create a large floor for ground detection."""
     floor = actor_subsystem.spawn_actor_from_class(
-        unreal.StaticMeshActor,
-        unreal.Vector(0, 0, 0),
-        unreal.Rotator(0, 0, 0)
+        unreal.StaticMeshActor, unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 0)
     )
     floor.set_actor_label("Floor")
     floor.set_actor_scale3d(unreal.Vector(100, 100, 1))  # 10000x10000x100 units
@@ -62,9 +61,7 @@ def create_floor(actor_subsystem):
 def create_player_start(actor_subsystem):
     """Create PlayerStart for PIE spawn point."""
     player_start = actor_subsystem.spawn_actor_from_class(
-        unreal.PlayerStart,
-        unreal.Vector(0, 0, 100),
-        unreal.Rotator(0, 0, 0)
+        unreal.PlayerStart, unreal.Vector(0, 0, 100), unreal.Rotator(0, 0, 0)
     )
     player_start.set_actor_label("PlayerStart")
     return player_start
@@ -88,7 +85,7 @@ def create_characters(actor_subsystem, count=2):
         character = actor_subsystem.spawn_actor_from_class(
             bp_class,
             unreal.Vector(300 + i * 200, i * 100, 100),
-            unreal.Rotator(0, 180, 0)  # Face origin
+            unreal.Rotator(0, 180, 0),  # Face origin
         )
         if character:
             character.set_actor_label(f"BP_ThirdPersonCharacter_{i}")
@@ -104,9 +101,7 @@ def create_test_cubes(actor_subsystem, count=3):
 
     for i in range(count):
         mesh_actor = actor_subsystem.spawn_actor_from_class(
-            unreal.StaticMeshActor,
-            unreal.Vector(i * 200 - 200, -500, 50),
-            unreal.Rotator(0, 0, 0)
+            unreal.StaticMeshActor, unreal.Vector(i * 200 - 200, -500, 50), unreal.Rotator(0, 0, 0)
         )
         mesh_actor.set_actor_label(f"TestCube_{i}")
 
@@ -125,7 +120,7 @@ def create_lighting(actor_subsystem):
     dir_light = actor_subsystem.spawn_actor_from_class(
         unreal.DirectionalLight,
         unreal.Vector(0, 0, 1000),
-        unreal.Rotator(-45, -30, 0)  # Angled for realistic sun position
+        unreal.Rotator(-45, -30, 0),  # Angled for realistic sun position
     )
     dir_light.set_actor_label("DirectionalLight")
 
@@ -139,9 +134,7 @@ def create_lighting(actor_subsystem):
 
     # Sky Light (captures sky for ambient lighting)
     sky_light = actor_subsystem.spawn_actor_from_class(
-        unreal.SkyLight,
-        unreal.Vector(0, 0, 500),
-        unreal.Rotator(0, 0, 0)
+        unreal.SkyLight, unreal.Vector(0, 0, 500), unreal.Rotator(0, 0, 0)
     )
     sky_light.set_actor_label("SkyLight")
 
@@ -156,9 +149,7 @@ def create_lighting(actor_subsystem):
 def create_sky_atmosphere(actor_subsystem):
     """Create sky atmosphere for realistic blue sky."""
     sky_atmo = actor_subsystem.spawn_actor_from_class(
-        unreal.SkyAtmosphere,
-        unreal.Vector(0, 0, 0),
-        unreal.Rotator(0, 0, 0)
+        unreal.SkyAtmosphere, unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 0)
     )
     sky_atmo.set_actor_label("SkyAtmosphere")
     return sky_atmo
@@ -167,9 +158,7 @@ def create_sky_atmosphere(actor_subsystem):
 def create_volumetric_cloud(actor_subsystem):
     """Create volumetric clouds for white cloud effect."""
     vol_cloud = actor_subsystem.spawn_actor_from_class(
-        unreal.VolumetricCloud,
-        unreal.Vector(0, 0, 0),
-        unreal.Rotator(0, 0, 0)
+        unreal.VolumetricCloud, unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 0)
     )
     vol_cloud.set_actor_label("VolumetricCloud")
     return vol_cloud
@@ -178,9 +167,7 @@ def create_volumetric_cloud(actor_subsystem):
 def create_exponential_height_fog(actor_subsystem):
     """Create exponential height fog for atmospheric depth."""
     fog = actor_subsystem.spawn_actor_from_class(
-        unreal.ExponentialHeightFog,
-        unreal.Vector(0, 0, 100),
-        unreal.Rotator(0, 0, 0)
+        unreal.ExponentialHeightFog, unreal.Vector(0, 0, 100), unreal.Rotator(0, 0, 0)
     )
     fog.set_actor_label("ExponentialHeightFog")
 
@@ -190,11 +177,62 @@ def create_exponential_height_fog(actor_subsystem):
         fog_comp.set_editor_property("fog_density", 0.005)
         fog_comp.set_editor_property("fog_height_falloff", 0.2)
         # Note: property is fog_inscattering_luminance, not fog_inscattering_color
-        fog_comp.set_editor_property("fog_inscattering_luminance", unreal.LinearColor(0.45, 0.6, 0.85, 1.0))
+        fog_comp.set_editor_property(
+            "fog_inscattering_luminance", unreal.LinearColor(0.45, 0.6, 0.85, 1.0)
+        )
         # Note: property is enable_volumetric_fog, not volumetric_fog
         fog_comp.set_editor_property("enable_volumetric_fog", True)
 
     return fog
+
+
+def create_physics_objects(actor_subsystem):
+    """Create physics-enabled sphere and cube that fall when game starts."""
+    physics_objects = []
+
+    # Create sphere with physics
+    sphere_actor = actor_subsystem.spawn_actor_from_class(
+        unreal.StaticMeshActor,
+        unreal.Vector(0, -150, 500),  # Left of center, suspended in air
+        unreal.Rotator(0, 0, 0),
+    )
+    sphere_actor.set_actor_label("PhysicsSphere")
+
+    # Set sphere mesh and enable physics
+    sphere_mesh_comp = sphere_actor.get_component_by_class(unreal.StaticMeshComponent)
+    if sphere_mesh_comp:
+        sphere_mesh = unreal.load_asset("/Engine/BasicShapes/Sphere")
+        if sphere_mesh:
+            sphere_mesh_comp.set_static_mesh(sphere_mesh)
+        # Enable physics simulation
+        sphere_mesh_comp.set_simulate_physics(True)
+        # Set collision to allow physics interaction
+        sphere_mesh_comp.set_collision_enabled(unreal.CollisionEnabled.QUERY_AND_PHYSICS)
+
+    physics_objects.append(sphere_actor)
+
+    # Create cube with physics
+    cube_actor = actor_subsystem.spawn_actor_from_class(
+        unreal.StaticMeshActor,
+        unreal.Vector(0, 150, 500),  # Right of center, suspended in air
+        unreal.Rotator(0, 0, 0),
+    )
+    cube_actor.set_actor_label("PhysicsCube")
+
+    # Set cube mesh and enable physics
+    cube_mesh_comp = cube_actor.get_component_by_class(unreal.StaticMeshComponent)
+    if cube_mesh_comp:
+        cube_mesh = unreal.load_asset("/Engine/BasicShapes/Cube")
+        if cube_mesh:
+            cube_mesh_comp.set_static_mesh(cube_mesh)
+        # Enable physics simulation
+        cube_mesh_comp.set_simulate_physics(True)
+        # Set collision to allow physics interaction
+        cube_mesh_comp.set_collision_enabled(unreal.CollisionEnabled.QUERY_AND_PHYSICS)
+
+    physics_objects.append(cube_actor)
+
+    return physics_objects
 
 
 def create_test_level():
@@ -206,7 +244,7 @@ def create_test_level():
             "success": True,
             "level": LEVEL_PATH,
             "created": False,
-            "message": "Level already exists"
+            "message": "Level already exists",
         }
         print(f"__RESULT__{json.dumps(result)}")
         return result
@@ -217,10 +255,7 @@ def create_test_level():
     # Note: new_level creates an empty level at the specified path
     success = unreal.EditorLevelLibrary.new_level(LEVEL_PATH)
     if not success:
-        result = {
-            "success": False,
-            "error": f"Failed to create level at {LEVEL_PATH}"
-        }
+        result = {"success": False, "error": f"Failed to create level at {LEVEL_PATH}"}
         print(f"__RESULT__{json.dumps(result)}")
         return result
 
@@ -268,11 +303,15 @@ def create_test_level():
         if fog:
             actors_created.append("ExponentialHeightFog")
 
+        # 9. Physics Objects (sphere and cube that fall when game starts)
+        physics_objects = create_physics_objects(actor_subsystem)
+        actors_created.extend([obj.get_actor_label() for obj in physics_objects if obj])
+
     except Exception as e:
         result = {
             "success": False,
             "error": f"Failed to create actors: {str(e)}",
-            "actors_created": actors_created
+            "actors_created": actors_created,
         }
         print(f"__RESULT__{json.dumps(result)}")
         return result
@@ -284,7 +323,7 @@ def create_test_level():
         result = {
             "success": False,
             "error": f"Failed to save level: {str(e)}",
-            "actors_created": actors_created
+            "actors_created": actors_created,
         }
         print(f"__RESULT__{json.dumps(result)}")
         return result
@@ -294,7 +333,7 @@ def create_test_level():
         "level": LEVEL_PATH,
         "created": True,
         "actors_created": actors_created,
-        "message": f"Test level created with {len(actors_created)} actors"
+        "message": f"Test level created with {len(actors_created)} actors",
     }
     print(f"__RESULT__{json.dumps(result)}")
     return result

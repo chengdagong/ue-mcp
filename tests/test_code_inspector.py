@@ -19,47 +19,51 @@ class TestBlockingCallChecker:
     """Tests for BlockingCallChecker."""
 
     def test_detects_time_sleep_direct(self):
-        """Detects time.sleep() direct call."""
+        """Detects time.sleep() direct call as WARNING."""
         code = """
 import time
 time.sleep(1)
 """
         result = inspect_code(code)
-        assert not result.allowed
-        assert result.error_count == 1
+        assert result.allowed  # WARNING allows execution
+        assert result.warning_count == 1
+        assert result.error_count == 0
         assert "time.sleep" in result.issues[0].message
 
     def test_detects_time_sleep_with_alias(self):
-        """Detects time.sleep() when time is imported with alias."""
+        """Detects time.sleep() when time is imported with alias as WARNING."""
         code = """
 import time as t
 t.sleep(1)
 """
         result = inspect_code(code)
-        assert not result.allowed
-        assert result.error_count == 1
+        assert result.allowed  # WARNING allows execution
+        assert result.warning_count == 1
+        assert result.error_count == 0
         assert "time.sleep" in result.issues[0].message
 
     def test_detects_from_import_sleep(self):
-        """Detects sleep() when imported directly from time module."""
+        """Detects sleep() when imported directly from time module as WARNING."""
         code = """
 from time import sleep
 sleep(1)
 """
         result = inspect_code(code)
-        assert not result.allowed
-        assert result.error_count == 1
+        assert result.allowed  # WARNING allows execution
+        assert result.warning_count == 1
+        assert result.error_count == 0
         assert "time.sleep" in result.issues[0].message
 
     def test_detects_from_import_sleep_with_alias(self):
-        """Detects sleep() when imported with alias from time module."""
+        """Detects sleep() when imported with alias from time module as WARNING."""
         code = """
 from time import sleep as s
 s(1)
 """
         result = inspect_code(code)
-        assert not result.allowed
-        assert result.error_count == 1
+        assert result.allowed  # WARNING allows execution
+        assert result.warning_count == 1
+        assert result.error_count == 0
         assert "time.sleep" in result.issues[0].message
 
     def test_allows_other_time_functions(self):
@@ -83,15 +87,16 @@ unreal.log("Hello")
         assert result.error_count == 0
 
     def test_detects_multiple_sleep_calls(self):
-        """Detects multiple time.sleep() calls."""
+        """Detects multiple time.sleep() calls as WARNINGs."""
         code = """
 import time
 time.sleep(1)
 time.sleep(2)
 """
         result = inspect_code(code)
-        assert not result.allowed
-        assert result.error_count == 2
+        assert result.allowed  # WARNING allows execution
+        assert result.warning_count == 2
+        assert result.error_count == 0
 
     def test_line_number_tracking(self):
         """Correctly tracks line numbers of blocking calls."""
@@ -100,7 +105,8 @@ time.sleep(2)
 time.sleep(1)
 """
         result = inspect_code(code)
-        assert not result.allowed
+        assert result.allowed  # WARNING allows execution
+        assert result.warning_count == 1
         assert result.issues[0].line_number == 3
 
     def test_suggestion_provided(self):

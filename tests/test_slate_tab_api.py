@@ -43,6 +43,44 @@ def parse_tool_result(result: ToolCallResult) -> dict[str, Any]:
         return {"raw_text": text}
 
 
+def extract_output_text(output: Any) -> str:
+    """
+    Extract text from output field which can be in different formats.
+
+    Args:
+        output: Can be:
+            - list of strings
+            - list of dicts with 'output' key
+            - string
+            - None
+
+    Returns:
+        Concatenated output text
+    """
+    if output is None:
+        return ""
+
+    if isinstance(output, str):
+        return output
+
+    if isinstance(output, list):
+        lines = []
+        for item in output:
+            if isinstance(item, str):
+                lines.append(item)
+            elif isinstance(item, dict):
+                # Handle dict format: {"output": "text", "type": "stdout"}
+                if "output" in item:
+                    lines.append(str(item["output"]))
+                else:
+                    lines.append(str(item))
+            else:
+                lines.append(str(item))
+        return "\n".join(lines)
+
+    return str(output)
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -113,7 +151,7 @@ print(f"RESULT: {result}")
 
         # Check output for availability
         output = data.get("output", [])
-        output_text = "\n".join(output) if isinstance(output, list) else str(output)
+        output_text = extract_output_text(output)
 
         assert "ExSlateTabLibrary is available" in output_text, (
             f"ExSlateTabLibrary not available. Output: {output_text}"
@@ -148,7 +186,7 @@ print(f"RESULT: {{'tab_count': {len(tab_ids)}, 'tabs': {found_tabs}}}")
         data = parse_tool_result(result)
 
         output = data.get("output", [])
-        output_text = "\n".join(output) if isinstance(output, list) else str(output)
+        output_text = extract_output_text(output)
 
         # Check that we got tabs
         assert "Tab IDs:" in output_text, f"Failed to get tab IDs. Output: {output_text}"
@@ -194,7 +232,7 @@ print(f"RESULT: {{result}}")
         data = parse_tool_result(result)
 
         output = data.get("output", [])
-        output_text = "\n".join(output) if isinstance(output, list) else str(output)
+        output_text = extract_output_text(output)
 
         assert "Opened Blueprint in editor" in output_text, (
             f"Failed to open Blueprint. Output: {output_text}"
@@ -225,7 +263,7 @@ print(f"RESULT: {{result}}")
         data = parse_tool_result(result)
 
         output = data.get("output", [])
-        output_text = "\n".join(output) if isinstance(output, list) else str(output)
+        output_text = extract_output_text(output)
 
         assert "Switch to Viewport mode: True" in output_text, (
             f"Failed to switch to Viewport mode. Output: {output_text}"
@@ -255,7 +293,7 @@ print(f"RESULT: {{result}}")
         data = parse_tool_result(result)
 
         output = data.get("output", [])
-        output_text = "\n".join(output) if isinstance(output, list) else str(output)
+        output_text = extract_output_text(output)
 
         assert "Switch to Graph mode: True" in output_text, (
             f"Failed to switch to Graph mode. Output: {output_text}"
@@ -299,12 +337,12 @@ print(f"RESULT: {{results}}")
         data = parse_tool_result(result)
 
         output = data.get("output", [])
-        output_text = "\n".join(output) if isinstance(output, list) else str(output)
+        output_text = extract_output_text(output)
 
         # At least one panel focus should succeed
         assert (
-            "Focus Details panel: True" in output_text or
-            "Focus MyBlueprint panel: True" in output_text
+            "Focus Details panel: True" in output_text
+            or "Focus MyBlueprint panel: True" in output_text
         ), f"Failed to focus panels. Output: {output_text}"
 
     @pytest.mark.asyncio
@@ -356,12 +394,10 @@ print(f"RESULT: {{results}}")
         data = parse_tool_result(result)
 
         output = data.get("output", [])
-        output_text = "\n".join(output) if isinstance(output, list) else str(output)
+        output_text = extract_output_text(output)
 
         # Check that at least some tabs were successfully invoked
-        assert "True" in output_text, (
-            f"No tabs were successfully invoked. Output: {output_text}"
-        )
+        assert "True" in output_text, f"No tabs were successfully invoked. Output: {output_text}"
 
     @pytest.mark.asyncio
     async def test_is_asset_editor_open(
@@ -393,7 +429,7 @@ print(f"RESULT: {{result}}")
         data = parse_tool_result(result)
 
         output = data.get("output", [])
-        output_text = "\n".join(output) if isinstance(output, list) else str(output)
+        output_text = extract_output_text(output)
 
         # Should report editor as open since we opened it earlier
         assert "Is editor open for Blueprint: True" in output_text, (
