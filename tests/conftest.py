@@ -99,7 +99,7 @@ def mcp_config(request: pytest.FixtureRequest):
 @pytest.fixture(scope="session")
 def project_template_path() -> Path:
     """Return the path to EmptyProjectTemplate fixture."""
-    return Path(__file__).parent / "fixtures" / "EmptyProjectTemplate"
+    return Path(__file__).parent / "fixtures" / "ThirdPersonTemplate" / "thirdperson_template.uproject"
 
 
 @pytest.fixture(scope="session")
