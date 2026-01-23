@@ -965,6 +965,13 @@ async def trace_actors_in_pie(
     actor_names: list[str],
     duration_seconds: float = 10.0,
     interval_seconds: float = 0.1,
+    capture_screenshots: bool = False,
+    screenshot_dir: str | None = None,
+    camera_distance: float = 300,
+    target_height: float = 90,
+    resolution_width: int = 800,
+    resolution_height: int = 600,
+    multi_angle: bool = True,
 ) -> dict[str, Any]:
     """
     Trace actor transforms during Play-In-Editor (PIE) session.
@@ -973,12 +980,21 @@ async def trace_actors_in_pie(
     positions, rotations, and velocities, then stops PIE and returns
     a JSON report.
 
+    Optionally captures screenshots of tracked actors at each sample interval.
+
     Args:
         output_file: Output JSON file path (required)
         level: Path to the level to load (required)
         actor_names: List of actor names to track (required)
         duration_seconds: How long to trace in seconds (default: 10)
         interval_seconds: Time between samples in seconds (default: 0.1)
+        capture_screenshots: Whether to capture screenshots of actors (default: False)
+        screenshot_dir: Directory for screenshots (default: auto-generated alongside output_file)
+        camera_distance: Camera distance from actor for screenshots (default: 300)
+        target_height: Target height offset from actor origin (default: 90)
+        resolution_width: Screenshot width in pixels (default: 800)
+        resolution_height: Screenshot height in pixels (default: 600)
+        multi_angle: Whether to capture multiple angles per actor (default: True)
 
     Returns:
         Result containing:
@@ -989,10 +1005,11 @@ async def trace_actors_in_pie(
         - sample_count: Number of samples collected
         - actor_count: Number of actors successfully tracked
         - actors_not_found: List of actor names that weren't found
+        - screenshot_dir: Directory containing screenshots (if capture_screenshots=True)
     """
     def process_trace_result(trace_result: dict[str, Any]) -> dict[str, Any]:
         """Process trace result and extract relevant fields."""
-        return {
+        result = {
             "success": trace_result.get("success", False),
             "output_file": trace_result.get("output_file", output_file),
             "duration": trace_result.get("duration", 0),
@@ -1001,6 +1018,10 @@ async def trace_actors_in_pie(
             "actor_count": trace_result.get("actor_count", 0),
             "actors_not_found": trace_result.get("actors_not_found", []),
         }
+        # Add screenshot_dir if present
+        if "screenshot_dir" in trace_result:
+            result["screenshot_dir"] = trace_result["screenshot_dir"]
+        return result
 
     return await _run_pie_task(
         ctx=ctx,
@@ -1011,9 +1032,16 @@ async def trace_actors_in_pie(
             "actor_names": actor_names,
             "duration_seconds": duration_seconds,
             "interval_seconds": interval_seconds,
+            "capture_screenshots": capture_screenshots,
+            "screenshot_dir": screenshot_dir,
+            "camera_distance": camera_distance,
+            "target_height": target_height,
+            "resolution_width": resolution_width,
+            "resolution_height": resolution_height,
+            "multi_angle": multi_angle,
         },
         duration_seconds=duration_seconds,
-        task_description="PIE actor tracing",
+        task_description="PIE actor tracing" + (" with screenshots" if capture_screenshots else ""),
         output_key="output_file",
         output_value=output_file,
         result_processor=process_trace_result,
