@@ -1019,6 +1019,67 @@ async def trace_actors_in_pie(
     )
 
 
+@mcp.tool(name="editor_pie_execute_in_tick")
+async def pie_execute_in_tick(
+    ctx: Context,
+    level: str,
+    total_ticks: int,
+    code_snippets: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    Execute Python code snippets at specific ticks during PIE session.
+
+    Automatically starts PIE, executes code snippets at specified ticks,
+    then stops PIE and returns execution results.
+
+    Args:
+        level: Path to the level to load (required)
+        total_ticks: Total number of ticks to run PIE (required)
+        code_snippets: List of code snippet configurations (required)
+            Each snippet is a dict with:
+            - code: Python code string to execute
+            - start_tick: Tick number to start execution (0-indexed)
+            - execution_count: Number of consecutive ticks to execute (default: 1)
+
+    Returns:
+        Result containing:
+        - success: Whether all executions succeeded
+        - total_ticks: Total ticks configured
+        - executed_ticks: Actual ticks executed
+        - execution_count: Number of code executions performed
+        - executions: List of execution results (snippet_index, tick, success, output)
+        - errors: List of any errors encountered
+    """
+    def process_executor_result(exec_result: dict[str, Any]) -> dict[str, Any]:
+        """Process executor result and extract relevant fields."""
+        return {
+            "success": exec_result.get("success", False),
+            "total_ticks": exec_result.get("total_ticks", total_ticks),
+            "executed_ticks": exec_result.get("executed_ticks", 0),
+            "execution_count": exec_result.get("execution_count", 0),
+            "executions": exec_result.get("executions", []),
+            "errors": exec_result.get("errors", []),
+        }
+
+    # Estimate duration based on ticks (assume ~60 FPS, add buffer)
+    estimated_duration = (total_ticks / 60.0) + 10.0
+
+    return await _run_pie_task(
+        ctx=ctx,
+        script_name="execute_in_tick",
+        params={
+            "level": level,
+            "total_ticks": total_ticks,
+            "code_snippets": code_snippets,
+        },
+        duration_seconds=estimated_duration,
+        task_description="PIE tick execution",
+        output_key="total_ticks",
+        output_value=str(total_ticks),
+        result_processor=process_executor_result,
+    )
+
+
 @mcp.tool(name="editor_capture_window")
 def capture_window(
     level: str,
