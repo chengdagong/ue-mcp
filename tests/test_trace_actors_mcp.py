@@ -10,6 +10,7 @@ For tests requiring editor:
 
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -54,17 +55,16 @@ class TestTraceActorsWithEditor:
     @pytest.mark.asyncio
     async def test_trace_single_actor(self, running_editor: ToolCaller):
         """Test tracing a single actor (player character)."""
-        import tempfile
-
-        # Create temp output file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            output_file = f.name
+        # Use fixed output path in project's Saved directory
+        output_dir = FIXTURE_PROJECT / "Saved" / "Tests" / "TraceSingleActor"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
 
         try:
             result = await running_editor.call(
                 "editor_trace_actors_in_pie",
                 {
-                    "output_file": output_file,
+                    "output_dir": str(output_dir),
                     "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
                     "actor_names": ["BP_ThirdPersonCharacter"],
                     "duration_seconds": 3.0,
@@ -80,41 +80,64 @@ class TestTraceActorsWithEditor:
             assert data.get("sample_count", 0) > 0, "No samples collected"
             assert data.get("actor_count", 0) >= 1, "No actors tracked"
 
-            # Verify output file exists and has valid JSON
-            assert os.path.exists(output_file), f"Output file not created: {output_file}"
+            # Verify output directory structure
+            assert output_dir.exists(), f"Output directory not created: {output_dir}"
 
-            with open(output_file, 'r', encoding='utf-8') as f:
-                trace_data = json.load(f)
+            # Verify metadata.json exists
+            metadata_file = output_dir / "metadata.json"
+            assert metadata_file.exists(), f"metadata.json not created: {metadata_file}"
 
-            # Verify structure
-            assert "actors" in trace_data, "Missing 'actors' key"
-            assert "metadata" in trace_data, "Missing 'metadata' key"
-            assert trace_data["metadata"]["sample_count"] > 0, "No samples in metadata"
+            with open(metadata_file, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+
+            # Verify metadata structure
+            assert metadata["sample_count"] > 0, "No samples in metadata"
+            assert len(metadata["actors"]) > 0, "No actors in metadata"
+
+            # Verify actor subdirectories exist with sample directories
+            actor_dirs = [d for d in output_dir.iterdir() if d.is_dir()]
+            assert len(actor_dirs) > 0, "No actor subdirectories created"
+
+            # Check at least one sample directory exists
+            sample_dirs = list(actor_dirs[0].glob("sample_at_tick_*"))
+            assert len(sample_dirs) > 0, "No sample directories created"
+
+            # Verify transform.json exists in sample directory
+            transform_file = sample_dirs[0] / "transform.json"
+            assert transform_file.exists(), f"transform.json not found: {transform_file}"
+
+            with open(transform_file, 'r', encoding='utf-8') as f:
+                transform_data = json.load(f)
+
+            assert "tick" in transform_data, "Missing 'tick' in transform.json"
+            assert "timestamp" in transform_data, "Missing 'timestamp' in transform.json"
+            assert "location" in transform_data, "Missing 'location' in transform.json"
+            assert "rotation" in transform_data, "Missing 'rotation' in transform.json"
 
             print(f"\n[OK] Trace completed:")
             print(f"  - Samples: {data.get('sample_count')}")
             print(f"  - Actors: {data.get('actor_count')}")
             print(f"  - Duration: {data.get('duration'):.2f}s")
-            print(f"  - Output: {output_file}")
+            print(f"  - Output dir: {output_dir}")
+            print(f"  - Sample dirs: {len(sample_dirs)}")
 
         finally:
-            # Cleanup
-            if os.path.exists(output_file):
-                os.remove(output_file)
+            # Preserve all outputs for inspection
+            pass
 
     @pytest.mark.asyncio
     async def test_trace_actor_not_found(self, running_editor: ToolCaller):
         """Test tracing with non-existent actor name."""
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            output_file = f.name
+        # Use fixed output path in project's Saved directory
+        output_dir = FIXTURE_PROJECT / "Saved" / "Tests" / "TraceActorNotFound"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
 
         try:
             result = await running_editor.call(
                 "editor_trace_actors_in_pie",
                 {
-                    "output_file": output_file,
+                    "output_dir": str(output_dir),
                     "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
                     "actor_names": ["NonExistentActor_12345"],
                     "duration_seconds": 2.0,
@@ -134,22 +157,22 @@ class TestTraceActorsWithEditor:
             print(f"  - actors_not_found: {data.get('actors_not_found')}")
 
         finally:
-            if os.path.exists(output_file):
-                os.remove(output_file)
+            # Preserve all outputs for inspection
+            pass
 
     @pytest.mark.asyncio
     async def test_trace_multiple_actors(self, running_editor: ToolCaller):
         """Test tracing multiple actors."""
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            output_file = f.name
+        # Use fixed output path in project's Saved directory
+        output_dir = FIXTURE_PROJECT / "Saved" / "Tests" / "TraceMultipleActors"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
 
         try:
             result = await running_editor.call(
                 "editor_trace_actors_in_pie",
                 {
-                    "output_file": output_file,
+                    "output_dir": str(output_dir),
                     "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
                     "actor_names": [
                         "BP_ThirdPersonCharacter",  # Should exist
@@ -172,27 +195,27 @@ class TestTraceActorsWithEditor:
             # At least one actor should be found
             assert data.get("actor_count", 0) >= 1, "At least one actor should be tracked"
 
+            # Verify multiple actor subdirectories exist
+            actor_dirs = [d for d in output_dir.iterdir() if d.is_dir()]
+            print(f"  - Actor directories: {[d.name for d in actor_dirs]}")
+
         finally:
-            if os.path.exists(output_file):
-                os.remove(output_file)
+            # Preserve all outputs for inspection
+            pass
 
     @pytest.mark.asyncio
     async def test_trace_with_screenshots(self, running_editor: ToolCaller):
         """Test tracing with screenshot capture enabled."""
-        import tempfile
-
-        # Create temp output file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            output_file = f.name
-
-        # Screenshot directory will be auto-generated
-        screenshot_dir = None
+        # Use fixed output path in project's Saved directory
+        output_dir = FIXTURE_PROJECT / "Saved" / "Tests" / "TraceWithScreenshots"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
 
         try:
             result = await running_editor.call(
                 "editor_trace_actors_in_pie",
                 {
-                    "output_file": output_file,
+                    "output_dir": str(output_dir),
                     "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
                     "actor_names": ["BP_ThirdPersonCharacter"],
                     "duration_seconds": 3.0,
@@ -213,60 +236,71 @@ class TestTraceActorsWithEditor:
             assert data.get("success") is True, f"Trace with screenshots failed: {data}"
             assert data.get("sample_count", 0) > 0, "No samples collected"
             assert data.get("actor_count", 0) >= 1, "No actors tracked"
-            assert "screenshot_dir" in data, "Missing screenshot_dir in result"
 
-            screenshot_dir = data["screenshot_dir"]
+            # Verify output directory structure
+            assert output_dir.exists(), f"Output directory not created: {output_dir}"
 
-            # Verify screenshot directory exists and has files
-            assert os.path.exists(screenshot_dir), f"Screenshot dir not created: {screenshot_dir}"
+            # Verify metadata.json
+            metadata_file = output_dir / "metadata.json"
+            assert metadata_file.exists(), "metadata.json not created"
 
-            screenshots = list(Path(screenshot_dir).glob("*.png"))
-            assert len(screenshots) > 0, f"No screenshots found in {screenshot_dir}"
+            with open(metadata_file, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
 
-            # Verify trace file contains screenshot references
-            with open(output_file, 'r', encoding='utf-8') as f:
-                trace_data = json.load(f)
-
-            assert trace_data["metadata"].get("capture_screenshots") is True, \
+            assert metadata.get("capture_screenshots") is True, \
                 "Metadata should indicate screenshots were captured"
-            assert trace_data["metadata"].get("screenshot_dir") == screenshot_dir, \
-                "Metadata should contain screenshot directory"
 
-            # Check that samples have screenshot paths
-            for actor_name, samples in trace_data["actors"].items():
-                for sample in samples:
-                    if "screenshots" in sample:
-                        assert len(sample["screenshots"]) > 0, \
-                            f"Sample has empty screenshots list for {actor_name}"
+            # Verify actor subdirectories with screenshots
+            actor_dirs = [d for d in output_dir.iterdir() if d.is_dir()]
+            assert len(actor_dirs) > 0, "No actor subdirectories created"
+
+            # Check sample directories have screenshots subdirectory
+            sample_dirs = list(actor_dirs[0].glob("sample_at_tick_*"))
+            assert len(sample_dirs) > 0, "No sample directories created"
+
+            # Verify screenshots directory and files
+            screenshots_dir = sample_dirs[0] / "screenshots"
+            assert screenshots_dir.exists(), f"Screenshots directory not created: {screenshots_dir}"
+
+            screenshots = list(screenshots_dir.glob("*.png"))
+            assert len(screenshots) > 0, f"No screenshots found in {screenshots_dir}"
+
+            # Verify transform.json contains screenshot references
+            transform_file = sample_dirs[0] / "transform.json"
+            with open(transform_file, 'r', encoding='utf-8') as f:
+                transform_data = json.load(f)
+
+            assert "screenshots" in transform_data, "Missing 'screenshots' in transform.json"
+            assert len(transform_data["screenshots"]) > 0, "Empty screenshots list in transform.json"
+
+            # Count total screenshots across all samples
+            total_screenshots = len(list(output_dir.glob("**/screenshots/*.png")))
 
             print(f"\n[OK] Trace with screenshots completed:")
             print(f"  - Samples: {data.get('sample_count')}")
             print(f"  - Actors: {data.get('actor_count')}")
             print(f"  - Duration: {data.get('duration'):.2f}s")
-            print(f"  - Screenshot dir: {screenshot_dir}")
-            print(f"  - Screenshots taken: {len(screenshots)}")
+            print(f"  - Output dir: {output_dir}")
+            print(f"  - Total screenshots: {total_screenshots}")
+            print(f"  - Screenshots per sample: {[f.name for f in screenshots]}")
 
         finally:
-            # Cleanup JSON output file only, preserve screenshots for inspection
-            if os.path.exists(output_file):
-                os.remove(output_file)
-            # Screenshots are preserved in screenshot_dir for inspection
+            # Preserve all outputs for inspection
+            pass
 
     @pytest.mark.asyncio
     async def test_trace_with_screenshots_single_angle(self, running_editor: ToolCaller):
         """Test tracing with single-angle screenshot capture."""
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            output_file = f.name
-
-        screenshot_dir = None
+        # Use fixed output path in project's Saved directory
+        output_dir = FIXTURE_PROJECT / "Saved" / "Tests" / "TraceSingleAngle"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
 
         try:
             result = await running_editor.call(
                 "editor_trace_actors_in_pie",
                 {
-                    "output_file": output_file,
+                    "output_dir": str(output_dir),
                     "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
                     "actor_names": ["BP_ThirdPersonCharacter"],
                     "duration_seconds": 2.0,
@@ -282,22 +316,22 @@ class TestTraceActorsWithEditor:
             data = parse_tool_result(result)
 
             assert data.get("success") is True, f"Single-angle trace failed: {data}"
-            assert "screenshot_dir" in data, "Missing screenshot_dir"
 
-            screenshot_dir = data["screenshot_dir"]
-            screenshots = list(Path(screenshot_dir).glob("*.png"))
+            # Verify output structure
+            assert output_dir.exists(), "Output directory not created"
+
+            # Count total screenshots (single angle = 1 per sample per actor)
+            total_screenshots = len(list(output_dir.glob("**/screenshots/*.png")))
 
             # With single angle, should have fewer screenshots than multi-angle
             # (1 per sample per actor instead of 4)
             print(f"\n[OK] Single-angle trace completed:")
-            print(f"  - Screenshots: {len(screenshots)}")
+            print(f"  - Total screenshots: {total_screenshots}")
             print(f"  - Sample count: {data.get('sample_count')}")
 
         finally:
-            # Cleanup JSON output file only, preserve screenshots for inspection
-            if os.path.exists(output_file):
-                os.remove(output_file)
-            # Screenshots are preserved in screenshot_dir for inspection
+            # Preserve all outputs for inspection
+            pass
 
 
 if __name__ == "__main__":

@@ -6,13 +6,15 @@ FastMCP-based MCP server for Unreal Editor interaction.
 
 import asyncio
 import logging
+import signal
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Annotated, Any, Callable, Optional
 
 import mcp.types as mt
 from fastmcp import Context, FastMCP
+from pydantic import Field
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
 from .autoconfig import get_bundled_site_packages
@@ -174,7 +176,9 @@ Available tools:
 
 
 @mcp.tool(name="project_set_path")
-def set_project_path(project_path: str) -> dict[str, Any]:
+def set_project_path(
+    project_path: Annotated[str, Field(description="Absolute path to the directory containing the .uproject file")],
+) -> dict[str, Any]:
     """
     Set the UE5 project path for the MCP server.
 
@@ -232,9 +236,9 @@ def set_project_path(project_path: str) -> dict[str, Any]:
 @mcp.tool(name="editor_launch")
 async def launch_editor(
     ctx: Context,
-    additional_paths: list[str] = [],
-    wait: bool = True,
-    wait_timeout: float = 120.0,
+    additional_paths: Annotated[list[str], Field(default=[], description="Optional list of additional Python paths to add to the editor's sys.path")],
+    wait: Annotated[bool, Field(default=True, description="Whether to wait for the editor to connect before returning")],
+    wait_timeout: Annotated[float, Field(default=120.0, description="Maximum time in seconds to wait for editor connection")],
 ) -> dict[str, Any]:
     """
     Launch Unreal Editor for the bound project.
@@ -303,7 +307,9 @@ def get_editor_status() -> dict[str, Any]:
 
 
 @mcp.tool(name="editor_read_log")
-def read_editor_log(tail_lines: Optional[int] = None) -> dict[str, Any]:
+def read_editor_log(
+    tail_lines: Annotated[Optional[int], Field(default=None, description="If specified, only return the last N lines of the log. Useful for large log files.")],
+) -> dict[str, Any]:
     """
     Read the Unreal Editor log file content.
 
@@ -344,7 +350,10 @@ def stop_editor() -> dict[str, Any]:
 
 
 @mcp.tool(name="editor_execute_code")
-def execute_code(code: str, timeout: float = 30.0) -> dict[str, Any]:
+def execute_code(
+    code: Annotated[str, Field(description="Python code to execute")],
+    timeout: Annotated[float, Field(default=30.0, description="Execution timeout in seconds")],
+) -> dict[str, Any]:
     """
     Execute Python code in the managed Unreal Editor.
 
@@ -370,7 +379,10 @@ def execute_code(code: str, timeout: float = 30.0) -> dict[str, Any]:
 
 
 @mcp.tool(name="editor_execute_script")
-def execute_script(script_path: str, timeout: float = 30.0) -> dict[str, Any]:
+def execute_script(
+    script_path: Annotated[str, Field(description="Path to the Python script file to execute")],
+    timeout: Annotated[float, Field(default=30.0, description="Execution timeout in seconds")],
+) -> dict[str, Any]:
     """
     Execute a Python script file in the managed Unreal Editor.
 
@@ -422,8 +434,8 @@ def execute_script(script_path: str, timeout: float = 30.0) -> dict[str, Any]:
 
 @mcp.tool(name="editor_configure")
 def configure_project(
-    auto_fix: bool = True,
-    additional_paths: list[str] = [],
+    auto_fix: Annotated[bool, Field(default=True, description="Whether to automatically fix issues")],
+    additional_paths: Annotated[list[str], Field(default=[], description="Optional list of additional Python paths to configure")],
 ) -> dict[str, Any]:
     """
     Check and optionally fix project configuration for Python remote execution.
@@ -457,13 +469,13 @@ def configure_project(
 @mcp.tool(name="project_build")
 async def build_project(
     ctx: Context,
-    target: str = "Editor",
-    configuration: str = "Development",
-    platform: str = "Win64",
-    clean: bool = False,
-    wait: bool = True,
-    verbose: bool = False,
-    timeout: float = 1800.0,
+    target: Annotated[str, Field(default="Editor", description="Build target type: 'Editor', 'Game', 'Client', or 'Server'")],
+    configuration: Annotated[str, Field(default="Development", description="Build configuration: 'Debug', 'DebugGame', 'Development', 'Shipping', or 'Test'")],
+    platform: Annotated[str, Field(default="Win64", description="Target platform: 'Win64', 'Mac', 'Linux', etc.")],
+    clean: Annotated[bool, Field(default=False, description="Whether to perform a clean build (rebuilds everything)")],
+    wait: Annotated[bool, Field(default=True, description="Whether to wait for build to complete")],
+    verbose: Annotated[bool, Field(default=False, description="Whether to stream all build logs via notifications")],
+    timeout: Annotated[float, Field(default=1800.0, description="Build timeout in seconds (default: 30 minutes)")],
 ) -> dict[str, Any]:
     """
     Build the UE5 project using UnrealBuildTool.
@@ -544,8 +556,8 @@ async def build_project(
 
 @mcp.tool(name="editor_pip_install")
 def pip_install_packages(
-    packages: list[str],
-    upgrade: bool = False,
+    packages: Annotated[list[str], Field(description="List of package names to install (e.g., ['Pillow', 'numpy'])")],
+    upgrade: Annotated[bool, Field(default=False, description="Whether to upgrade packages if already installed")],
 ) -> dict[str, Any]:
     """
     Install Python packages in UE5's embedded Python environment.
@@ -811,15 +823,15 @@ else:
 
 @mcp.tool(name="editor_capture_orbital")
 def capture_orbital(
-    level: str,
-    target_x: float,
-    target_y: float,
-    target_z: float,
-    distance: float = 500.0,
-    preset: str = "orthographic",
-    output_dir: Optional[str] = None,
-    resolution_width: int = 800,
-    resolution_height: int = 600,
+    level: Annotated[str, Field(description="Path to the level to load (e.g. /Game/Maps/MyLevel)")],
+    target_x: Annotated[float, Field(description="Target X coordinate in world space")],
+    target_y: Annotated[float, Field(description="Target Y coordinate in world space")],
+    target_z: Annotated[float, Field(description="Target Z coordinate in world space")],
+    distance: Annotated[float, Field(default=500.0, description="Camera distance from target in UE units")],
+    preset: Annotated[str, Field(default="orthographic", description="View preset: 'all', 'perspective', 'orthographic', 'birdseye', 'horizontal', or 'technical'")],
+    output_dir: Annotated[Optional[str], Field(default=None, description="Output directory for screenshots (default: auto-generated in project)")],
+    resolution_width: Annotated[int, Field(default=800, description="Screenshot width in pixels")],
+    resolution_height: Annotated[int, Field(default=600, description="Screenshot height in pixels")],
 ) -> dict[str, Any]:
     """
     Capture multi-angle screenshots around a target location using SceneCapture2D.
@@ -876,16 +888,16 @@ def capture_orbital(
 @mcp.tool(name="editor_capture_pie")
 async def capture_pie(
     ctx: Context,
-    output_dir: str,
-    level: str,
-    duration_seconds: float = 10.0,
-    interval_seconds: float = 1.0,
-    resolution_width: int = 1920,
-    resolution_height: int = 1080,
-    multi_angle: bool = True,
-    camera_distance: float = 300.0,
-    target_height: float = 90.0,
-    target_actor: Optional[str] = None,
+    output_dir: Annotated[str, Field(description="Output directory for screenshots")],
+    level: Annotated[str, Field(description="Path to the level to load")],
+    duration_seconds: Annotated[float, Field(default=10.0, description="How long to capture in seconds")],
+    interval_seconds: Annotated[float, Field(default=1.0, description="Time between captures in seconds")],
+    resolution_width: Annotated[int, Field(default=1920, description="Screenshot width in pixels")],
+    resolution_height: Annotated[int, Field(default=1080, description="Screenshot height in pixels")],
+    multi_angle: Annotated[bool, Field(default=True, description="Enable multi-angle capture around player")],
+    camera_distance: Annotated[float, Field(default=300.0, description="Camera distance from player for multi-angle")],
+    target_height: Annotated[float, Field(default=90.0, description="Target height offset for camera")],
+    target_actor: Annotated[Optional[str], Field(default=None, description="Name of the actor to capture (actor label or object name). If not specified, captures around player character.")],
 ) -> dict[str, Any]:
     """
     Capture screenshots during Play-In-Editor (PIE) session.
@@ -960,18 +972,17 @@ async def capture_pie(
 @mcp.tool(name="editor_trace_actors_in_pie")
 async def trace_actors_in_pie(
     ctx: Context,
-    output_file: str,
-    level: str,
-    actor_names: list[str],
-    duration_seconds: float = 10.0,
-    interval_seconds: float = 0.1,
-    capture_screenshots: bool = False,
-    screenshot_dir: str | None = None,
-    camera_distance: float = 300,
-    target_height: float = 90,
-    resolution_width: int = 800,
-    resolution_height: int = 600,
-    multi_angle: bool = True,
+    output_dir: Annotated[str, Field(description="Output directory for trace data and screenshots")],
+    level: Annotated[str, Field(description="Path to the level to load")],
+    actor_names: Annotated[list[str], Field(description="List of actor names to track")],
+    duration_seconds: Annotated[float, Field(default=10.0, description="How long to trace in seconds")],
+    interval_seconds: Annotated[float, Field(default=0.1, description="Time between samples in seconds")],
+    capture_screenshots: Annotated[bool, Field(default=False, description="Whether to capture screenshots of actors")],
+    camera_distance: Annotated[float, Field(default=300, description="Camera distance from actor for screenshots")],
+    target_height: Annotated[float, Field(default=90, description="Target height offset from actor origin")],
+    resolution_width: Annotated[int, Field(default=800, description="Screenshot width in pixels")],
+    resolution_height: Annotated[int, Field(default=600, description="Screenshot height in pixels")],
+    multi_angle: Annotated[bool, Field(default=True, description="Whether to capture multiple angles per actor")],
 ) -> dict[str, Any]:
     """
     Trace actor transforms during Play-In-Editor (PIE) session.
@@ -982,14 +993,28 @@ async def trace_actors_in_pie(
 
     Optionally captures screenshots of tracked actors at each sample interval.
 
+    Output directory structure:
+        output_dir/
+        ├── metadata.json                 # Global metadata
+        ├── ActorLabel/                   # Actor subdirectory (using actor label/name)
+        │   ├── sample_at_tick_6/         # Sample directory (using actual tick number)
+        │   │   ├── transform.json        # Transform/velocity data for this sample
+        │   │   └── screenshots/          # Screenshots (if enabled)
+        │   │       ├── front.png
+        │   │       ├── side.png
+        │   │       ├── back.png
+        │   │       └── perspective.png
+        │   └── sample_at_tick_12/
+        │       └── ...
+        └── ...
+
     Args:
-        output_file: Output JSON file path (required)
+        output_dir: Output directory for trace data (required)
         level: Path to the level to load (required)
         actor_names: List of actor names to track (required)
         duration_seconds: How long to trace in seconds (default: 10)
         interval_seconds: Time between samples in seconds (default: 0.1)
         capture_screenshots: Whether to capture screenshots of actors (default: False)
-        screenshot_dir: Directory for screenshots (default: auto-generated alongside output_file)
         camera_distance: Camera distance from actor for screenshots (default: 300)
         target_height: Target height offset from actor origin (default: 90)
         resolution_width: Screenshot width in pixels (default: 800)
@@ -999,41 +1024,35 @@ async def trace_actors_in_pie(
     Returns:
         Result containing:
         - success: Whether tracing succeeded
-        - output_file: Path to JSON trace file
+        - output_dir: Path to output directory
         - duration: Actual trace duration
         - interval: Sampling interval used
         - sample_count: Number of samples collected
         - actor_count: Number of actors successfully tracked
         - actors_not_found: List of actor names that weren't found
-        - screenshot_dir: Directory containing screenshots (if capture_screenshots=True)
     """
     def process_trace_result(trace_result: dict[str, Any]) -> dict[str, Any]:
         """Process trace result and extract relevant fields."""
-        result = {
+        return {
             "success": trace_result.get("success", False),
-            "output_file": trace_result.get("output_file", output_file),
+            "output_dir": trace_result.get("output_dir", output_dir),
             "duration": trace_result.get("duration", 0),
             "interval": trace_result.get("interval", interval_seconds),
             "sample_count": trace_result.get("sample_count", 0),
             "actor_count": trace_result.get("actor_count", 0),
             "actors_not_found": trace_result.get("actors_not_found", []),
         }
-        # Add screenshot_dir if present
-        if "screenshot_dir" in trace_result:
-            result["screenshot_dir"] = trace_result["screenshot_dir"]
-        return result
 
     return await _run_pie_task(
         ctx=ctx,
         script_name="trace_actors_pie",
         params={
-            "output_file": output_file,
+            "output_dir": output_dir,
             "level": level,
             "actor_names": actor_names,
             "duration_seconds": duration_seconds,
             "interval_seconds": interval_seconds,
             "capture_screenshots": capture_screenshots,
-            "screenshot_dir": screenshot_dir,
             "camera_distance": camera_distance,
             "target_height": target_height,
             "resolution_width": resolution_width,
@@ -1042,8 +1061,8 @@ async def trace_actors_in_pie(
         },
         duration_seconds=duration_seconds,
         task_description="PIE actor tracing" + (" with screenshots" if capture_screenshots else ""),
-        output_key="output_file",
-        output_value=output_file,
+        output_key="output_dir",
+        output_value=output_dir,
         result_processor=process_trace_result,
     )
 
@@ -1051,9 +1070,9 @@ async def trace_actors_in_pie(
 @mcp.tool(name="editor_pie_execute_in_tick")
 async def pie_execute_in_tick(
     ctx: Context,
-    level: str,
-    total_ticks: int,
-    code_snippets: list[dict[str, Any]],
+    level: Annotated[str, Field(description="Path to the level to load")],
+    total_ticks: Annotated[int, Field(description="Total number of ticks to run PIE")],
+    code_snippets: Annotated[list[dict[str, Any]], Field(description="List of code snippet configurations. Each snippet has: code (str), start_tick (int), execution_count (int, default: 1)")],
 ) -> dict[str, Any]:
     """
     Execute Python code snippets at specific ticks during PIE session.
@@ -1111,13 +1130,13 @@ async def pie_execute_in_tick(
 
 @mcp.tool(name="editor_capture_window")
 def capture_window(
-    level: str,
-    output_file: Optional[str] = None,
-    mode: str = "window",
-    asset_path: Optional[str] = None,
-    asset_list: Optional[list[str]] = None,
-    output_dir: Optional[str] = None,
-    tab: Optional[int] = None,
+    level: Annotated[str, Field(description="Path to the level to load")],
+    output_file: Annotated[Optional[str], Field(default=None, description="Output file path (required for 'window' and 'asset' modes)")],
+    mode: Annotated[str, Field(default="window", description="Capture mode: 'window', 'asset', or 'batch'")],
+    asset_path: Annotated[Optional[str], Field(default=None, description="Asset path to open (required for 'asset' mode)")],
+    asset_list: Annotated[Optional[list[str]], Field(default=None, description="List of asset paths (required for 'batch' mode)")],
+    output_dir: Annotated[Optional[str], Field(default=None, description="Output directory (required for 'batch' mode)")],
+    tab: Annotated[Optional[int], Field(default=None, description="Tab number to switch to (1-9)")],
 ) -> dict[str, Any]:
     """
     Capture UE5 editor window screenshot using Windows API.
@@ -1234,7 +1253,10 @@ def _parse_diagnostic_result(exec_result: dict[str, Any]) -> dict[str, Any]:
 
 
 @mcp.tool(name="editor_asset_open")
-def open_asset(asset_path: str, tab_id: str | None = None) -> dict[str, Any]:
+def open_asset(
+    asset_path: Annotated[str, Field(description="Path to the asset to open (e.g., /Game/Blueprints/BP_Character)")],
+    tab_id: Annotated[str | None, Field(default=None, description="Optional tab ID to open/focus after the editor opens (e.g., 'Inspector', 'SCSViewport', 'GraphEditor')")],
+) -> dict[str, Any]:
     """
     Open an asset in its editor within Unreal Editor.
 
@@ -1384,7 +1406,9 @@ else:
 
 
 @mcp.tool(name="editor_asset_diagnostic")
-def diagnose_asset(asset_path: str) -> dict[str, Any]:
+def diagnose_asset(
+    asset_path: Annotated[str, Field(description="Path to the asset to diagnose (e.g., /Game/Maps/TestLevel)")],
+) -> dict[str, Any]:
     """
     Run diagnostics on a UE5 asset to detect common issues.
 
@@ -1437,7 +1461,10 @@ def diagnose_asset(asset_path: str) -> dict[str, Any]:
 
 
 @mcp.tool(name="editor_asset_inspect")
-def inspect_asset(asset_path: str, component_name: str | None = None) -> dict[str, Any]:
+def inspect_asset(
+    asset_path: Annotated[str, Field(description="Path to the asset to inspect (e.g., /Game/Meshes/MyStaticMesh)")],
+    component_name: Annotated[str | None, Field(default=None, description="Optional name of a specific component to inspect (only valid for Blueprint assets)")],
+) -> dict[str, Any]:
     """
     Inspect a UE5 asset and return all its properties.
 
@@ -1503,13 +1530,66 @@ def inspect_asset(asset_path: str, component_name: str | None = None) -> dict[st
     return _parse_diagnostic_result(result)
 
 
+def _cleanup_on_shutdown() -> None:
+    """
+    Clean up resources when the server is shutting down.
+
+    This function is called by signal handlers and ensures proper cleanup
+    of the EditorManager and any running UE5 editor instances.
+    """
+    global _editor_manager
+    logger.info("Server shutdown requested, cleaning up...")
+
+    if _editor_manager is not None:
+        try:
+            _editor_manager._cleanup()
+            logger.info("EditorManager cleanup completed")
+        except Exception as e:
+            logger.error(f"Error during EditorManager cleanup: {e}")
+
+    logger.info("Cleanup completed")
+
+
+def _signal_handler(signum: int, frame) -> None:
+    """
+    Handle termination signals (SIGTERM, SIGINT).
+
+    This ensures proper cleanup when the MCP server is stopped by:
+    - mcp-pytest's stdio_client closing the connection
+    - User pressing Ctrl+C
+    - System sending SIGTERM
+    """
+    sig_name = signal.Signals(signum).name
+    logger.info(f"Received signal {sig_name} ({signum})")
+    _cleanup_on_shutdown()
+    sys.exit(0)
+
+
 def main():
     """Main entry point for the MCP server."""
+    # Register signal handlers for graceful shutdown
+    # This ensures cleanup happens even when atexit is not triggered
+    if sys.platform != "win32":
+        # Unix-like systems: handle SIGTERM and SIGINT
+        signal.signal(signal.SIGTERM, _signal_handler)
+        signal.signal(signal.SIGINT, _signal_handler)
+    else:
+        # Windows: SIGTERM is not supported, only SIGINT (Ctrl+C)
+        # For Windows, we also use SIGBREAK for Ctrl+Break
+        signal.signal(signal.SIGINT, _signal_handler)
+        if hasattr(signal, "SIGBREAK"):
+            signal.signal(signal.SIGBREAK, _signal_handler)
+
     # Note: For claude-ai/Automatic-Testing clients, _editor_manager is initialized
     # via project.set_path tool, not at startup. For other clients, it's initialized
     # automatically in ClientDetectionMiddleware.on_initialize().
     logger.info("Starting UE-MCP server...")
-    mcp.run()
+
+    try:
+        mcp.run()
+    finally:
+        # Fallback cleanup in case signals weren't caught
+        _cleanup_on_shutdown()
 
 
 if __name__ == "__main__":

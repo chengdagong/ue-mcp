@@ -87,15 +87,42 @@ class EditorManager:
         self._last_restart_time: Optional[float] = None
         self._intentional_stop = False  # Flag to prevent restart on intentional stop
 
+        # Track all background tasks for proper cleanup
+        self._background_tasks: set[asyncio.Task] = set()
+
         # Register cleanup on exit
         atexit.register(self._cleanup)
 
         logger.info(f"EditorManager initialized for project: {self.project_name}")
         logger.info(f"Project path: {self.project_path}")
 
+    def _create_background_task(self, coro) -> asyncio.Task:
+        """
+        Create a background task and track it for cleanup.
+
+        Args:
+            coro: Coroutine to run as a task
+
+        Returns:
+            The created task
+        """
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
+    def _cancel_all_background_tasks(self) -> None:
+        """Cancel all tracked background tasks."""
+        for task in list(self._background_tasks):
+            if not task.done():
+                task.cancel()
+                logger.debug(f"Cancelled background task: {task.get_name()}")
+        self._background_tasks.clear()
+
     def _cleanup(self) -> None:
         """Clean up editor instance on exit."""
         self._stop_health_monitor()
+        self._cancel_all_background_tasks()
         if self._editor is not None:
             logger.info("Cleaning up editor instance...")
             self._intentional_stop = True
@@ -571,7 +598,7 @@ class EditorManager:
         process, config_result = prep_result
 
         # Start background task to wait for connection
-        asyncio.create_task(
+        self._create_background_task(
             self._wait_for_connection_async(
                 process=process,
                 notify=notify,
@@ -713,7 +740,7 @@ class EditorManager:
             remote_client._cleanup_sockets()
 
             # Start background connection loop to keep trying
-            asyncio.create_task(
+            self._create_background_task(
                 self._background_connect_loop(
                     process=process,
                     notify=notify,
@@ -776,7 +803,7 @@ class EditorManager:
 
         self._notify_callback = notify
         self._intentional_stop = False  # Reset flag
-        self._monitor_task = asyncio.create_task(self._health_monitor_loop())
+        self._monitor_task = self._create_background_task(self._health_monitor_loop())
         logger.info("Health monitor started")
 
     def _stop_health_monitor(self) -> None:
@@ -1419,7 +1446,7 @@ class EditorManager:
         logger.info(f"Target: {target_name}, Platform: {platform}, Configuration: {configuration}")
 
         # Start background build task
-        asyncio.create_task(
+        self._create_background_task(
             self._run_build_async(
                 cmd=cmd,
                 notify=notify,

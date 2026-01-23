@@ -8,15 +8,29 @@ asynchronously via tick callbacks and auto-stops when duration is reached.
 
 Optionally captures screenshots of tracked actors at each sample interval.
 
+Output directory structure:
+    output_dir/
+    ├── metadata.json                 # Global metadata
+    ├── ActorLabel/                   # Actor subdirectory (using actor label/name)
+    │   ├── sample_at_tick_6/         # Sample directory (using actual tick number)
+    │   │   ├── transform.json        # Transform/velocity data for this sample
+    │   │   └── screenshots/          # Screenshots (if enabled)
+    │   │       ├── front.png
+    │   │       ├── side.png
+    │   │       ├── back.png
+    │   │       └── perspective.png
+    │   └── sample_at_tick_12/
+    │       └── ...
+    └── ...
+
 Usage (CLI):
-    python trace_actors_pie.py --output-file=/path/to/trace.json --level=/Game/Maps/TestLevel --actor-names=["Actor1","Actor2"]
+    python trace_actors_pie.py --output-dir=/path/to/output --level=/Game/Maps/TestLevel --actor-names=["Actor1","Actor2"]
 
     Optional arguments:
         --duration-seconds=10     Trace duration in seconds (default: 10)
         --interval-seconds=0.1    Interval between samples (default: 0.1)
         --task-id=<id>            Task ID for completion file (optional)
         --capture-screenshots     Enable screenshot capture (default: False)
-        --screenshot-dir=<path>   Screenshot output directory (default: auto)
         --camera-distance=300     Camera distance from actor (default: 300)
         --target-height=90        Target height offset (default: 90)
         --resolution-width=800    Screenshot width (default: 800)
@@ -25,13 +39,12 @@ Usage (CLI):
 
 MCP mode (__PARAMS__):
     task_id: str - Unique task identifier for completion file
-    output_file: str - Output JSON file path
+    output_dir: str - Output directory for trace data
     level: str - Level path to load
     actor_names: list[str] - List of actor names to track
     duration_seconds: float - Trace duration (auto-stops when reached)
     interval_seconds: float - Sampling interval
     capture_screenshots: bool - Whether to capture screenshots (default: False)
-    screenshot_dir: str - Screenshot output directory (optional)
     camera_distance: float - Camera distance from actor (default: 300)
     target_height: float - Target height offset (default: 90)
     resolution_width: int - Screenshot width (default: 800)
@@ -47,7 +60,6 @@ DEFAULTS = {
     "duration_seconds": 10.0,
     "interval_seconds": 0.1,
     "capture_screenshots": False,
-    "screenshot_dir": None,
     "camera_distance": 300,
     "target_height": 90,
     "resolution_width": 800,
@@ -56,7 +68,7 @@ DEFAULTS = {
 }
 
 # Required parameters
-REQUIRED = ["output_file", "level", "actor_names"]
+REQUIRED = ["output_dir", "level", "actor_names"]
 
 
 def main():
@@ -71,7 +83,7 @@ def main():
     # Start PIE tracer with duration (will auto-stop via tick callback)
     # Returns immediately - tracing runs asynchronously
     tracer = editor_capture.start_pie_tracer(
-        output_file=params["output_file"],
+        output_dir=params["output_dir"],
         actor_names=params["actor_names"],
         interval_seconds=params["interval_seconds"],
         auto_start_pie=True,
@@ -80,7 +92,6 @@ def main():
         task_id=params.get("task_id"),
         # Screenshot capture options
         capture_screenshots=params["capture_screenshots"],
-        screenshot_dir=params.get("screenshot_dir"),
         camera_distance=params["camera_distance"],
         target_height=params["target_height"],
         resolution=resolution,
@@ -90,16 +101,12 @@ def main():
     # Build result
     result = {
         "status": "started",
-        "output_file": params["output_file"],
+        "output_dir": params["output_dir"],
         "duration": params["duration_seconds"],
         "interval": params["interval_seconds"],
         "actor_count": len(params["actor_names"]),
         "capture_screenshots": params["capture_screenshots"],
     }
-
-    # Add screenshot directory if enabled
-    if params["capture_screenshots"] and tracer.screenshot_dir:
-        result["screenshot_dir"] = tracer.screenshot_dir
 
     # Return immediately with started status
     output_result(result)
