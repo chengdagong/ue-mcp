@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable, Coroutine, Optional
 
 from .autoconfig import run_config_check
+from .code_inspector import inspect_code
 from .pip_install import (
     extract_bundled_module_imports,
     extract_import_statements,
@@ -337,6 +338,7 @@ class EditorManager:
 
     async def _prepare_launch(
         self,
+        notify: Optional[NotifyCallback] = None,
         additional_paths: Optional[list[str]] = None,
         wait_timeout: float = 120.0,
     ) -> Any:
@@ -348,14 +350,20 @@ class EditorManager:
                 "status": self.get_status(),
             }
 
-        # Check if C++ project needs build
+        # Check if C++ project needs build - auto-build if necessary
         needs_build, reason = self.needs_build()
         if needs_build:
-            return {
-                "success": False,
-                "error": f"Project needs to be built: {reason}. Please run 'project_build' first.",
-                "requires_build": True,
-            }
+            logger.info(f"Project needs build: {reason}. Starting auto-build...")
+            if notify:
+                await notify("info", f"Project needs build: {reason}. Starting auto-build...")
+            
+            build_result = await self.build(notify=notify)
+            if not build_result.get("success"):
+                return {
+                    "success": False,
+                    "error": f"Auto-build failed: {build_result.get('error', 'Unknown error')}",
+                    "build_result": build_result,
+                }
 
         # Run autoconfig
         logger.info("Running project configuration check...")
@@ -379,11 +387,17 @@ class EditorManager:
             if extra_apis_info.get("modified", False):
                 needs_build, reason = self.needs_build()
                 if needs_build:
-                    return {
-                        "success": False,
-                        "error": f"Project needs to be built: {reason}. Please run 'project_build' first.",
-                        "requires_build": True,
-                    }
+                    logger.info(f"Plugin installed, build needed: {reason}. Starting auto-build...")
+                    if notify:
+                        await notify("info", f"Plugin installed, build needed: {reason}. Starting auto-build...")
+                    
+                    build_result = await self.build(notify=notify)
+                    if not build_result.get("success"):
+                        return {
+                            "success": False,
+                            "error": f"Auto-build failed: {build_result.get('error', 'Unknown error')}",
+                            "build_result": build_result,
+                        }
 
         # Find editor executable
         editor_path = find_ue5_editor_for_project(self.project_path)
@@ -480,17 +494,17 @@ class EditorManager:
             self._last_restart_time = None
             self._intentional_stop = False
 
-        prep_result = await self._prepare_launch(additional_paths, wait_timeout)
-        if isinstance(prep_result, dict):
-            return prep_result
-
-        process, config_result = prep_result
-
         # Helper for null notify
         async def null_notify(level: str, message: str) -> None:
             pass
 
         actual_notify = notify or null_notify
+
+        prep_result = await self._prepare_launch(actual_notify, additional_paths, wait_timeout)
+        if isinstance(prep_result, dict):
+            return prep_result
+
+        process, config_result = prep_result
 
         result = await self._wait_for_connection_async(
             process=process,
@@ -550,7 +564,7 @@ class EditorManager:
         self._last_restart_time = None
         self._intentional_stop = False
 
-        prep_result = await self._prepare_launch(additional_paths, wait_timeout)
+        prep_result = await self._prepare_launch(notify, additional_paths, wait_timeout)
         if isinstance(prep_result, dict):
             return prep_result
 
@@ -1158,7 +1172,16 @@ class EditorManager:
                 "error": syntax_error,
             }
 
-        # Step 2.5: Detect and prepare bundled module reload
+        # Step 2.5: Code inspection for blocking calls and other issues
+        inspection = inspect_code(code)
+        if not inspection.allowed:
+            return {
+                "success": False,
+                "error": inspection.format_error(),
+                "inspection_issues": [i.to_dict() for i in inspection.issues],
+            }
+
+        # Step 3: Detect and prepare bundled module reload
         # This ensures bundled modules are reloaded to pick up latest code changes
         bundled_imports = extract_bundled_module_imports(code)
         if bundled_imports:
