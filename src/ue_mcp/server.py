@@ -9,7 +9,7 @@ import logging
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import mcp.types as mt
 from fastmcp import Context, FastMCP
@@ -624,6 +624,92 @@ def _parse_capture_result(exec_result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _run_pie_task(
+    ctx: Context,
+    script_name: str,
+    params: dict[str, Any],
+    duration_seconds: float,
+    task_description: str,
+    output_key: str,
+    output_value: str,
+    result_processor: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    """
+    Execute a PIE task with common logic for capture and trace tools.
+    
+    This function encapsulates the shared pattern between editor_capture_pie
+    and editor_trace_actors_in_pie tools:
+    - Generate unique task_id
+    - Execute script via script_executor
+    - Monitor completion via watch_pie_capture_complete
+    - Handle timeout and result processing
+    
+    Args:
+        ctx: MCP Context for logging
+        script_name: Name of the script to execute
+        params: Script parameters (task_id will be added automatically)
+        duration_seconds: Duration for the task
+        task_description: Human-readable description for logging
+        output_key: Key name for output file/directory in error response
+        output_value: Value for output file/directory in error response
+        result_processor: Optional function to process the final result dict
+        
+    Returns:
+        Result dict from the PIE task execution
+    """
+    manager = _get_editor_manager()
+    
+    from .script_executor import execute_script
+    
+    # Generate unique task_id for this task
+    task_id = str(uuid.uuid4())[:8]
+    
+    # Add task_id to params
+    params_with_id = {"task_id": task_id, **params}
+    
+    # Start task (returns immediately, runs via tick callbacks)
+    result = execute_script(
+        manager,
+        script_name,
+        params=params_with_id,
+        timeout=30.0,  # Short timeout since script returns immediately
+    )
+    
+    if not result.get("success", False):
+        return _parse_capture_result(result)
+    
+    # Notify that task has started
+    await ctx.log(f"{task_description} started (task_id={task_id}), monitoring for completion...", level="info")
+    
+    # Watch for completion file
+    # Timeout = duration + buffer for PIE startup/shutdown
+    watch_timeout = duration_seconds + 60.0
+    
+    async def on_complete(task_result: dict[str, Any]) -> None:
+        """Called when task completes."""
+        await ctx.log(f"{task_description} completed", level="info")
+    
+    task_result = await watch_pie_capture_complete(
+        project_root=manager.project_root,
+        task_id=task_id,
+        callback=on_complete,
+        timeout=watch_timeout,
+    )
+    
+    if task_result is None:
+        return {
+            "success": False,
+            "error": f"Timeout waiting for {task_description.lower()} completion after {watch_timeout}s",
+            output_key: output_value,
+        }
+    
+    # Apply result processor if provided
+    if result_processor is not None:
+        return result_processor(task_result)
+    
+    return task_result
+
+
 @mcp.tool(name="editor_start_pie")
 def start_pie() -> dict[str, Any]:
     """
@@ -828,19 +914,29 @@ async def capture_pie(
         - duration: Actual capture duration
         - available_actors: (on error) List of actors in level with label, name, type
     """
-    manager = _get_editor_manager()
+    def process_capture_result(capture_result: dict[str, Any]) -> dict[str, Any]:
+        """Process capture result and extract relevant fields."""
+        result = {
+            "success": capture_result.get("success", False),
+            "output_dir": capture_result.get("output_dir", output_dir),
+            "duration": capture_result.get("duration", 0),
+            "interval": capture_result.get("interval", interval_seconds),
+            "screenshot_count": capture_result.get("screenshot_count", 0),
+        }
+        # Pass through error info if capture failed
+        if not result["success"]:
+            if "error" in capture_result:
+                result["error"] = capture_result["error"]
+            if "available_actors" in capture_result:
+                result["available_actors"] = capture_result["available_actors"]
+            if "matched_actors" in capture_result:
+                result["matched_actors"] = capture_result["matched_actors"]
+        return result
 
-    from .script_executor import execute_script
-
-    # Generate unique task_id for this capture
-    task_id = str(uuid.uuid4())[:8]
-
-    # Start capture (returns immediately, capture runs via tick callbacks)
-    result = execute_script(
-        manager,
-        "capture_pie",
+    return await _run_pie_task(
+        ctx=ctx,
+        script_name="capture_pie",
         params={
-            "task_id": task_id,
             "output_dir": output_dir,
             "level": level,
             "duration_seconds": duration_seconds,
@@ -852,58 +948,12 @@ async def capture_pie(
             "target_height": target_height,
             "target_actor": target_actor,
         },
-        timeout=30.0,  # Short timeout since script returns immediately
+        duration_seconds=duration_seconds,
+        task_description="PIE capture",
+        output_key="output_dir",
+        output_value=output_dir,
+        result_processor=process_capture_result,
     )
-
-    if not result.get("success", False):
-        return _parse_capture_result(result)
-
-    # Notify that capture has started
-    await ctx.log(f"PIE capture started (task_id={task_id}), monitoring for completion...", level="info")
-
-    # Watch for completion file
-    # Timeout = duration + buffer for PIE startup/shutdown
-    watch_timeout = duration_seconds + 60.0
-
-    async def on_complete(capture_result: dict[str, Any]) -> None:
-        """Called when capture completes."""
-        await ctx.log(
-            f"PIE capture completed: {capture_result.get('screenshot_count', 0)} screenshots",
-            level="info",
-        )
-
-    capture_result = await watch_pie_capture_complete(
-        project_root=manager.project_root,
-        task_id=task_id,
-        callback=on_complete,
-        timeout=watch_timeout,
-    )
-
-    if capture_result is None:
-        return {
-            "success": False,
-            "error": f"Timeout waiting for PIE capture completion after {watch_timeout}s",
-            "output_dir": output_dir,
-        }
-
-    result = {
-        "success": capture_result.get("success", False),
-        "output_dir": capture_result.get("output_dir", output_dir),
-        "duration": capture_result.get("duration", 0),
-        "interval": capture_result.get("interval", interval_seconds),
-        "screenshot_count": capture_result.get("screenshot_count", 0),
-    }
-
-    # Pass through error info if capture failed (e.g., target_actor not found or multiple matches)
-    if not result["success"]:
-        if "error" in capture_result:
-            result["error"] = capture_result["error"]
-        if "available_actors" in capture_result:
-            result["available_actors"] = capture_result["available_actors"]
-        if "matched_actors" in capture_result:
-            result["matched_actors"] = capture_result["matched_actors"]
-
-    return result
 
 
 @mcp.tool(name="editor_trace_actors_in_pie")
@@ -939,69 +989,34 @@ async def trace_actors_in_pie(
         - actor_count: Number of actors successfully tracked
         - actors_not_found: List of actor names that weren't found
     """
-    manager = _get_editor_manager()
+    def process_trace_result(trace_result: dict[str, Any]) -> dict[str, Any]:
+        """Process trace result and extract relevant fields."""
+        return {
+            "success": trace_result.get("success", False),
+            "output_file": trace_result.get("output_file", output_file),
+            "duration": trace_result.get("duration", 0),
+            "interval": trace_result.get("interval", interval_seconds),
+            "sample_count": trace_result.get("sample_count", 0),
+            "actor_count": trace_result.get("actor_count", 0),
+            "actors_not_found": trace_result.get("actors_not_found", []),
+        }
 
-    from .script_executor import execute_script
-
-    # Generate unique task_id for this trace
-    task_id = str(uuid.uuid4())[:8]
-
-    # Start tracer (returns immediately, tracing runs via tick callbacks)
-    result = execute_script(
-        manager,
-        "trace_actors_pie",
+    return await _run_pie_task(
+        ctx=ctx,
+        script_name="trace_actors_pie",
         params={
-            "task_id": task_id,
             "output_file": output_file,
             "level": level,
             "actor_names": actor_names,
             "duration_seconds": duration_seconds,
             "interval_seconds": interval_seconds,
         },
-        timeout=30.0,  # Short timeout since script returns immediately
+        duration_seconds=duration_seconds,
+        task_description="PIE actor tracing",
+        output_key="output_file",
+        output_value=output_file,
+        result_processor=process_trace_result,
     )
-
-    if not result.get("success", False):
-        return _parse_capture_result(result)
-
-    # Notify that tracing has started
-    await ctx.log(f"PIE actor tracing started (task_id={task_id}), monitoring for completion...", level="info")
-
-    # Watch for completion file
-    # Timeout = duration + buffer for PIE startup/shutdown
-    watch_timeout = duration_seconds + 60.0
-
-    async def on_complete(trace_result: dict[str, Any]) -> None:
-        """Called when tracing completes."""
-        await ctx.log(
-            f"PIE tracing completed: {trace_result.get('sample_count', 0)} samples "
-            f"for {trace_result.get('actor_count', 0)} actors",
-            level="info",
-        )
-
-    trace_result = await watch_pie_capture_complete(
-        project_root=manager.project_root,
-        task_id=task_id,
-        callback=on_complete,
-        timeout=watch_timeout,
-    )
-
-    if trace_result is None:
-        return {
-            "success": False,
-            "error": f"Timeout waiting for PIE tracing completion after {watch_timeout}s",
-            "output_file": output_file,
-        }
-
-    return {
-        "success": trace_result.get("success", False),
-        "output_file": trace_result.get("output_file", output_file),
-        "duration": trace_result.get("duration", 0),
-        "interval": trace_result.get("interval", interval_seconds),
-        "sample_count": trace_result.get("sample_count", 0),
-        "actor_count": trace_result.get("actor_count", 0),
-        "actors_not_found": trace_result.get("actors_not_found", []),
-    }
 
 
 @mcp.tool(name="editor_capture_window")
