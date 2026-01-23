@@ -99,7 +99,9 @@ def mcp_config(request: pytest.FixtureRequest):
 @pytest.fixture(scope="session")
 def project_template_path() -> Path:
     """Return the path to EmptyProjectTemplate fixture."""
-    return Path(__file__).parent / "fixtures" / "ThirdPersonTemplate" / "thirdperson_template.uproject"
+    return (
+        Path(__file__).parent / "fixtures" / "ThirdPersonTemplate" / "thirdperson_template.uproject"
+    )
 
 
 @pytest.fixture(scope="session")
@@ -224,8 +226,20 @@ def clean_test_output_dir():
     output_dir = tests_dir / "test_output"
 
     # Clear directory if it exists (clean slate for new session)
+    # Skip log directory as it contains timestamped log files
     if output_dir.exists():
-        shutil.rmtree(output_dir)
+        for item in output_dir.iterdir():
+            if item.name == "log":
+                # Skip the log directory - we keep timestamped logs
+                continue
+            try:
+                if item.is_dir():
+                    shutil.rmtree(item)
+                else:
+                    item.unlink()
+            except (PermissionError, OSError):
+                # Skip files that are currently in use
+                pass
 
     yield
 
@@ -416,9 +430,9 @@ else:
         result_json = result_parts[-1].strip()
 
         # Handle escaped JSON (when \" is used instead of ")
-        if result_json.startswith('{\\"') or result_json.startswith('{\\\"'):
+        if result_json.startswith('{\\"') or result_json.startswith('{\\"'):
             # Unescape the JSON string
-            result_json = result_json.encode().decode('unicode_escape')
+            result_json = result_json.encode().decode("unicode_escape")
 
         # Extract JSON object - find the matching closing brace
         if result_json.startswith("{"):
@@ -516,3 +530,59 @@ def mock_remote_client():
         mock_client.execute.return_value = {"success": True, "output": []}
         mock_cls.return_value = mock_client
         yield mock_cls, mock_client
+
+
+# =============================================================================
+# Pytest Hooks for Conditional Logging and Log File Path Display
+# =============================================================================
+
+
+def pytest_configure(config):
+    """
+    Configure pytest to show logs only when -v flag is used.
+    Also sets up timestamped log file in test_output/log/ directory.
+
+    This hook runs before tests start and adjusts log_cli setting
+    based on verbosity level.
+    """
+    from datetime import datetime
+
+    # Check if verbose mode is enabled (-v or -vv)
+    verbose = config.option.verbose
+
+    # Disable CLI logging if not in verbose mode
+    if verbose == 0:
+        # Disable live logging to terminal
+        config.option.log_cli_level = None
+        # Set to very high level to effectively disable
+        config._inicache["log_cli_level"] = "CRITICAL"
+
+    # Set up timestamped log file
+    tests_dir = Path(__file__).parent
+    log_dir = tests_dir / "test_output" / "log"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate timestamp for log file
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_dir / f"pytest-{timestamp}.log"
+
+    # Set log file path
+    config.option.log_file = str(log_file)
+    config._log_file_path = log_file
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """
+    Display log file path after test session completes.
+
+    This hook runs after all tests finish and displays the location
+    of the pytest log file for easy access.
+    """
+    # Get log file path from config (set in pytest_configure)
+    log_file = getattr(config, "_log_file_path", None)
+
+    if log_file and log_file.exists():
+        abs_path = log_file.resolve()
+        terminalreporter.write_sep("=", "Test Log File")
+        terminalreporter.write_line(f"Log file: {abs_path}")
+        terminalreporter.write_line(f"View with: cat {abs_path}")
