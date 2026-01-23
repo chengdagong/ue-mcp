@@ -52,6 +52,7 @@ class EditorInstance:
     # Launch parameters for auto-restart
     additional_paths: Optional[list[str]] = None
     wait_timeout: float = 120.0
+    multicast_port: int = 6766  # Allocated multicast port for this instance
 
 
 class EditorManager:
@@ -124,14 +125,10 @@ class EditorManager:
             "pid": self._editor.process.pid,
             "started_at": self._editor.started_at.isoformat(),
             "connected": (
-                self._editor.remote_client.is_connected()
-                if self._editor.remote_client
-                else False
+                self._editor.remote_client.is_connected() if self._editor.remote_client else False
             ),
             "log_file_path": (
-                str(self._editor.log_file_path)
-                if self._editor.log_file_path
-                else None
+                str(self._editor.log_file_path) if self._editor.log_file_path else None
             ),
         }
 
@@ -203,22 +200,19 @@ class EditorManager:
         if self._editor is None:
             return False
 
-        remote_client = RemoteExecutionClient(project_name=self.project_name)
+        remote_client = RemoteExecutionClient(
+            project_name=self.project_name,
+            expected_pid=self._editor.process.pid,  # Pass PID for verification
+            multicast_group=("239.0.0.1", self._editor.multicast_port),
+        )
 
-        if remote_client.find_unreal_instance(timeout=2.0):
-            if remote_client.open_connection():
-                # Verify PID to ensure we connected to the right process
-                if remote_client.verify_pid(self._editor.process.pid):
-                    self._editor.node_id = remote_client.get_node_id()
-                    self._editor.remote_client = remote_client
-                    self._editor.status = "ready"
-                    logger.info(
-                        f"Connected to editor (node_id: {self._editor.node_id})"
-                    )
-                    return True
-                else:
-                    logger.debug("PID mismatch, not our editor instance")
-                    remote_client.close_connection()
+        # Use find_and_verify_instance which handles multiple instances
+        if remote_client.find_and_verify_instance(timeout=2.0):
+            self._editor.node_id = remote_client.get_node_id()
+            self._editor.remote_client = remote_client
+            self._editor.status = "ready"
+            logger.info(f"Connected to editor (node_id: {self._editor.node_id})")
+            return True
 
         return False
 
@@ -305,7 +299,12 @@ class EditorManager:
 
                 plugin_name = plugin_dir.name
                 plugin_dll = plugin_dir / "Binaries" / "Win64" / f"UnrealEditor-{plugin_name}.dll"
-                alternative_plugin_dll = plugin_dir / "Binaries" / "Win64" / f"UnrealEditor-{plugin_name.replace('-', '')}.dll"
+                alternative_plugin_dll = (
+                    plugin_dir
+                    / "Binaries"
+                    / "Win64"
+                    / f"UnrealEditor-{plugin_name.replace('-', '')}.dll"
+                )
 
                 if not plugin_dll.exists() and not alternative_plugin_dll.exists():
                     return True, f"Plugin '{plugin_name}' binary not found"
@@ -326,7 +325,10 @@ class EditorManager:
                                     latest_plugin_source_file = file
 
                     if latest_plugin_source_mtime > plugin_dll_mtime:
-                        return True, f"Plugin '{plugin_name}' source file '{latest_plugin_source_file}' is newer than binary"
+                        return (
+                            True,
+                            f"Plugin '{plugin_name}' source file '{latest_plugin_source_file}' is newer than binary",
+                        )
 
                 except Exception as e:
                     logger.warning(f"Error checking plugin '{plugin_name}' build status: {e}")
@@ -391,6 +393,12 @@ class EditorManager:
                 "error": "Could not find Unreal Editor executable",
             }
 
+        # Allocate dynamic multicast port for this editor instance
+        from .port_allocator import find_available_port
+
+        allocated_port = find_available_port()
+        logger.info(f"Allocated multicast port: {allocated_port}")
+
         logger.info(f"Launching editor: {editor_path}")
         logger.info(f"Project: {self.project_path}")
 
@@ -404,12 +412,25 @@ class EditorManager:
         try:
             # On Windows, use DETACHED_PROCESS to fully separate from parent
             import sys
+
             creationflags = 0
             if sys.platform == "win32":
                 creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
 
+            # Build command line override for multicast port
+            # FIPv4Endpoint expects "IP:Port" string format
+            ini_override = (
+                f"-ini:Engine:[/Script/PythonScriptPlugin.PythonScriptPluginSettings]:"
+                f"RemoteExecutionMulticastGroupEndpoint=239.0.0.1:{allocated_port}"
+            )
+
             process = subprocess.Popen(
-                [str(editor_path), str(self.project_path), f"-ABSLOG={log_file_path}"],
+                [
+                    str(editor_path),
+                    str(self.project_path),
+                    f"-ABSLOG={log_file_path}",
+                    ini_override,
+                ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
@@ -429,6 +450,7 @@ class EditorManager:
             log_file_path=log_file_path,
             additional_paths=additional_paths,
             wait_timeout=wait_timeout,
+            multicast_port=allocated_port,
         )
         logger.info(f"Editor process started (PID: {process.pid})")
         return process, config_result
@@ -467,6 +489,7 @@ class EditorManager:
         # Helper for null notify
         async def null_notify(level: str, message: str) -> None:
             pass
+
         actual_notify = notify or null_notify
 
         result = await self._wait_for_connection_async(
@@ -568,7 +591,11 @@ class EditorManager:
             retry_interval: Time between connection attempts in seconds
         """
         logger.info("Starting background connection loop...")
-        remote_client = RemoteExecutionClient(project_name=self.project_name)
+        remote_client = RemoteExecutionClient(
+            project_name=self.project_name,
+            expected_pid=process.pid,  # Pass PID for verification
+            multicast_group=("239.0.0.1", self._editor.multicast_port),
+        )
 
         try:
             while True:
@@ -584,29 +611,24 @@ class EditorManager:
                     logger.info("Editor already connected, stopping background connection loop")
                     return
 
-                # Try to connect
-                if remote_client.find_unreal_instance(timeout=2.0):
-                    if remote_client.open_connection():
-                        if remote_client.verify_pid(process.pid):
-                            # Success! Transfer ownership to _editor
-                            if self._editor:
-                                self._editor.node_id = remote_client.get_node_id()
-                                self._editor.remote_client = remote_client
-                                self._editor.status = "ready"
+                # Try to connect with PID verification
+                if remote_client.find_and_verify_instance(timeout=2.0):
+                    # Success! Transfer ownership to _editor
+                    if self._editor:
+                        self._editor.node_id = remote_client.get_node_id()
+                        self._editor.remote_client = remote_client
+                        self._editor.status = "ready"
 
-                            logger.info(
-                                f"Background connect succeeded (node_id: {remote_client.get_node_id()})"
-                            )
-                            await notify(
-                                "info",
-                                f"Editor connected successfully in background! "
-                                f"(PID: {process.pid}, node_id: {remote_client.get_node_id()})"
-                            )
-                            # Don't cleanup - remote_client is now owned by _editor
-                            return
-                        else:
-                            logger.debug("PID mismatch in background connect, retrying...")
-                            remote_client.close_connection()
+                    logger.info(
+                        f"Background connect succeeded (node_id: {remote_client.get_node_id()})"
+                    )
+                    await notify(
+                        "info",
+                        f"Editor connected successfully in background! "
+                        f"(PID: {process.pid}, node_id: {remote_client.get_node_id()})",
+                    )
+                    # Don't cleanup - remote_client is now owned by _editor
+                    return
 
                 await asyncio.sleep(retry_interval)
         finally:
@@ -633,7 +655,11 @@ class EditorManager:
         """
         logger.info(f"Background: Waiting for editor connection (timeout: {wait_timeout}s)...")
 
-        remote_client = RemoteExecutionClient(project_name=self.project_name)
+        remote_client = RemoteExecutionClient(
+            project_name=self.project_name,
+            expected_pid=process.pid,  # Pass PID for verification
+            multicast_group=("239.0.0.1", self._editor.multicast_port),
+        )
         start_time = time.time()
         connected = False
 
@@ -642,11 +668,12 @@ class EditorManager:
             if process.poll() is not None:
                 if self._editor:
                     self._editor.status = "stopped"
-                logger.error(f"Editor process exited unexpectedly (exit code: {process.returncode})")
+                logger.error(
+                    f"Editor process exited unexpectedly (exit code: {process.returncode})"
+                )
                 remote_client._cleanup_sockets()
                 await notify(
-                    "error",
-                    f"Editor process exited unexpectedly (exit code: {process.returncode})"
+                    "error", f"Editor process exited unexpectedly (exit code: {process.returncode})"
                 )
                 return {
                     "success": False,
@@ -654,26 +681,16 @@ class EditorManager:
                     "exit_code": process.returncode,
                 }
 
-            # Try to discover and connect
-            if remote_client.find_unreal_instance(timeout=1.0):
-                if remote_client.open_connection():
-                    # Verify PID to ensure we connected to the right process
-                    if remote_client.verify_pid(process.pid):
-                        connected = True
-                        break
-                    else:
-                        logger.warning(
-                            "Connected to wrong UE5 instance (PID mismatch), retrying..."
-                        )
-                        remote_client.close_connection()
+            # Try to discover and connect with PID verification
+            if remote_client.find_and_verify_instance(timeout=1.0):
+                connected = True
+                break
 
             # Use asyncio.sleep to allow other tasks to run
             await asyncio.sleep(0.5)
 
         if not connected:
-            logger.warning(
-                "Timeout waiting for editor connection, continuing in background..."
-            )
+            logger.warning("Timeout waiting for editor connection, continuing in background...")
             if self._editor:
                 self._editor.status = "starting"
 
@@ -693,7 +710,7 @@ class EditorManager:
             await notify(
                 "warning",
                 "Timeout waiting for editor connection. "
-                "Continuing to try connecting in background - you will be notified when ready."
+                "Continuing to try connecting in background - you will be notified when ready.",
             )
             return {
                 "success": False,
@@ -718,7 +735,7 @@ class EditorManager:
             "info",
             f"Editor launched and connected successfully! "
             f"(PID: {process.pid}, node_id: {remote_client.get_node_id()}, "
-            f"elapsed: {elapsed:.1f}s)"
+            f"elapsed: {elapsed:.1f}s)",
         )
 
         return {
@@ -789,9 +806,7 @@ class EditorManager:
                         break
 
                     # Editor crashed - notify and attempt restart
-                    logger.warning(
-                        f"Editor process exited unexpectedly (exit code: {exit_code})"
-                    )
+                    logger.warning(f"Editor process exited unexpectedly (exit code: {exit_code})")
 
                     if self._notify_callback:
                         try:
@@ -816,9 +831,7 @@ class EditorManager:
                                     f"Please restart manually using editor_launch.",
                                 )
                             except Exception as e:
-                                logger.error(
-                                    f"Failed to send restart failure notification: {e}"
-                                )
+                                logger.error(f"Failed to send restart failure notification: {e}")
                         break
 
                     # Restart succeeded, continue monitoring
@@ -844,9 +857,7 @@ class EditorManager:
         """
         # Check restart count
         if self._restart_count >= self.MAX_RESTART_ATTEMPTS:
-            logger.error(
-                f"Maximum restart attempts ({self.MAX_RESTART_ATTEMPTS}) reached"
-            )
+            logger.error(f"Maximum restart attempts ({self.MAX_RESTART_ATTEMPTS}) reached")
             return False
 
         # Check cooldown
@@ -876,9 +887,7 @@ class EditorManager:
         self._restart_count += 1
         self._last_restart_time = time.time()
 
-        logger.info(
-            f"Attempting restart {self._restart_count}/{self.MAX_RESTART_ATTEMPTS}..."
-        )
+        logger.info(f"Attempting restart {self._restart_count}/{self.MAX_RESTART_ATTEMPTS}...")
 
         # Send restart notification
         if self._notify_callback:
@@ -907,9 +916,7 @@ class EditorManager:
 
                 # Check if requires_build - don't keep trying
                 if result.get("requires_build"):
-                    logger.error(
-                        "Editor requires build. Cannot auto-restart until built."
-                    )
+                    logger.error("Editor requires build. Cannot auto-restart until built.")
                     if self._notify_callback:
                         try:
                             await self._notify_callback(
@@ -1017,11 +1024,8 @@ class EditorManager:
                 "error": f"Editor is not ready (status: {self._editor.status})",
             }
 
-        if (
-            self._editor.remote_client is None
-            or not self._editor.remote_client.is_connected()
-        ):
-            # Try to reconnect using stored node_id
+        if self._editor.remote_client is None or not self._editor.remote_client.is_connected():
+            # Try to reconnect using stored node_id and PID
             logger.info("Remote client disconnected, attempting to reconnect...")
 
             # Clean up old remote_client if it exists
@@ -1031,30 +1035,20 @@ class EditorManager:
 
             remote_client = RemoteExecutionClient(
                 project_name=self.project_name,
-                expected_node_id=self._editor.node_id,  # Only accept known node
+                expected_node_id=self._editor.node_id,  # Prefer known node
+                expected_pid=self._editor.process.pid,  # Verify PID
+                multicast_group=("239.0.0.1", self._editor.multicast_port),
             )
-            if remote_client.find_unreal_instance(timeout=5.0):
-                if remote_client.open_connection():
-                    # Verify PID to ensure we reconnected to the right process
-                    if remote_client.verify_pid(self._editor.process.pid):
-                        self._editor.remote_client = remote_client
-                    else:
-                        remote_client.close_connection()
-                        return {
-                            "success": False,
-                            "error": "PID mismatch during reconnect. Original editor may have crashed.",
-                        }
-                else:
-                    remote_client._cleanup_sockets()
-                    return {
-                        "success": False,
-                        "error": "Failed to reconnect to editor",
-                    }
+
+            # Use find_and_verify_instance for reconnection
+            if remote_client.find_and_verify_instance(timeout=5.0):
+                self._editor.remote_client = remote_client
+                logger.info("Reconnected successfully")
             else:
                 remote_client._cleanup_sockets()
                 return {
                     "success": False,
-                    "error": "Failed to find editor instance. Editor may have crashed.",
+                    "error": "Failed to reconnect to editor. Editor may have crashed.",
                 }
 
         # Wrap multi-line code in exec() since EXECUTE_STATEMENT only handles single statements
@@ -1094,7 +1088,9 @@ class EditorManager:
             Path to Python interpreter, or None if failed
         """
         try:
-            result = self._execute("import unreal; print(unreal.get_interpreter_executable_path())", timeout=5.0)
+            result = self._execute(
+                "import unreal; print(unreal.get_interpreter_executable_path())", timeout=5.0
+            )
             if result.get("success") and result.get("output"):
                 output = result["output"]
                 lines = []
@@ -1106,7 +1102,7 @@ class EditorManager:
                             lines.append(str(line))
                 else:
                     lines = [str(output)]
-                
+
                 # Extract path from output
                 for line in lines:
                     for subline in line.strip().split("\n"):
@@ -1210,7 +1206,9 @@ class EditorManager:
                 install_result = pip_install([package_name], python_path=python_path)
 
                 if not install_result.get("success", False):
-                    logger.warning(f"Failed to install {package_name}: {install_result.get('error')}")
+                    logger.warning(
+                        f"Failed to install {package_name}: {install_result.get('error')}"
+                    )
                     break
 
                 installed_packages.append(package_name)
@@ -1446,6 +1444,7 @@ class EditorManager:
         Returns:
             Build result dictionary
         """
+
         # Helper to safely send notifications without raising
         async def safe_notify(level: str, message: str) -> None:
             try:
@@ -1457,6 +1456,7 @@ class EditorManager:
             # On Windows, hide the console window to prevent it from stealing focus
             # and potentially causing subprocess hangs
             import sys
+
             kwargs: dict[str, Any] = {
                 "stdin": asyncio.subprocess.DEVNULL,
                 "stdout": asyncio.subprocess.PIPE,
@@ -1494,10 +1494,7 @@ class EditorManager:
                 if time.time() - start_time > timeout:
                     if process.returncode is None:
                         process.kill()
-                    await safe_notify(
-                        "error",
-                        f"Build timed out after {timeout} seconds"
-                    )
+                    await safe_notify("error", f"Build timed out after {timeout} seconds")
                     return {
                         "success": False,
                         "error": f"Build timed out after {timeout} seconds",
@@ -1505,10 +1502,7 @@ class EditorManager:
                     }
 
                 try:
-                    line = await asyncio.wait_for(
-                        process.stdout.readline(),
-                        timeout=1.0
-                    )
+                    line = await asyncio.wait_for(process.stdout.readline(), timeout=1.0)
                     if not line:
                         break
                     line_str = line.decode("utf-8", errors="replace").rstrip()
@@ -1525,8 +1519,10 @@ class EditorManager:
                     # Send progress notifications for important lines or all if verbose
                     if verbose:
                         await safe_notify("info", line_str)
-                    elif any(keyword in line_str.lower() for keyword in
-                           ["error", "warning", "building", "compiling", "linking"]):
+                    elif any(
+                        keyword in line_str.lower()
+                        for keyword in ["error", "warning", "building", "compiling", "linking"]
+                    ):
                         await safe_notify("info", line_str[:200])  # Truncate long lines
                 except asyncio.TimeoutError:
                     if process.returncode is not None:
@@ -1561,7 +1557,7 @@ class EditorManager:
             await safe_notify(
                 "info",
                 f"Build completed successfully! "
-                f"({target_name} {platform} {configuration}, {elapsed:.1f}s)"
+                f"({target_name} {platform} {configuration}, {elapsed:.1f}s)",
             )
             return {
                 "success": True,
@@ -1574,8 +1570,7 @@ class EditorManager:
             error_lines = [l for l in output_lines if "error" in l.lower()][:5]
             error_summary = "\n".join(error_lines) if error_lines else "Check build log"
             await safe_notify(
-                "error",
-                f"Build failed (return code: {return_code}). Errors:\n{error_summary}"
+                "error", f"Build failed (return code: {return_code}). Errors:\n{error_summary}"
             )
             return {
                 "success": False,

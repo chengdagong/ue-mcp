@@ -100,9 +100,7 @@ class RemoteExecutionClient:
 
         membership = socket.inet_aton(self.multicast_group[0])
         bind_addr = socket.inet_aton(self.multicast_bind_address)
-        sock.setsockopt(
-            socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership + bind_addr
-        )
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership + bind_addr)
 
         return sock
 
@@ -142,9 +140,7 @@ class RemoteExecutionClient:
 
                     # If expected_node_id is set, only accept that specific node
                     if self.expected_node_id and node_id != self.expected_node_id:
-                        logger.debug(
-                            f"Ignoring node {node_id} (expected {self.expected_node_id})"
-                        )
+                        logger.debug(f"Ignoring node {node_id} (expected {self.expected_node_id})")
                         continue
 
                     # Check project name if specified
@@ -200,9 +196,7 @@ class RemoteExecutionClient:
             self._send_message(self.mcast_sock, ping_msg)
 
             # Collect all responses
-            all_pongs = self._receive_all_messages(
-                self.mcast_sock, "ping", timeout=timeout
-            )
+            all_pongs = self._receive_all_messages(self.mcast_sock, "ping", timeout=timeout)
 
             if not all_pongs:
                 logger.error("No UE5 instances discovered on network")
@@ -222,17 +216,121 @@ class RemoteExecutionClient:
             engine = selected.get("data", {}).get("engine_version", "Unknown")
 
             if len(all_pongs) > 1:
-                logger.warning(
-                    f"{len(all_pongs)} instances discovered, selected first match"
-                )
+                logger.warning(f"{len(all_pongs)} instances discovered, selected first match")
 
-            logger.info(
-                f"Connecting to: {project} (UE {engine}) [node: {self.unreal_node_id}]"
-            )
+            logger.info(f"Connecting to: {project} (UE {engine}) [node: {self.unreal_node_id}]")
             return True
 
         except Exception as e:
             logger.error(f"Failed to find UE5: {e}")
+            return False
+
+    def find_and_verify_instance(self, timeout: float = 5.0) -> bool:
+        """
+        Find UE5 instance and verify PID if expected_pid is set.
+
+        When multiple instances are discovered and expected_pid is provided,
+        this method will try each instance until one with matching PID is found.
+
+        This is the recommended method to use instead of calling find_unreal_instance()
+        and verify_pid() separately when you need PID verification.
+
+        Args:
+            timeout: Discovery timeout in seconds
+
+        Returns:
+            True if a matching instance is found and connected, False otherwise
+        """
+        try:
+            # Create multicast socket if needed
+            if self.mcast_sock is None:
+                self.mcast_sock = self._create_multicast_socket()
+
+            logger.info("Searching for UE5 instances...")
+            if self.project_name:
+                logger.info(f"Filter: project_name='{self.project_name}'")
+            if self.expected_pid:
+                logger.info(f"Filter: expected_pid={self.expected_pid}")
+
+            # Send ping message
+            ping_msg = {
+                "version": self.PROTOCOL_VERSION,
+                "magic": self.MAGIC,
+                "source": "ue_mcp",
+                "type": "ping",
+            }
+            self._send_message(self.mcast_sock, ping_msg)
+
+            # Collect all responses
+            all_pongs = self._receive_all_messages(self.mcast_sock, "ping", timeout=timeout)
+
+            if not all_pongs:
+                logger.error("No UE5 instances discovered on network")
+                return False
+
+            logger.info(f"Discovered {len(all_pongs)} UE5 instance(s)")
+
+            # If no PID verification needed, use first instance (legacy behavior)
+            if self.expected_pid is None:
+                selected = all_pongs[0]
+                self.unreal_node_id = selected.get("source")
+                project = selected.get("data", {}).get("project_name", "Unknown")
+                engine = selected.get("data", {}).get("engine_version", "Unknown")
+
+                if len(all_pongs) > 1:
+                    logger.warning(f"{len(all_pongs)} instances discovered, selected first match")
+
+                logger.info(f"Connecting to: {project} (UE {engine}) [node: {self.unreal_node_id}]")
+                return True
+
+            # Try each instance until we find one with matching PID
+            logger.info(f"Trying to find instance with PID {self.expected_pid}")
+
+            for i, pong in enumerate(all_pongs, 1):
+                node_id = pong.get("source")
+                project = pong.get("data", {}).get("project_name", "Unknown")
+                engine = pong.get("data", {}).get("engine_version", "Unknown")
+
+                logger.debug(
+                    f"Attempt {i}/{len(all_pongs)}: trying {project} (UE {engine}) "
+                    f"[node: {node_id}]"
+                )
+
+                # Temporarily set node_id to try this instance
+                self.unreal_node_id = node_id
+
+                # Try to open connection
+                if not self.open_connection():
+                    logger.debug(f"Failed to open connection to node {node_id}")
+                    continue
+
+                # Verify PID
+                if self.verify_pid(self.expected_pid):
+                    logger.info(
+                        f"Successfully connected to {project} (UE {engine}) "
+                        f"[node: {node_id}, PID: {self.expected_pid}]"
+                    )
+                    return True
+                else:
+                    logger.debug(f"PID mismatch for node {node_id}, closing and trying next")
+                    # Close only the command connection, keep multicast socket for next attempt
+                    if self.cmd_connection:
+                        self.cmd_connection.close()
+                        self.cmd_connection = None
+                    if self.cmd_sock:
+                        self.cmd_sock.close()
+                        self.cmd_sock = None
+
+            # No instance with matching PID found
+            logger.error(
+                f"No instance found with PID {self.expected_pid} among "
+                f"{len(all_pongs)} discovered instances"
+            )
+            self.unreal_node_id = None
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to find and verify UE5 instance: {e}")
             return False
 
     def open_connection(self) -> bool:
@@ -450,9 +548,7 @@ class RemoteExecutionClient:
                     logger.info(f"PID verification successful: {actual_pid}")
                     return True
                 else:
-                    logger.warning(
-                        f"PID mismatch: expected {expected_pid}, got {actual_pid}"
-                    )
+                    logger.warning(f"PID mismatch: expected {expected_pid}, got {actual_pid}")
                     return False
 
         logger.warning("Failed to verify PID: could not parse output")

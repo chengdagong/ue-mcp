@@ -46,6 +46,17 @@ def parse_pid_from_output(output: list[Any]) -> int:
     raise ValueError(f"Could not parse PID from output: {output}")
 
 
+def extract_output_text(output: list[Any]) -> str:
+    """Extract text from execution output list."""
+    texts = []
+    for item in output:
+        if isinstance(item, dict):
+            texts.append(item.get("output", ""))
+        else:
+            texts.append(str(item))
+    return "".join(texts)
+
+
 @pytest.fixture(scope="module")
 def project_path() -> Path:
     """Return path to the ThirdPersonTemplate test project."""
@@ -63,82 +74,66 @@ class TestMultiInstanceIsolation:
     """
     Test that multiple EditorManager instances correctly isolate their code execution.
 
-    These tests verify that the PID verification mechanism in RemoteExecutionClient
-    correctly ensures each EditorManager communicates only with its own editor.
+    These tests verify that each EditorManager communicates only with its own editor
+    via dynamic multicast port allocation.
     """
 
     @pytest.mark.asyncio
-    async def test_two_editors_have_different_pids(self, project_path: Path):
+    async def test_complete_isolation(self, project_path: Path):
         """
-        Test that two EditorManagers launch separate UE5 processes with different PIDs.
+        Comprehensive isolation test that verifies:
+        1. Two editors have different PIDs
+        2. Different multicast ports are used
+        3. Code execution runs in the correct editor
+        4. Interleaved execution maintains isolation
+        5. Reconnection after disconnect maintains isolation
 
-        This is the foundation test - if two managers launch the same PID,
-        isolation is fundamentally broken.
+        This test launches two editors once and verifies all isolation properties.
         """
         manager1 = EditorManager(project_path)
         manager2 = EditorManager(project_path)
 
         try:
-            # Launch both editors sequentially
+            # === STEP 1: Launch both editors ===
+            print("\n[STEP 1] Launching two editors...")
+
             result1 = await manager1.launch(wait_timeout=180)
             assert result1.get("success"), f"Manager 1 launch failed: {result1}"
 
             result2 = await manager2.launch(wait_timeout=180)
             assert result2.get("success"), f"Manager 2 launch failed: {result2}"
 
-            # Get PIDs from status
+            # Get status info
             status1 = manager1.get_status()
             status2 = manager2.get_status()
 
             pid1 = status1.get("pid")
             pid2 = status2.get("pid")
+            port1 = manager1._editor.multicast_port
+            port2 = manager2._editor.multicast_port
 
-            # Verify different PIDs
+            print(f"  Manager 1: PID={pid1}, Port={port1}")
+            print(f"  Manager 2: PID={pid2}, Port={port2}")
+
+            # === STEP 2: Verify different PIDs ===
+            print("\n[STEP 2] Verifying different PIDs...")
             assert pid1 is not None, "Manager 1 should have a PID"
             assert pid2 is not None, "Manager 2 should have a PID"
             assert pid1 != pid2, f"Both managers should have different PIDs, got {pid1} and {pid2}"
+            print(f"  [OK] PIDs are different: {pid1} vs {pid2}")
 
-            print(f"\n[OK] Manager 1 PID: {pid1}")
-            print(f"[OK] Manager 2 PID: {pid2}")
+            # === STEP 3: Verify different ports ===
+            print("\n[STEP 3] Verifying different multicast ports...")
+            assert port1 is not None, "Manager 1 should have a multicast port"
+            assert port2 is not None, "Manager 2 should have a multicast port"
+            assert port1 != port2, f"Both managers should use different ports, got {port1} and {port2}"
+            assert port1 >= 6767, f"Port 1 should be in dynamic range (>= 6767), got {port1}"
+            assert port2 >= 6767, f"Port 2 should be in dynamic range (>= 6767), got {port2}"
+            print(f"  [OK] Ports are different: {port1} vs {port2}")
 
-        finally:
-            # Cleanup - stop both editors
-            manager1.stop()
-            manager2.stop()
-
-    @pytest.mark.asyncio
-    async def test_code_execution_isolation(self, project_path: Path):
-        """
-        [CORE TEST] Verify code execution runs in the correct editor instance.
-
-        This is the primary isolation test:
-        1. Launch two editors with two managers
-        2. Execute os.getpid() via each manager
-        3. Verify the returned PID matches each manager's editor PID
-
-        If this test fails, it indicates that code execution from one manager
-        is being routed to another manager's editor - a critical isolation failure.
-        """
-        manager1 = EditorManager(project_path)
-        manager2 = EditorManager(project_path)
-
-        try:
-            # Launch both editors
-            result1 = await manager1.launch(wait_timeout=180)
-            assert result1.get("success"), f"Manager 1 launch failed: {result1}"
-
-            result2 = await manager2.launch(wait_timeout=180)
-            assert result2.get("success"), f"Manager 2 launch failed: {result2}"
-
-            # Get expected PIDs from status
-            expected_pid1 = manager1.get_status().get("pid")
-            expected_pid2 = manager2.get_status().get("pid")
-
-            print(f"\n[INFO] Manager 1 launched editor with PID: {expected_pid1}")
-            print(f"[INFO] Manager 2 launched editor with PID: {expected_pid2}")
-
-            # Execute code to get actual PIDs from inside the editor
-            code = "import os; print(os.getpid())"
+            # === STEP 4: Verify code execution isolation ===
+            print("\n[STEP 4] Verifying code execution isolation...")
+            code = "print(__import__('os').getpid())"
 
             exec_result1 = manager1.execute_with_auto_install(code, timeout=30.0)
             assert exec_result1.get("success"), f"Execution 1 failed: {exec_result1}"
@@ -148,172 +143,51 @@ class TestMultiInstanceIsolation:
             assert exec_result2.get("success"), f"Execution 2 failed: {exec_result2}"
             actual_pid2 = parse_pid_from_output(exec_result2.get("output", []))
 
-            print(f"[INFO] Manager 1 execute returned PID: {actual_pid1}")
-            print(f"[INFO] Manager 2 execute returned PID: {actual_pid2}")
-
-            # CRITICAL ASSERTIONS - Verify isolation
-            assert actual_pid1 == expected_pid1, (
-                f"ISOLATION FAILURE: Manager 1 executed code in wrong editor! "
-                f"Expected PID {expected_pid1}, but code ran in PID {actual_pid1}"
+            assert actual_pid1 == pid1, (
+                f"ISOLATION FAILURE: Manager 1 executed in wrong editor! "
+                f"Expected PID {pid1}, but code ran in PID {actual_pid1}"
             )
-            assert actual_pid2 == expected_pid2, (
-                f"ISOLATION FAILURE: Manager 2 executed code in wrong editor! "
-                f"Expected PID {expected_pid2}, but code ran in PID {actual_pid2}"
+            assert actual_pid2 == pid2, (
+                f"ISOLATION FAILURE: Manager 2 executed in wrong editor! "
+                f"Expected PID {pid2}, but code ran in PID {actual_pid2}"
             )
-
-            # Double-check they're different (should be, but verify)
             assert actual_pid1 != actual_pid2, (
-                f"ISOLATION FAILURE: Code from both managers ran in same process "
-                f"(PID {actual_pid1})!"
+                f"ISOLATION FAILURE: Code from both managers ran in same process (PID {actual_pid1})!"
             )
+            print(f"  [OK] Manager 1: launched PID {pid1}, executed in PID {actual_pid1}")
+            print(f"  [OK] Manager 2: launched PID {pid2}, executed in PID {actual_pid2}")
 
-            print(f"\n[PASS] Isolation verified:")
-            print(f"  Manager 1: launched PID {expected_pid1}, executed in PID {actual_pid1}")
-            print(f"  Manager 2: launched PID {expected_pid2}, executed in PID {actual_pid2}")
-
-        finally:
-            manager1.stop()
-            manager2.stop()
-
-    @pytest.mark.asyncio
-    async def test_interleaved_execution(self, project_path: Path):
-        """
-        Test isolation with interleaved code execution.
-
-        This tests a more realistic scenario where both managers
-        execute code in an alternating pattern, ensuring isolation
-        is maintained across multiple executions.
-        """
-        manager1 = EditorManager(project_path)
-        manager2 = EditorManager(project_path)
-
-        try:
-            # Launch both editors
-            await manager1.launch(wait_timeout=180)
-            await manager2.launch(wait_timeout=180)
-
-            expected_pid1 = manager1.get_status().get("pid")
-            expected_pid2 = manager2.get_status().get("pid")
-
-            print(f"\n[INFO] Starting interleaved execution test")
-            print(f"[INFO] Manager 1 PID: {expected_pid1}, Manager 2 PID: {expected_pid2}")
-
-            # Execute multiple times in alternating pattern
+            # === STEP 5: Verify interleaved execution ===
+            print("\n[STEP 5] Verifying interleaved execution (3 iterations)...")
             for i in range(3):
-                # Execute via manager1
                 r1 = manager1.execute_with_auto_install(
                     f"import os; print(f'M1-{i}:{{os.getpid()}}')", timeout=30.0
                 )
                 assert r1.get("success"), f"Iteration {i} manager1 failed: {r1}"
 
-                # Execute via manager2
                 r2 = manager2.execute_with_auto_install(
                     f"import os; print(f'M2-{i}:{{os.getpid()}}')", timeout=30.0
                 )
                 assert r2.get("success"), f"Iteration {i} manager2 failed: {r2}"
 
-                # Verify PIDs in output
-                output1 = self._extract_output_text(r1.get("output", []))
-                output2 = self._extract_output_text(r2.get("output", []))
+                output1 = extract_output_text(r1.get("output", []))
+                output2 = extract_output_text(r2.get("output", []))
 
-                assert str(expected_pid1) in output1, (
+                assert str(pid1) in output1, (
                     f"Iteration {i}: Manager 1 executed in wrong editor. "
-                    f"Expected PID {expected_pid1} in output: {output1}"
+                    f"Expected PID {pid1} in output: {output1}"
                 )
-                assert str(expected_pid2) in output2, (
+                assert str(pid2) in output2, (
                     f"Iteration {i}: Manager 2 executed in wrong editor. "
-                    f"Expected PID {expected_pid2} in output: {output2}"
+                    f"Expected PID {pid2} in output: {output2}"
                 )
 
-                print(f"[OK] Iteration {i}: M1 -> {output1.strip()}, M2 -> {output2.strip()}")
+                print(f"  [OK] Iteration {i}: {output1.strip()}, {output2.strip()}")
 
-        finally:
-            manager1.stop()
-            manager2.stop()
-
-    @staticmethod
-    def _extract_output_text(output: list[Any]) -> str:
-        """Extract text from execution output list."""
-        texts = []
-        for item in output:
-            if isinstance(item, dict):
-                texts.append(item.get("output", ""))
-            else:
-                texts.append(str(item))
-        return "".join(texts)
-
-    @pytest.mark.asyncio
-    async def test_node_id_isolation(self, project_path: Path):
-        """
-        Test that each EditorManager connects to a different node_id.
-
-        The node_id is a unique identifier assigned by UE5's remote execution
-        system. Different editor instances should have different node_ids,
-        and this is used as part of the filtering mechanism.
-        """
-        manager1 = EditorManager(project_path)
-        manager2 = EditorManager(project_path)
-
-        try:
-            await manager1.launch(wait_timeout=180)
-            await manager2.launch(wait_timeout=180)
-
-            # Access internal _editor to get node_id
-            node_id1 = manager1._editor.node_id if manager1._editor else None
-            node_id2 = manager2._editor.node_id if manager2._editor else None
-
-            assert node_id1 is not None, "Manager 1 should have a node_id"
-            assert node_id2 is not None, "Manager 2 should have a node_id"
-            assert node_id1 != node_id2, (
-                f"Both managers connected to the same node_id ({node_id1})! "
-                "This indicates they might be talking to the same UE5 instance."
-            )
-
-            print(f"\n[OK] Manager 1 node_id: {node_id1}")
-            print(f"[OK] Manager 2 node_id: {node_id2}")
-
-        finally:
-            manager1.stop()
-            manager2.stop()
-
-
-@pytest.mark.integration
-@pytest.mark.slow
-class TestMultiInstanceReconnection:
-    """
-    Test isolation during reconnection scenarios.
-
-    These tests verify that when a connection is lost and re-established,
-    each manager still connects to its own editor instance.
-    """
-
-    @pytest.mark.asyncio
-    async def test_reconnection_maintains_isolation(self, project_path: Path):
-        """
-        Test that reconnection after disconnect maintains proper isolation.
-
-        Simulates connection loss by closing remote_client and verifying
-        that execute_with_auto_install() reconnects to the correct editor.
-        """
-        manager1 = EditorManager(project_path)
-        manager2 = EditorManager(project_path)
-
-        try:
-            await manager1.launch(wait_timeout=180)
-            await manager2.launch(wait_timeout=180)
-
-            expected_pid1 = manager1.get_status().get("pid")
-            expected_pid2 = manager2.get_status().get("pid")
-
-            # First execution - establish baseline
-            r1 = manager1.execute_with_auto_install("import os; print(os.getpid())")
-            assert r1.get("success")
-
-            r2 = manager2.execute_with_auto_install("import os; print(os.getpid())")
-            assert r2.get("success")
+            # === STEP 6: Verify reconnection maintains isolation ===
+            print("\n[STEP 6] Verifying reconnection maintains isolation...")
 
             # Force disconnect by closing remote_client sockets
-            # The next execute should trigger reconnection
             if manager1._editor and manager1._editor.remote_client:
                 manager1._editor.remote_client._cleanup_sockets()
                 manager1._editor.remote_client = None
@@ -322,7 +196,7 @@ class TestMultiInstanceReconnection:
                 manager2._editor.remote_client._cleanup_sockets()
                 manager2._editor.remote_client = None
 
-            print("\n[INFO] Forced disconnect, testing reconnection...")
+            print("  Forced disconnect, testing reconnection...")
 
             # Execute again - should trigger reconnection
             r1_after = manager1.execute_with_auto_install("import os; print(os.getpid())")
@@ -334,18 +208,18 @@ class TestMultiInstanceReconnection:
             pid2_after = parse_pid_from_output(r2_after.get("output", []))
 
             # Verify isolation maintained after reconnection
-            assert pid1_after == expected_pid1, (
+            assert pid1_after == pid1, (
                 f"After reconnection, Manager 1 connected to wrong editor! "
-                f"Expected {expected_pid1}, got {pid1_after}"
+                f"Expected {pid1}, got {pid1_after}"
             )
-            assert pid2_after == expected_pid2, (
+            assert pid2_after == pid2, (
                 f"After reconnection, Manager 2 connected to wrong editor! "
-                f"Expected {expected_pid2}, got {pid2_after}"
+                f"Expected {pid2}, got {pid2_after}"
             )
+            print(f"  [OK] Manager 1: expected {pid1}, got {pid1_after}")
+            print(f"  [OK] Manager 2: expected {pid2}, got {pid2_after}")
 
-            print(f"[PASS] Reconnection isolation verified:")
-            print(f"  Manager 1: expected {expected_pid1}, got {pid1_after}")
-            print(f"  Manager 2: expected {expected_pid2}, got {pid2_after}")
+            print("\n[PASS] All isolation checks passed!")
 
         finally:
             manager1.stop()
