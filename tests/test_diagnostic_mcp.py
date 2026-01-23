@@ -42,13 +42,13 @@ class TestDiagnosticTools:
         assert "editor_asset_diagnostic" in tools
 
     @pytest.mark.asyncio
-    async def test_diagnostic_with_editor(self, running_editor: ToolCaller):
+    async def test_diagnostic_with_editor(self, running_editor: ToolCaller, test_level_path: str):
         """Test diagnostic with editor running."""
         # Editor is already running via running_editor fixture
         # Test diagnostics on a level
         result = await running_editor.call(
             "editor_asset_diagnostic",
-            {"asset_path": "/Game/ThirdPerson/DefaultAutomaticTestLevel"},
+            {"asset_path": test_level_path},
             timeout=120,
         )
 

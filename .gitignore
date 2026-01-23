@@ -33,6 +33,7 @@ tests/fixtures/*/Binaries/
 tests/fixtures/*/Plugins/*
 tests/fixtures/ThirdPersonTemplate/Content/__ExternalActors__/
 tests/fixtures/ThirdPersonTemplate/Content/__ExternalObjects__/
+tests/fixtures/ThirdPersonTemplate/Content/Tests/
 tests/fixtures/*/.vs/
 tests/fixtures/*/*.sln
 tests/fixtures/*/*.xcode-project

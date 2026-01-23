@@ -47,7 +47,7 @@ class TestCaptureTools:
 
     @pytest.mark.asyncio
     async def test_capture_orbital_with_editor(
-        self, running_editor: ToolCaller, test_output_dir: Path
+        self, running_editor: ToolCaller, test_output_dir: Path, test_level_path: str
     ):
         """Test capture.orbital with editor running."""
         # Editor is already running via running_editor fixture
@@ -58,7 +58,7 @@ class TestCaptureTools:
         result = await running_editor.call(
             "editor_capture_orbital",
             {
-                "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
+                "level": test_level_path,
                 "target_x": 0,
                 "target_y": 0,
                 "target_z": 100,
@@ -95,7 +95,7 @@ class TestCaptureTools:
 
     @pytest.mark.asyncio
     async def test_capture_window_with_editor(
-        self, running_editor: ToolCaller, test_output_dir: Path
+        self, running_editor: ToolCaller, test_output_dir: Path, test_level_path: str
     ):
         """Test capture.window with editor running."""
         # Editor is already running via running_editor fixture
@@ -107,7 +107,7 @@ class TestCaptureTools:
         result = await running_editor.call(
             "editor_capture_window",
             {
-                "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
+                "level": test_level_path,
                 "output_file": str(output_file),
                 "mode": "window",
             },

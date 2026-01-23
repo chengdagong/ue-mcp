@@ -52,7 +52,7 @@ class TestTraceActorsWithEditor:
     """
 
     @pytest.mark.asyncio
-    async def test_trace_single_actor(self, running_editor: ToolCaller):
+    async def test_trace_single_actor(self, running_editor: ToolCaller, test_level_path: str):
         """Test tracing a single actor (player character)."""
         import tempfile
 
@@ -65,8 +65,8 @@ class TestTraceActorsWithEditor:
                 "editor_trace_actors_in_pie",
                 {
                     "output_file": output_file,
-                    "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
-                    "actor_names": ["BP_ThirdPersonCharacter"],
+                    "level": test_level_path,
+                    "actor_names": ["BP_ThirdPersonCharacter_0"],
                     "duration_seconds": 3.0,
                     "interval_seconds": 0.1,
                 },
@@ -103,7 +103,7 @@ class TestTraceActorsWithEditor:
                 os.remove(output_file)
 
     @pytest.mark.asyncio
-    async def test_trace_actor_not_found(self, running_editor: ToolCaller):
+    async def test_trace_actor_not_found(self, running_editor: ToolCaller, test_level_path: str):
         """Test tracing with non-existent actor name."""
         import tempfile
 
@@ -115,7 +115,7 @@ class TestTraceActorsWithEditor:
                 "editor_trace_actors_in_pie",
                 {
                     "output_file": output_file,
-                    "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
+                    "level": test_level_path,
                     "actor_names": ["NonExistentActor_12345"],
                     "duration_seconds": 2.0,
                     "interval_seconds": 0.1,
@@ -138,7 +138,7 @@ class TestTraceActorsWithEditor:
                 os.remove(output_file)
 
     @pytest.mark.asyncio
-    async def test_trace_multiple_actors(self, running_editor: ToolCaller):
+    async def test_trace_multiple_actors(self, running_editor: ToolCaller, test_level_path: str):
         """Test tracing multiple actors."""
         import tempfile
 
@@ -150,11 +150,11 @@ class TestTraceActorsWithEditor:
                 "editor_trace_actors_in_pie",
                 {
                     "output_file": output_file,
-                    "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
+                    "level": test_level_path,
                     "actor_names": [
-                        "BP_ThirdPersonCharacter",  # Should exist
-                        "Floor",                     # Should exist (static mesh)
-                        "NonExistent_Actor",         # Should not exist
+                        "BP_ThirdPersonCharacter_0",  # Should exist
+                        "Floor",                       # Should exist (static mesh)
+                        "NonExistent_Actor",           # Should not exist
                     ],
                     "duration_seconds": 2.0,
                     "interval_seconds": 0.2,

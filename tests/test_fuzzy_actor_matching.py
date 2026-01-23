@@ -29,6 +29,9 @@ from ue_mcp import EditorManager
 from ue_mcp.log_watcher import watch_pie_capture_complete
 from ue_mcp.script_executor import execute_script
 
+# Import test level path from conftest
+from conftest import TEST_LEVEL_PATH
+
 
 @pytest.fixture(scope="module")
 def project_path() -> Path:
@@ -66,11 +69,48 @@ async def manager(project_path: Path):
     mgr.stop()
 
 
+@pytest.fixture(scope="module")
+async def ensure_level(manager: EditorManager):
+    """
+    Ensure test level exists before running fuzzy matching tests.
+
+    This fixture generates the test level if it doesn't exist.
+    """
+    # Check if level exists
+    check_code = f'''
+import unreal
+exists = unreal.EditorAssetLibrary.does_asset_exist("{TEST_LEVEL_PATH}")
+print(f"LEVEL_EXISTS:{{exists}}")
+'''
+    result = manager.execute(check_code, timeout=30)
+    output = result.get("output", "") if result else ""
+
+    if "LEVEL_EXISTS:True" in str(output):
+        print(f"\n[INFO] Test level already exists: {TEST_LEVEL_PATH}")
+        return TEST_LEVEL_PATH
+
+    # Generate level using the script
+    script_path = Path(__file__).parent / "scripts" / "generate_test_level.py"
+    if not script_path.exists():
+        pytest.fail(f"Level generation script not found: {script_path}")
+
+    print(f"\n[INFO] Generating test level...")
+    gen_result = manager.execute_script(str(script_path), timeout=120)
+
+    gen_output = str(gen_result.get("output", "")) if gen_result else ""
+    if "__RESULT__" in gen_output and '"success": true' in gen_output.lower():
+        print(f"[INFO] Test level generated: {TEST_LEVEL_PATH}")
+    else:
+        pytest.fail(f"Failed to generate test level: {gen_result}")
+
+    return TEST_LEVEL_PATH
+
+
 class TestFuzzyActorMatching:
     """Test fuzzy actor matching in PIE capture."""
 
     @pytest.mark.asyncio
-    async def test_exact_label_match(self, manager: EditorManager, tmp_path: Path):
+    async def test_exact_label_match(self, manager: EditorManager, ensure_level, tmp_path: Path):
         """Test exact match on actor label."""
         output_dir = str(tmp_path / "exact_label")
         task_id = str(uuid.uuid4())[:8]
@@ -80,7 +120,7 @@ class TestFuzzyActorMatching:
         script_params = {
             "task_id": task_id,
             "output_dir": output_dir,
-            "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
+            "level": TEST_LEVEL_PATH,
             "duration_seconds": 5.0,
             "interval_seconds": 1.0,
             "multi_angle": True,
@@ -98,7 +138,7 @@ class TestFuzzyActorMatching:
         print(f"[OK] Exact label match: captured {result['screenshot_count']} screenshots")
 
     @pytest.mark.asyncio
-    async def test_partial_label_match(self, manager: EditorManager, tmp_path: Path):
+    async def test_partial_label_match(self, manager: EditorManager, ensure_level, tmp_path: Path):
         """Test partial match on actor label (fuzzy matching)."""
         output_dir = str(tmp_path / "partial_label")
         task_id = str(uuid.uuid4())[:8]
@@ -106,7 +146,7 @@ class TestFuzzyActorMatching:
         script_params = {
             "task_id": task_id,
             "output_dir": output_dir,
-            "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
+            "level": TEST_LEVEL_PATH,
             "duration_seconds": 5.0,
             "interval_seconds": 1.0,
             "multi_angle": True,
@@ -124,7 +164,7 @@ class TestFuzzyActorMatching:
         print(f"[OK] Partial label match 'Start': captured {result['screenshot_count']} screenshots")
 
     @pytest.mark.asyncio
-    async def test_multiple_match_error(self, manager: EditorManager, tmp_path: Path):
+    async def test_multiple_match_error(self, manager: EditorManager, ensure_level, tmp_path: Path):
         """Test that multiple matches return error with matched_actors list."""
         output_dir = str(tmp_path / "multiple_match")
         task_id = str(uuid.uuid4())[:8]
@@ -132,7 +172,7 @@ class TestFuzzyActorMatching:
         script_params = {
             "task_id": task_id,
             "output_dir": output_dir,
-            "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
+            "level": TEST_LEVEL_PATH,
             "duration_seconds": 5.0,
             "interval_seconds": 1.0,
             "multi_angle": True,
@@ -155,7 +195,7 @@ class TestFuzzyActorMatching:
         print(f"  Matched actors: {json.dumps(result['matched_actors'], indent=2)}")
 
     @pytest.mark.asyncio
-    async def test_no_match_error(self, manager: EditorManager, tmp_path: Path):
+    async def test_no_match_error(self, manager: EditorManager, ensure_level, tmp_path: Path):
         """Test that no match returns error with available_actors list."""
         output_dir = str(tmp_path / "no_match")
         task_id = str(uuid.uuid4())[:8]
@@ -163,7 +203,7 @@ class TestFuzzyActorMatching:
         script_params = {
             "task_id": task_id,
             "output_dir": output_dir,
-            "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
+            "level": TEST_LEVEL_PATH,
             "duration_seconds": 5.0,
             "interval_seconds": 1.0,
             "multi_angle": True,
@@ -186,7 +226,7 @@ class TestFuzzyActorMatching:
         print(f"  Available actors count: {len(result['available_actors'])}")
 
     @pytest.mark.asyncio
-    async def test_class_match_multiple_error(self, manager: EditorManager, tmp_path: Path):
+    async def test_class_match_multiple_error(self, manager: EditorManager, ensure_level, tmp_path: Path):
         """Test that class match with multiple actors returns error."""
         output_dir = str(tmp_path / "class_match")
         task_id = str(uuid.uuid4())[:8]
@@ -194,7 +234,7 @@ class TestFuzzyActorMatching:
         script_params = {
             "task_id": task_id,
             "output_dir": output_dir,
-            "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
+            "level": TEST_LEVEL_PATH,
             "duration_seconds": 5.0,
             "interval_seconds": 1.0,
             "multi_angle": True,
@@ -202,7 +242,7 @@ class TestFuzzyActorMatching:
             "target_height": 90.0,
             "resolution_width": 1280,
             "resolution_height": 720,
-            "target_actor": "PointLight",  # Should match multiple point lights
+            "target_actor": "BP_ThirdPersonCharacter",  # Should match multiple characters (BP_ThirdPersonCharacter_0, BP_ThirdPersonCharacter_1)
         }
 
         result = await self._run_pie_capture(manager, script_params, task_id)
