@@ -167,6 +167,7 @@ Available tools:
 - editor_capture_window: Capture editor window screenshots (Windows only)
 - editor_asset_diagnostic: Run diagnostics on a UE5 asset to detect common issues
 - editor_asset_inspect: Inspect a UE5 asset and return all its properties
+- editor_asset_open: Open an asset in its editor (Blueprint Editor, Material Editor, etc.)
 - project_build: Build the UE5 project using UnrealBuildTool (supports Editor, Game, etc.)
 """,
 )
@@ -1202,6 +1203,79 @@ def _parse_diagnostic_result(exec_result: dict[str, Any]) -> dict[str, Any]:
         "error": "No diagnostic result returned from editor script",
         "output": output,
     }
+
+
+@mcp.tool(name="editor_asset_open")
+def open_asset(asset_path: str) -> dict[str, Any]:
+    """
+    Open an asset in its editor within Unreal Editor.
+
+    This tool loads the specified asset and opens its appropriate editor
+    (e.g., Blueprint Editor for Blueprints, Material Editor for Materials).
+
+    Args:
+        asset_path: Path to the asset to open (e.g., /Game/Blueprints/BP_Character)
+
+    Returns:
+        Result containing:
+        - success: Whether the asset was opened successfully
+        - asset_path: Path of the opened asset
+        - asset_name: Name of the asset
+        - error: Error message (if failed)
+    """
+    manager = _get_editor_manager()
+
+    code = f"""
+import unreal
+
+asset_path = {repr(asset_path)}
+asset = unreal.load_asset(asset_path)
+
+if asset is None:
+    print("__OPEN_ASSET_RESULT__ERROR:Asset not found: " + asset_path)
+else:
+    # Use get_editor_subsystem to get properly initialized subsystem
+    subsystem = unreal.get_editor_subsystem(unreal.AssetEditorSubsystem)
+    subsystem.open_editor_for_assets([asset])
+    print("__OPEN_ASSET_RESULT__SUCCESS:" + asset.get_name())
+"""
+    exec_result = manager.execute_with_auto_install(code, timeout=30.0)
+
+    if not exec_result.get("success"):
+        return {
+            "success": False,
+            "asset_path": asset_path,
+            "error": exec_result.get("error", "Failed to execute open asset command"),
+        }
+
+    output = exec_result.get("output", "")
+    if isinstance(output, list):
+        output = "\n".join(
+            str(line.get("output", "")) if isinstance(line, dict) else str(line)
+            for line in output
+        )
+
+    if "__OPEN_ASSET_RESULT__SUCCESS:" in output:
+        asset_name = output.split("__OPEN_ASSET_RESULT__SUCCESS:")[1].strip().split("\n")[0]
+        return {
+            "success": True,
+            "asset_path": asset_path,
+            "asset_name": asset_name,
+        }
+    elif "__OPEN_ASSET_RESULT__ERROR:" in output:
+        error_msg = output.split("__OPEN_ASSET_RESULT__ERROR:")[1].strip().split("\n")[0]
+        return {
+            "success": False,
+            "asset_path": asset_path,
+            "error": error_msg,
+        }
+    else:
+        return {
+            "success": False,
+            "asset_path": asset_path,
+            "error": "Unknown result from open asset command",
+            "output": output,
+        }
 
 
 @mcp.tool(name="editor_asset_diagnostic")

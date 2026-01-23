@@ -39,9 +39,10 @@ UE-MCP 服务器提供以下工具：
 | `editor_capture_pie` | 在 PIE 会话期间自动捕获截图 |
 | `editor_capture_window` | 使用 Windows API 捕获编辑器窗口截图（仅 Windows） |
 
-### 资产诊断与检查
+### 资产操作
 | 工具 | 描述 |
 |------|------|
+| `editor_asset_open` | 在编辑器中打开资产（蓝图编辑器、材质编辑器等） |
 | `editor_asset_diagnostic` | 对 UE5 资产运行诊断，检测常见问题 |
 | `editor_asset_inspect` | 获取资产属性 |
 
