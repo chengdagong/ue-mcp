@@ -2,6 +2,7 @@
 Asset inspection runner script for MCP.
 
 Inspects a UE5 asset and returns all its properties as structured JSON.
+For Blueprint and Level assets, also captures a viewport screenshot.
 
 Usage (CLI):
     python inspect_runner.py --asset-path=/Game/Meshes/MyMesh
@@ -14,7 +15,10 @@ MCP mode (__PARAMS__):
     component_name: str (optional) - Name of a specific component to inspect (for Blueprints)
 """
 import json
+import os
 import sys
+import tempfile
+import time
 
 import unreal
 import asset_diagnostic
@@ -461,6 +465,157 @@ def get_component_properties(blueprint, component_name: str, max_depth=3) -> dic
         return {"error": str(e)}
 
 
+# ============================================
+# Screenshot Capture Functions
+# ============================================
+
+
+def get_screenshot_output_path(asset_path: str) -> str:
+    """
+    Generate screenshot output path in system temp directory.
+
+    Path format: {tempdir}/ue-mcp/screenshots/{project_name}_{asset_name}_{timestamp}/screenshot.png
+
+    Args:
+        asset_path: The asset path (e.g., /Game/Blueprints/BP_Character)
+
+    Returns:
+        Full path to the screenshot file
+    """
+    # Get project name from project directory
+    project_dir = unreal.Paths.project_dir()
+    project_name = project_dir.rstrip("/\\").replace("\\", "/").split("/")[-1]
+
+    # Get asset name from path
+    asset_name = asset_path.rsplit("/", 1)[-1] if "/" in asset_path else asset_path
+
+    # Generate timestamp
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+
+    # Build path: {tempdir}/ue-mcp/screenshots/{project_name}_{asset_name}_{timestamp}/
+    temp_dir = tempfile.gettempdir()
+    screenshot_dir = os.path.join(
+        temp_dir, "ue-mcp", "screenshots",
+        f"{project_name}_{asset_name}_{timestamp}"
+    )
+    os.makedirs(screenshot_dir, exist_ok=True)
+
+    return os.path.join(screenshot_dir, "screenshot.png")
+
+
+def _do_capture(output_path: str) -> dict:
+    """
+    Execute window capture using editor_capture module.
+
+    Args:
+        output_path: Path to save the screenshot
+
+    Returns:
+        dict with keys: success, screenshot_path (if success), error (if failed)
+    """
+    try:
+        import editor_capture
+    except ImportError as e:
+        return {"success": False, "error": f"editor_capture module not available: {e}"}
+
+    try:
+        result = editor_capture.capture_ue5_window(output_path)
+        if isinstance(result, dict):
+            if result.get("success"):
+                return {"success": True, "screenshot_path": output_path}
+            else:
+                return {"success": False, "error": result.get("error", "Capture failed")}
+        else:
+            # Legacy bool return
+            if result:
+                return {"success": True, "screenshot_path": output_path}
+            else:
+                return {"success": False, "error": "Capture failed"}
+    except Exception as e:
+        return {"success": False, "error": f"Capture exception: {e}"}
+
+
+def _capture_blueprint_screenshot(blueprint, output_path: str) -> dict:
+    """
+    Capture screenshot of a Blueprint's viewport.
+
+    Opens the Blueprint editor, switches to viewport mode, and captures.
+
+    Args:
+        blueprint: The loaded Blueprint asset
+        output_path: Path to save the screenshot
+
+    Returns:
+        dict with keys: success, screenshot_path (if success), error (if failed)
+    """
+    try:
+        # Open the blueprint editor
+        subsystem = unreal.get_editor_subsystem(unreal.AssetEditorSubsystem)
+        subsystem.open_editor_for_assets([blueprint])
+
+        # Wait for editor to initialize and render
+        time.sleep(1.5)
+
+        # Switch to viewport mode using ExSlateTabLibrary
+        try:
+            unreal.ExSlateTabLibrary.switch_to_viewport_mode(blueprint)
+            time.sleep(0.5)
+        except AttributeError:
+            unreal.log_warning("[WARNING] ExSlateTabLibrary not available, skipping viewport switch")
+
+        # Capture the window
+        return _do_capture(output_path)
+
+    except Exception as e:
+        return {"success": False, "error": f"Blueprint screenshot failed: {e}"}
+
+
+def _capture_level_screenshot(level_path: str, output_path: str) -> dict:
+    """
+    Capture screenshot of a Level's main editor viewport.
+
+    The level should already be loaded by the inspection process.
+
+    Args:
+        level_path: The level asset path
+        output_path: Path to save the screenshot
+
+    Returns:
+        dict with keys: success, screenshot_path (if success), error (if failed)
+    """
+    try:
+        # Wait for viewport to be ready
+        time.sleep(1.0)
+
+        # Capture the main editor window
+        return _do_capture(output_path)
+
+    except Exception as e:
+        return {"success": False, "error": f"Level screenshot failed: {e}"}
+
+
+def capture_asset_screenshot(asset, asset_path: str, asset_type) -> dict:
+    """
+    Capture screenshot for Blueprint or Level asset.
+
+    Args:
+        asset: The loaded asset object
+        asset_path: The asset path
+        asset_type: The detected AssetType
+
+    Returns:
+        dict with keys: success, screenshot_path (if success), error (if failed)
+    """
+    output_path = get_screenshot_output_path(asset_path)
+
+    if asset_type == AssetType.BLUEPRINT:
+        return _capture_blueprint_screenshot(asset, output_path)
+    elif asset_type == AssetType.LEVEL:
+        return _capture_level_screenshot(asset_path, output_path)
+    else:
+        return {"success": False, "error": f"Screenshot not supported for asset type: {asset_type.value}"}
+
+
 def main():
     """Main entry point for asset inspection."""
     params = get_params()
@@ -524,6 +679,14 @@ def main():
     # Add metadata and references
     result["metadata"] = get_asset_metadata(asset_path)
     result["references"] = get_asset_references(asset_path)
+
+    # Capture screenshot for Blueprint and Level assets
+    if asset_type in (AssetType.BLUEPRINT, AssetType.LEVEL):
+        screenshot_result = capture_asset_screenshot(asset, asset_path, asset_type)
+        if screenshot_result["success"]:
+            result["screenshot_path"] = screenshot_result["screenshot_path"]
+        else:
+            result["screenshot_error"] = screenshot_result.get("error", "Unknown screenshot error")
 
     # Output the result
     output_result(result)
