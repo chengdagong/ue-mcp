@@ -80,7 +80,7 @@ class TestFuzzyActorMatching:
         script_params = {
             "task_id": task_id,
             "output_dir": output_dir,
-            "level": "/Game/ThirdPerson/Lvl_ThirdPerson",
+            "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
             "duration_seconds": 5.0,
             "interval_seconds": 1.0,
             "multi_angle": True,
@@ -106,7 +106,7 @@ class TestFuzzyActorMatching:
         script_params = {
             "task_id": task_id,
             "output_dir": output_dir,
-            "level": "/Game/ThirdPerson/Lvl_ThirdPerson",
+            "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
             "duration_seconds": 5.0,
             "interval_seconds": 1.0,
             "multi_angle": True,
@@ -132,7 +132,7 @@ class TestFuzzyActorMatching:
         script_params = {
             "task_id": task_id,
             "output_dir": output_dir,
-            "level": "/Game/ThirdPerson/Lvl_ThirdPerson",
+            "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
             "duration_seconds": 5.0,
             "interval_seconds": 1.0,
             "multi_angle": True,
@@ -163,7 +163,7 @@ class TestFuzzyActorMatching:
         script_params = {
             "task_id": task_id,
             "output_dir": output_dir,
-            "level": "/Game/ThirdPerson/Lvl_ThirdPerson",
+            "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
             "duration_seconds": 5.0,
             "interval_seconds": 1.0,
             "multi_angle": True,
@@ -194,7 +194,7 @@ class TestFuzzyActorMatching:
         script_params = {
             "task_id": task_id,
             "output_dir": output_dir,
-            "level": "/Game/ThirdPerson/Lvl_ThirdPerson",
+            "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
             "duration_seconds": 5.0,
             "interval_seconds": 1.0,
             "multi_angle": True,

@@ -65,7 +65,7 @@ class TestTraceActorsWithEditor:
                 "editor_trace_actors_in_pie",
                 {
                     "output_file": output_file,
-                    "level": "/Game/ThirdPerson/Maps/ThirdPersonMap",
+                    "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
                     "actor_names": ["BP_ThirdPersonCharacter"],
                     "duration_seconds": 3.0,
                     "interval_seconds": 0.1,
@@ -115,7 +115,7 @@ class TestTraceActorsWithEditor:
                 "editor_trace_actors_in_pie",
                 {
                     "output_file": output_file,
-                    "level": "/Game/ThirdPerson/Maps/ThirdPersonMap",
+                    "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
                     "actor_names": ["NonExistentActor_12345"],
                     "duration_seconds": 2.0,
                     "interval_seconds": 0.1,
@@ -150,7 +150,7 @@ class TestTraceActorsWithEditor:
                 "editor_trace_actors_in_pie",
                 {
                     "output_file": output_file,
-                    "level": "/Game/ThirdPerson/Maps/ThirdPersonMap",
+                    "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
                     "actor_names": [
                         "BP_ThirdPersonCharacter",  # Should exist
                         "Floor",                     # Should exist (static mesh)
