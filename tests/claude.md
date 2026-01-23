@@ -385,50 +385,19 @@ class TestSlowIntegration:
 
 ## 故障排查
 
-### 查看详细日志
+当测试失败时，请查看以下日志以获取详细错误信息：
 
-当测试失败时，可以通过以下方式查看详细信息：
-
-1. **运行时查看日志**: 使用 `-v` 参数运行测试
-   ```bash
-   pytest tests/test_something.py -v
+1. **Pytest 日志文件**: 测试结束后显示的日志文件路径
    ```
-
-2. **查看日志文件**: 测试结束后会显示日志文件路径
-   ```bash
-   cat tests/test_output/log/pytest-20260123_205757.log
+   tests/test_output/log/pytest-{timestamp}.log
    ```
-
-3. **查看编辑器日志**: 编辑器日志位于
+   
+2. **UE5 Editor 日志**: 编辑器运行时生成的日志
    ```
    tests/fixtures/ThirdPersonTemplate/Saved/Logs/ue-mcp-*.log
    ```
 
-### 常见问题
-
-1. **测试超时**
-   - 检查 UE5 编辑器是否正常启动
-   - 增加 timeout 参数值
-   - 检查系统资源（内存、CPU）
-   - 查看日志文件了解详细错误
-
-2. **编辑器启动失败**
-   - 确认 UE5 已安装且路径正确
-   - 检查项目配置（.uproject、DefaultEngine.ini）
-   - 查看编辑器日志文件（ue-mcp-*.log）
-   - 使用 `-v` 参数运行以查看详细启动过程
-
-3. **截图测试失败**
-   - 确认不在 headless 环境
-   - 检查 ExtraPythonAPIs 插件是否已编译
-   - 确认输出目录有写权限
-   - 查看日志文件中的截图相关错误
-
-4. **多实例隔离测试失败**
-   - 确保有足够内存（约 16GB）
-   - 检查端口范围是否被占用
-   - 查看两个编辑器的日志文件
-   - 查看 pytest 日志文件了解端口分配情况
+**提示**: 使用 `-v` 参数运行测试可以在终端实时查看详细日志输出。
 
 ---
 
