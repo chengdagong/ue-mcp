@@ -30,6 +30,7 @@ UE-MCP 服务器提供以下工具：
 |------|------|
 | `editor_start_pie` | 启动 PIE 会话 |
 | `editor_stop_pie` | 停止当前 PIE 会话 |
+| `editor_trace_actors_in_pie` | 在 PIE 会话期间追踪指定 actors 的位置、旋转、速度 |
 
 ### 截图捕获
 | 工具 | 描述 |

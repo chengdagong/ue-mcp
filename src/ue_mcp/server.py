@@ -894,12 +894,14 @@ async def capture_pie(
         "screenshot_count": capture_result.get("screenshot_count", 0),
     }
 
-    # Pass through error info if capture failed (e.g., target_actor not found)
+    # Pass through error info if capture failed (e.g., target_actor not found or multiple matches)
     if not result["success"]:
         if "error" in capture_result:
             result["error"] = capture_result["error"]
         if "available_actors" in capture_result:
             result["available_actors"] = capture_result["available_actors"]
+        if "matched_actors" in capture_result:
+            result["matched_actors"] = capture_result["matched_actors"]
 
     return result
 

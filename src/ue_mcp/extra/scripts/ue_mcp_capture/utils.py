@@ -208,18 +208,20 @@ def ensure_level_loaded(target_level: str) -> None:
         return
 
     # Need to load a different level
-    # Check if current level has unsaved changes
-    try:
-        dirty_content = unreal.EditorLoadingAndSavingUtils.get_dirty_content_packages()
-        dirty_maps = unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages()
-        if dirty_content or dirty_maps:
-            raise RuntimeError(
-                f"Current level '{current_level_name}' has unsaved changes. "
-                f"Please save or discard them before loading '{target_level}'."
-            )
-    except AttributeError:
-        # EditorLoadingAndSavingUtils may not have these methods in all UE versions
-        pass
+    # Check if current level has unsaved changes (skip for temp/Untitled levels)
+    is_temp_level = current_level_full.startswith("/Temp/") or current_level_name.lower().startswith("untitled")
+    if not is_temp_level:
+        try:
+            dirty_content = unreal.EditorLoadingAndSavingUtils.get_dirty_content_packages()
+            dirty_maps = unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages()
+            if dirty_content or dirty_maps:
+                raise RuntimeError(
+                    f"Current level '{current_level_name}' has unsaved changes. "
+                    f"Please save or discard them before loading '{target_level}'."
+                )
+        except AttributeError:
+            # EditorLoadingAndSavingUtils may not have these methods in all UE versions
+            pass
 
     # Force Python garbage collection before loading new level
     # This ensures any remaining UE object references are released

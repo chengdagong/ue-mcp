@@ -29,12 +29,9 @@ MCP mode (__PARAMS__):
     multi_angle: bool - Enable multi-angle capture
     camera_distance: float - Camera distance
     target_height: float - Target height
+    target_actor: str - Name of actor to capture (optional, defaults to player)
 """
 import editor_capture
-
-from module_reload_utils import reload_recursive
-reload_recursive(editor_capture)
-
 from ue_mcp_capture.utils import get_params, ensure_level_loaded, output_result
 
 # Default parameter values for CLI mode
@@ -47,6 +44,7 @@ DEFAULTS = {
     "multi_angle": True,
     "camera_distance": 300.0,
     "target_height": 90.0,
+    "target_actor": None,
 }
 
 # Required parameters
@@ -69,6 +67,7 @@ def main():
         multi_angle=params["multi_angle"],
         camera_distance=params["camera_distance"],
         target_height=params["target_height"],
+        target_actor=params.get("target_actor"),
         duration=params["duration_seconds"],
         auto_stop_pie=True,
         task_id=params.get("task_id"),
