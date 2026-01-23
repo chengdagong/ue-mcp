@@ -180,7 +180,6 @@ class TestTraceActorsWithEditor:
     async def test_trace_with_screenshots(self, running_editor: ToolCaller):
         """Test tracing with screenshot capture enabled."""
         import tempfile
-        import shutil
 
         # Create temp output file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
@@ -248,17 +247,15 @@ class TestTraceActorsWithEditor:
             print(f"  - Screenshots taken: {len(screenshots)}")
 
         finally:
-            # Cleanup
+            # Cleanup JSON output file only, preserve screenshots for inspection
             if os.path.exists(output_file):
                 os.remove(output_file)
-            if screenshot_dir and os.path.exists(screenshot_dir):
-                shutil.rmtree(screenshot_dir)
+            # Screenshots are preserved in screenshot_dir for inspection
 
     @pytest.mark.asyncio
     async def test_trace_with_screenshots_single_angle(self, running_editor: ToolCaller):
         """Test tracing with single-angle screenshot capture."""
         import tempfile
-        import shutil
 
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
             output_file = f.name
@@ -297,10 +294,10 @@ class TestTraceActorsWithEditor:
             print(f"  - Sample count: {data.get('sample_count')}")
 
         finally:
+            # Cleanup JSON output file only, preserve screenshots for inspection
             if os.path.exists(output_file):
                 os.remove(output_file)
-            if screenshot_dir and os.path.exists(screenshot_dir):
-                shutil.rmtree(screenshot_dir)
+            # Screenshots are preserved in screenshot_dir for inspection
 
 
 if __name__ == "__main__":

@@ -214,21 +214,23 @@ def clean_test_output_dir():
     This fixture runs automatically before all tests to ensure
     a clean slate and prevent old screenshots from interfering
     with verification.
+
+    Note: Screenshots are preserved after tests complete for inspection.
+    To clean up manually, delete the tests/test_output/ directory.
     """
     import shutil
 
     tests_dir = Path(__file__).parent
     output_dir = tests_dir / "test_output"
 
-    # Clear directory if it exists
+    # Clear directory if it exists (clean slate for new session)
     if output_dir.exists():
         shutil.rmtree(output_dir)
 
     yield
 
-    # Clean up after session
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
+    # Screenshots are preserved after tests for inspection
+    # No cleanup after session
 
 
 @pytest.fixture(scope="session")
