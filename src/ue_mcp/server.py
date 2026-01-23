@@ -1234,7 +1234,7 @@ def _parse_diagnostic_result(exec_result: dict[str, Any]) -> dict[str, Any]:
 
 
 @mcp.tool(name="editor_asset_open")
-def open_asset(asset_path: str) -> dict[str, Any]:
+def open_asset(asset_path: str, tab_id: str | None = None) -> dict[str, Any]:
     """
     Open an asset in its editor within Unreal Editor.
 
@@ -1243,17 +1243,64 @@ def open_asset(asset_path: str) -> dict[str, Any]:
 
     Args:
         asset_path: Path to the asset to open (e.g., /Game/Blueprints/BP_Character)
+        tab_id: Optional tab ID to open/focus after the editor opens.
+                Common Blueprint Editor tab IDs:
+                - "Inspector" (Details panel)
+                - "SCSViewport" (Viewport/Components view)
+                - "GraphEditor" (Event Graph - only available in Graph mode)
+                - "MyBlueprint" (My Blueprint panel)
+                - "PaletteList" (Palette)
+                - "CompilerResults" (Compiler Results)
+                - "FindResults" (Find Results)
+                - "ConstructionScriptEditor" (Construction Script)
+                Note: Some tabs may not be available depending on the editor mode/layout.
 
     Returns:
         Result containing:
         - success: Whether the asset was opened successfully
         - asset_path: Path of the opened asset
         - asset_name: Name of the asset
+        - tab_id: The requested tab ID (if provided)
+        - tab_switched: Whether tab switching succeeded (if tab_id provided)
+        - tab_error: Error message if tab switching failed (if applicable)
         - error: Error message (if failed)
     """
     manager = _get_editor_manager()
 
-    code = f"""
+    # Build the Python code to execute
+    if tab_id:
+        code = f"""
+import unreal
+
+asset_path = {repr(asset_path)}
+tab_id = {repr(tab_id)}
+asset = unreal.load_asset(asset_path)
+
+if asset is None:
+    print("__OPEN_ASSET_RESULT__ERROR:Asset not found: " + asset_path)
+else:
+    # Use get_editor_subsystem to get properly initialized subsystem
+    subsystem = unreal.get_editor_subsystem(unreal.AssetEditorSubsystem)
+    subsystem.open_editor_for_assets([asset])
+
+    # Try to switch to the specified tab
+    try:
+        tab_result = unreal.ExSlateTabLibrary.invoke_asset_editor_tab(
+            asset, unreal.Name(tab_id)
+        )
+        if tab_result:
+            print("__OPEN_ASSET_RESULT__SUCCESS:" + asset.get_name() + "|TAB_OK")
+        else:
+            # Tab switching failed - may be due to editor mode/layout
+            print("__OPEN_ASSET_RESULT__SUCCESS:" + asset.get_name() + "|TAB_FAILED:Tab '" + tab_id + "' could not be opened. It may not be available in the current editor mode/layout.")
+    except AttributeError:
+        # ExSlateTabLibrary not available (plugin not installed)
+        print("__OPEN_ASSET_RESULT__SUCCESS:" + asset.get_name() + "|TAB_FAILED:ExSlateTabLibrary not available. Ensure ExtraPythonAPIs plugin is installed and the project is rebuilt.")
+    except Exception as e:
+        print("__OPEN_ASSET_RESULT__SUCCESS:" + asset.get_name() + "|TAB_FAILED:" + str(e))
+"""
+    else:
+        code = f"""
 import unreal
 
 asset_path = {repr(asset_path)}
@@ -1284,12 +1331,42 @@ else:
         )
 
     if "__OPEN_ASSET_RESULT__SUCCESS:" in output:
-        asset_name = output.split("__OPEN_ASSET_RESULT__SUCCESS:")[1].strip().split("\n")[0]
-        return {
-            "success": True,
-            "asset_path": asset_path,
-            "asset_name": asset_name,
-        }
+        # Parse the success message
+        success_part = output.split("__OPEN_ASSET_RESULT__SUCCESS:")[1].strip().split("\n")[0]
+
+        # Check for tab result
+        if "|TAB_OK" in success_part:
+            asset_name = success_part.split("|TAB_OK")[0]
+            return {
+                "success": True,
+                "asset_path": asset_path,
+                "asset_name": asset_name,
+                "tab_id": tab_id,
+                "tab_switched": True,
+            }
+        elif "|TAB_FAILED:" in success_part:
+            parts = success_part.split("|TAB_FAILED:")
+            asset_name = parts[0]
+            tab_error = parts[1] if len(parts) > 1 else "Unknown tab error"
+            return {
+                "success": True,
+                "asset_path": asset_path,
+                "asset_name": asset_name,
+                "tab_id": tab_id,
+                "tab_switched": False,
+                "tab_error": tab_error,
+            }
+        else:
+            # No tab_id was requested
+            asset_name = success_part
+            result = {
+                "success": True,
+                "asset_path": asset_path,
+                "asset_name": asset_name,
+            }
+            if tab_id:
+                result["tab_id"] = tab_id
+            return result
     elif "__OPEN_ASSET_RESULT__ERROR:" in output:
         error_msg = output.split("__OPEN_ASSET_RESULT__ERROR:")[1].strip().split("\n")[0]
         return {
@@ -1371,6 +1448,9 @@ def inspect_asset(asset_path: str, component_name: str | None = None) -> dict[st
     When no component is specified for Blueprints, the response includes a list
     of available components with their names, class types, and hierarchy.
 
+    For Blueprint and Level assets, a viewport screenshot is automatically captured
+    and saved to the system temp directory.
+
     Args:
         asset_path: Path to the asset (e.g., /Game/Meshes/MyStaticMesh)
         component_name: Optional name of a specific component to inspect
@@ -1389,6 +1469,8 @@ def inspect_asset(asset_path: str, component_name: str | None = None) -> dict[st
         - component_info: (When component_name specified) Details of the component
         - metadata: Asset registry metadata (package info, etc.)
         - references: Dependencies and referencers
+        - screenshot_path: (For Blueprint/Level) Path to viewport screenshot
+        - screenshot_error: (For Blueprint/Level) Error message if screenshot failed
     """
     manager = _get_editor_manager()
 
