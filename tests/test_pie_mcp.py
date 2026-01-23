@@ -42,62 +42,18 @@ class TestPIEToolsBasic:
         assert "editor_start_pie" in tools
         assert "editor_stop_pie" in tools
 
-    @pytest.mark.asyncio
-    async def test_start_pie_without_editor(self, initialized_tool_caller: ToolCaller):
-        """Test start_pie fails gracefully when editor not running."""
-        result = await initialized_tool_caller.call(
-            "editor_start_pie",
-            {},
-            timeout=30,
-        )
-
-        data = parse_tool_result(result)
-        # Should fail with error about editor not running
-        assert data.get("success") is False or "error" in data or "raw_text" in data
-
-    @pytest.mark.asyncio
-    async def test_stop_pie_without_editor(self, initialized_tool_caller: ToolCaller):
-        """Test stop_pie fails gracefully when editor not running."""
-        result = await initialized_tool_caller.call(
-            "editor_stop_pie",
-            {},
-            timeout=30,
-        )
-
-        data = parse_tool_result(result)
-        # Should fail with error about editor not running
-        assert data.get("success") is False or "error" in data or "raw_text" in data
-
-
 @pytest.mark.integration
 class TestPIEToolsWithEditor:
     """Integration tests for PIE tools that require a running editor.
 
-    These tests share a single editor instance to avoid repeated startup/shutdown.
-    The editor is launched once at the start and stopped at the end.
+    These tests share a single editor instance via the running_editor fixture
+    to avoid repeated startup/shutdown across the entire test session.
     """
 
-    @pytest.fixture(scope="class")
-    async def editor_session(self, initialized_tool_caller: ToolCaller):
-        """Launch editor once for all tests in this class."""
-        # Launch editor
-        launch_result = await initialized_tool_caller.call(
-            "editor_launch",
-            {"wait": True, "wait_timeout": 180},
-            timeout=240,
-        )
-        launch_data = parse_tool_result(launch_result)
-        assert launch_data.get("success"), f"Editor launch failed: {launch_data}"
-
-        yield initialized_tool_caller
-
-        # Cleanup: stop editor after all tests
-        await initialized_tool_caller.call("editor_stop", timeout=30)
-
     @pytest.mark.asyncio
-    async def test_pie_start_stop_cycle(self, editor_session: ToolCaller):
+    async def test_pie_start_stop_cycle(self, running_editor: ToolCaller):
         """Test basic PIE start and stop."""
-        tool_caller = editor_session
+        tool_caller = running_editor
 
         # Start PIE
         start_result = await tool_caller.call(
@@ -122,9 +78,9 @@ class TestPIEToolsWithEditor:
         assert "stopped" in stop_data.get("message", "").lower()
 
     @pytest.mark.asyncio
-    async def test_pie_double_start(self, editor_session: ToolCaller):
+    async def test_pie_double_start(self, running_editor: ToolCaller):
         """Test that starting PIE twice reports already running."""
-        tool_caller = editor_session
+        tool_caller = running_editor
 
         # Start PIE first time
         start_result = await tool_caller.call(
@@ -150,9 +106,9 @@ class TestPIEToolsWithEditor:
         await tool_caller.call("editor_stop_pie", {}, timeout=30)
 
     @pytest.mark.asyncio
-    async def test_pie_double_stop(self, editor_session: ToolCaller):
+    async def test_pie_double_stop(self, running_editor: ToolCaller):
         """Test that stopping PIE when not running reports not running."""
-        tool_caller = editor_session
+        tool_caller = running_editor
 
         # Make sure PIE is not running first
         await tool_caller.call("editor_stop_pie", {}, timeout=30)

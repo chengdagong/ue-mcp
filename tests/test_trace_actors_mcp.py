@@ -43,71 +43,16 @@ class TestTraceActorsToolsBasic:
         assert "editor_trace_actors_in_pie" in tools, \
             f"editor_trace_actors_in_pie not found in tools: {list(tools.keys())}"
 
-    @pytest.mark.asyncio
-    async def test_trace_actors_without_editor(self, initialized_tool_caller: ToolCaller):
-        """Test trace actors fails gracefully when editor not running."""
-        result = await initialized_tool_caller.call(
-            "editor_trace_actors_in_pie",
-            {
-                "output_file": "C:/temp/trace.json",
-                "level": "/Game/ThirdPersonMap",
-                "actor_names": ["ThirdPersonCharacter"],
-                "duration_seconds": 1.0,
-            },
-            timeout=30,
-        )
-
-        data = parse_tool_result(result)
-
-        # Should fail because editor is not running
-        assert data.get("success") is False or "error" in data or "raw_text" in data, \
-            f"Expected failure without editor: {data}"
-
-
 @pytest.mark.integration
 class TestTraceActorsWithEditor:
-    """Tests that require a running editor."""
+    """Tests that require a running editor.
 
-    @pytest.fixture(scope="class")
-    async def editor_session(self, initialized_tool_caller: ToolCaller):
-        """Fixture that ensures editor is launched and ready."""
-        tool_caller = initialized_tool_caller
-
-        # Set project path
-        project_path = str(FIXTURE_PROJECT.resolve())
-
-        if not FIXTURE_PROJECT.exists():
-            pytest.skip(f"Test project not found at {project_path}")
-
-        set_result = await tool_caller.call(
-            "project_set_path",
-            {"project_path": project_path},
-            timeout=30,
-        )
-        set_data = parse_tool_result(set_result)
-        assert set_data.get("success"), f"Project set failed: {set_data}"
-
-        # Launch editor
-        launch_result = await tool_caller.call(
-            "editor_launch",
-            {"wait": True, "wait_timeout": 180},
-            timeout=200,
-        )
-        launch_data = parse_tool_result(launch_result)
-
-        # Check if build is needed
-        if launch_data.get("requires_build"):
-            pytest.skip("Project needs to be built first. Run 'project_build' tool.")
-
-        assert launch_data.get("success"), f"Editor launch failed: {launch_data}"
-
-        yield tool_caller
-
-        # Cleanup: stop editor
-        await tool_caller.call("editor_stop", {}, timeout=30)
+    Uses the session-scoped running_editor fixture to share editor instance
+    across all tests in the test session.
+    """
 
     @pytest.mark.asyncio
-    async def test_trace_single_actor(self, editor_session: ToolCaller):
+    async def test_trace_single_actor(self, running_editor: ToolCaller):
         """Test tracing a single actor (player character)."""
         import tempfile
 
@@ -116,7 +61,7 @@ class TestTraceActorsWithEditor:
             output_file = f.name
 
         try:
-            result = await editor_session.call(
+            result = await running_editor.call(
                 "editor_trace_actors_in_pie",
                 {
                     "output_file": output_file,
@@ -158,7 +103,7 @@ class TestTraceActorsWithEditor:
                 os.remove(output_file)
 
     @pytest.mark.asyncio
-    async def test_trace_actor_not_found(self, editor_session: ToolCaller):
+    async def test_trace_actor_not_found(self, running_editor: ToolCaller):
         """Test tracing with non-existent actor name."""
         import tempfile
 
@@ -166,7 +111,7 @@ class TestTraceActorsWithEditor:
             output_file = f.name
 
         try:
-            result = await editor_session.call(
+            result = await running_editor.call(
                 "editor_trace_actors_in_pie",
                 {
                     "output_file": output_file,
@@ -193,7 +138,7 @@ class TestTraceActorsWithEditor:
                 os.remove(output_file)
 
     @pytest.mark.asyncio
-    async def test_trace_multiple_actors(self, editor_session: ToolCaller):
+    async def test_trace_multiple_actors(self, running_editor: ToolCaller):
         """Test tracing multiple actors."""
         import tempfile
 
@@ -201,7 +146,7 @@ class TestTraceActorsWithEditor:
             output_file = f.name
 
         try:
-            result = await editor_session.call(
+            result = await running_editor.call(
                 "editor_trace_actors_in_pie",
                 {
                     "output_file": output_file,

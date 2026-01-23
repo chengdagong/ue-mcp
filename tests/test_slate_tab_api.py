@@ -72,56 +72,17 @@ class TestSlateTabAPI:
     Test ExSlateTabLibrary API functionality.
 
     These tests require:
-    1. Editor to be running
+    1. Editor to be running (via running_editor fixture)
     2. ExtraPythonAPIs plugin to be compiled and enabled
     3. A Blueprint asset to be opened
     """
 
     @pytest.mark.asyncio
-    async def test_check_exslate_library_available(self, tool_caller: ToolCaller):
+    async def test_check_exslate_library_available(self, running_editor: ToolCaller):
         """Test that ExSlateTabLibrary is available in UE Python."""
-        # First set project path
-        project_path = Path(__file__).parent / "fixtures" / "ThirdPersonTemplate"
-
-        result = await tool_caller.call(
-            "project_set_path",
-            {"project_path": str(project_path)},
-            timeout=30,
-        )
-        data = parse_tool_result(result)
-        assert data.get("success") is True, f"Failed to set project path: {data}"
-
-        # Launch editor (may require build if plugin was just installed)
-        result = await tool_caller.call(
-            "editor_launch",
-            {"wait": True, "wait_timeout": 300},
-            timeout=360,
-        )
-        data = parse_tool_result(result)
-
-        # Check if build is required (ExtraPythonAPIs plugin was installed)
-        if not data.get("success") and data.get("requires_build"):
-            # Build project first
-            build_result = await tool_caller.call(
-                "project_build",
-                {"target": "Editor", "wait": True},
-                timeout=600,
-            )
-            build_data = parse_tool_result(build_result)
-            assert build_data.get("success") is True, f"Failed to build project: {build_data}"
-
-            # Try launching again
-            result = await tool_caller.call(
-                "editor_launch",
-                {"wait": True, "wait_timeout": 300},
-                timeout=360,
-            )
-            data = parse_tool_result(result)
-
-        assert data.get("success") is True, f"Failed to launch editor: {data}"
-
+        # Editor is already running via running_editor fixture
         # Wait for editor to fully initialize
-        await asyncio.sleep(5)
+        await asyncio.sleep(2)
 
         # Check if ExSlateTabLibrary is available
         check_code = """
@@ -143,7 +104,7 @@ except AttributeError as e:
 
 print(f"RESULT: {result}")
 """
-        result = await tool_caller.call(
+        result = await running_editor.call(
             "editor_execute_code",
             {"code": check_code},
             timeout=60,
@@ -159,10 +120,8 @@ print(f"RESULT: {result}")
         )
 
     @pytest.mark.asyncio
-    async def test_get_blueprint_editor_tab_ids(self, tool_caller: ToolCaller):
+    async def test_get_blueprint_editor_tab_ids(self, running_editor: ToolCaller):
         """Test GetBlueprintEditorTabIds returns expected tab IDs."""
-        # Assume editor is already running from previous test
-
         code = """
 import unreal
 
@@ -181,7 +140,7 @@ for expected in expected_tabs:
 
 print(f"RESULT: {{'tab_count': {len(tab_ids)}, 'tabs': {found_tabs}}}")
 """
-        result = await tool_caller.call(
+        result = await running_editor.call(
             "editor_execute_code",
             {"code": code},
             timeout=60,
@@ -200,7 +159,7 @@ print(f"RESULT: {{'tab_count': {len(tab_ids)}, 'tabs': {found_tabs}}}")
     @pytest.mark.asyncio
     async def test_open_blueprint_and_switch_tabs(
         self,
-        tool_caller: ToolCaller,
+        running_editor: ToolCaller,
         thirdperson_blueprint_path: str,
     ):
         """Test opening a Blueprint and switching between tabs."""
@@ -227,7 +186,7 @@ else:
 
 print(f"RESULT: {{result}}")
 """
-        result = await tool_caller.call(
+        result = await running_editor.call(
             "editor_execute_code",
             {"code": open_code},
             timeout=60,
@@ -258,7 +217,7 @@ else:
 
 print(f"RESULT: {{result}}")
 """
-        result = await tool_caller.call(
+        result = await running_editor.call(
             "editor_execute_code",
             {"code": switch_viewport_code},
             timeout=60,
@@ -288,7 +247,7 @@ else:
 
 print(f"RESULT: {{result}}")
 """
-        result = await tool_caller.call(
+        result = await running_editor.call(
             "editor_execute_code",
             {"code": switch_graph_code},
             timeout=60,
@@ -305,7 +264,7 @@ print(f"RESULT: {{result}}")
     @pytest.mark.asyncio
     async def test_focus_details_and_myblueprint_panels(
         self,
-        tool_caller: ToolCaller,
+        running_editor: ToolCaller,
         thirdperson_blueprint_path: str,
     ):
         """Test focusing Details and MyBlueprint panels."""
@@ -332,7 +291,7 @@ else:
 
 print(f"RESULT: {{results}}")
 """
-        result = await tool_caller.call(
+        result = await running_editor.call(
             "editor_execute_code",
             {"code": code},
             timeout=60,
@@ -351,7 +310,7 @@ print(f"RESULT: {{results}}")
     @pytest.mark.asyncio
     async def test_invoke_tab_by_id(
         self,
-        tool_caller: ToolCaller,
+        running_editor: ToolCaller,
         thirdperson_blueprint_path: str,
     ):
         """Test invoking specific tabs by their ID."""
@@ -389,7 +348,7 @@ else:
 
 print(f"RESULT: {{results}}")
 """
-        result = await tool_caller.call(
+        result = await running_editor.call(
             "editor_execute_code",
             {"code": code},
             timeout=60,
@@ -407,7 +366,7 @@ print(f"RESULT: {{results}}")
     @pytest.mark.asyncio
     async def test_is_asset_editor_open(
         self,
-        tool_caller: ToolCaller,
+        running_editor: ToolCaller,
         thirdperson_blueprint_path: str,
     ):
         """Test checking if asset editor is open."""
@@ -426,7 +385,7 @@ else:
 
 print(f"RESULT: {{result}}")
 """
-        result = await tool_caller.call(
+        result = await running_editor.call(
             "editor_execute_code",
             {"code": code},
             timeout=60,
@@ -439,19 +398,4 @@ print(f"RESULT: {{result}}")
         # Should report editor as open since we opened it earlier
         assert "Is editor open for Blueprint: True" in output_text, (
             f"Editor should be open. Output: {output_text}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_cleanup_close_editor(self, tool_caller: ToolCaller):
-        """Cleanup: Stop the editor after tests."""
-        result = await tool_caller.call(
-            "editor_stop",
-            {},
-            timeout=60,
-        )
-        data = parse_tool_result(result)
-
-        # Editor should stop successfully or already be stopped
-        assert data.get("success") is True or "not running" in str(data).lower(), (
-            f"Failed to stop editor: {data}"
         )

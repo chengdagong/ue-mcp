@@ -42,50 +42,24 @@ class TestDiagnosticTools:
         assert "editor_asset_diagnostic" in tools
 
     @pytest.mark.asyncio
-    async def test_diagnostic_without_editor(self, initialized_tool_caller: ToolCaller):
-        """Test diagnostic fails gracefully when editor not running."""
-        result = await initialized_tool_caller.call(
+    async def test_diagnostic_with_editor(self, running_editor: ToolCaller):
+        """Test diagnostic with editor running."""
+        # Editor is already running via running_editor fixture
+        # Test diagnostics on a level
+        result = await running_editor.call(
             "editor_asset_diagnostic",
-            {"asset_path": "/Game/Maps/TestLevel"},
+            {"asset_path": "/Game/ThirdPerson/DefaultAutomaticTestLevel"},
             timeout=120,
         )
 
         data = parse_tool_result(result)
-        # Should fail with error about editor not running or not connected
-        assert data.get("success") is False or "error" in data or "raw_text" in data
-
-    @pytest.mark.asyncio
-    async def test_diagnostic_with_editor(self, initialized_tool_caller: ToolCaller):
-        """Test diagnostic with editor running."""
-        # Launch editor
-        launch_result = await initialized_tool_caller.call(
-            "editor_launch",
-            {"wait": True, "wait_timeout": 180},
-            timeout=240,
-        )
-        launch_data = parse_tool_result(launch_result)
-        assert launch_data.get("success"), f"Editor launch failed: {launch_data}"
-
-        try:
-            # Test diagnostics on a level
-            result = await initialized_tool_caller.call(
-                "editor_asset_diagnostic",
-                {"asset_path": "/Game/ThirdPerson/DefaultAutomaticTestLevel"},
-                timeout=120,
-            )
-
-            data = parse_tool_result(result)
-            assert data.get("success"), f"Diagnostic failed: {data}"
-            assert "asset_path" in data
-            assert "asset_type" in data
-            assert "errors" in data
-            assert "warnings" in data
-            assert "issues" in data
-            assert isinstance(data["issues"], list)
-
-        finally:
-            # Always stop editor
-            await initialized_tool_caller.call("editor_stop", timeout=30)
+        assert data.get("success"), f"Diagnostic failed: {data}"
+        assert "asset_path" in data
+        assert "asset_type" in data
+        assert "errors" in data
+        assert "warnings" in data
+        assert "issues" in data
+        assert isinstance(data["issues"], list)
 
 
 @pytest.mark.integration

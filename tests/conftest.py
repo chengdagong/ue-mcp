@@ -260,6 +260,79 @@ def temp_engine_ini(temp_project: Path) -> Path:
     return temp_project / "Config" / "DefaultEngine.ini"
 
 
+# =============================================================================
+# Shared Editor Fixture for Integration Tests
+# =============================================================================
+
+
+@pytest.fixture(scope="session")
+async def running_editor(initialized_tool_caller):
+    """
+    Session-scoped fixture that launches the editor once for all tests.
+
+    This fixture:
+    1. Launches UE5 editor at the start of the test session
+    2. Keeps it running for all tests that need it
+    3. Stops the editor after all tests complete
+
+    Usage:
+        @pytest.mark.asyncio
+        async def test_something_with_editor(running_editor, initialized_tool_caller):
+            # Editor is already running, just use initialized_tool_caller
+            result = await initialized_tool_caller.call("editor_execute_code", ...)
+
+    Benefits:
+        - Editor startup time (~2-3 min) is incurred only ONCE per test session
+        - All editor-dependent tests share the same editor instance
+        - Automatic cleanup after all tests complete
+    """
+    import json
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # Check if editor is already running
+    status_result = await initialized_tool_caller.call("editor_status", timeout=30)
+    status_text = status_result.text_content
+    if status_text:
+        try:
+            status_data = json.loads(status_text)
+            if status_data.get("status") == "ready":
+                logger.info("Editor already running, reusing existing instance")
+                yield initialized_tool_caller
+                return
+        except json.JSONDecodeError:
+            pass
+
+    # Launch editor
+    logger.info("Launching editor for test session...")
+    launch_result = await initialized_tool_caller.call(
+        "editor_launch",
+        {"wait": True, "wait_timeout": 180},
+        timeout=240,
+    )
+
+    launch_text = launch_result.text_content
+    if launch_text:
+        try:
+            launch_data = json.loads(launch_text)
+            if not launch_data.get("success"):
+                raise RuntimeError(f"Editor launch failed: {launch_data}")
+            logger.info("Editor launched successfully")
+        except json.JSONDecodeError:
+            raise RuntimeError(f"Failed to parse editor launch result: {launch_text}")
+    else:
+        raise RuntimeError("Editor launch returned no result")
+
+    try:
+        yield initialized_tool_caller
+    finally:
+        # Stop editor after all tests complete
+        logger.info("Stopping editor after test session...")
+        await initialized_tool_caller.call("editor_stop", timeout=30)
+        logger.info("Editor stopped")
+
+
 @pytest.fixture
 def mock_socket():
     """Mock socket module for RemoteExecutionClient tests."""

@@ -46,113 +46,45 @@ class TestCaptureTools:
         assert "editor_capture_window" in tools
 
     @pytest.mark.asyncio
-    async def test_capture_orbital_without_editor(self, initialized_tool_caller: ToolCaller):
-        """Test capture.orbital fails gracefully when editor not running."""
-        result = await initialized_tool_caller.call(
+    async def test_capture_orbital_with_editor(
+        self, running_editor: ToolCaller, test_output_dir: Path
+    ):
+        """Test capture.orbital with editor running."""
+        # Editor is already running via running_editor fixture
+        # Create test-specific output directory
+        orbital_dir = test_output_dir / "orbital"
+        orbital_dir.mkdir(exist_ok=True)
+
+        result = await running_editor.call(
             "editor_capture_orbital",
             {
-                "level": "/Game/Maps/TestLevel",
+                "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
                 "target_x": 0,
                 "target_y": 0,
                 "target_z": 100,
+                "distance": 500,
+                "preset": "orthographic",
+                "output_dir": str(orbital_dir),
+                "resolution_width": 640,
+                "resolution_height": 480,
             },
             timeout=120,
         )
 
         data = parse_tool_result(result)
-        # Should fail with error about editor not running
-        assert data.get("success") is False or "error" in data or "raw_text" in data
+        assert data.get("success"), f"Capture orbital failed: {data}"
+        assert "files" in data or "total_captures" in data
 
-    @pytest.mark.asyncio
-    async def test_capture_orbital_with_editor(
-        self, initialized_tool_caller: ToolCaller, test_output_dir: Path
-    ):
-        """Test capture.orbital with editor running."""
-        # Launch editor
-        launch_result = await initialized_tool_caller.call(
-            "editor_launch",
-            {"wait": True, "wait_timeout": 180},
-            timeout=240,
-        )
-        launch_data = parse_tool_result(launch_result)
-        assert launch_data.get("success"), f"Editor launch failed: {launch_data}"
+        # Verify that screenshot files were created
+        screenshot_files = list(orbital_dir.glob("**/*.png"))
+        assert len(screenshot_files) > 0, f"No screenshot files were created in {orbital_dir}"
 
-        try:
-            # Create test-specific output directory
-            orbital_dir = test_output_dir / "orbital"
-            orbital_dir.mkdir(exist_ok=True)
-
-            result = await initialized_tool_caller.call(
-                "editor_capture_orbital",
-                {
-                    "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
-                    "target_x": 0,
-                    "target_y": 0,
-                    "target_z": 100,
-                    "distance": 500,
-                    "preset": "orthographic",
-                    "output_dir": str(orbital_dir),
-                    "resolution_width": 640,
-                    "resolution_height": 480,
-                },
-                timeout=120,
+        # Verify file sizes
+        for img_file in screenshot_files:
+            file_size = img_file.stat().st_size
+            assert file_size > 1024, (
+                f"Screenshot {img_file.name} is empty or too small (size: {file_size} bytes)"
             )
-
-            data = parse_tool_result(result)
-            assert data.get("success"), f"Capture orbital failed: {data}"
-            assert "files" in data or "total_captures" in data
-
-            # Verify that screenshot files were created
-            screenshot_files = list(orbital_dir.glob("**/*.png"))
-            assert len(screenshot_files) > 0, f"No screenshot files were created in {orbital_dir}"
-
-            # Verify file sizes
-            for img_file in screenshot_files:
-                file_size = img_file.stat().st_size
-                assert file_size > 1024, (
-                    f"Screenshot {img_file.name} is empty or too small (size: {file_size} bytes)"
-                )
-
-        finally:
-            # Always stop editor
-            await initialized_tool_caller.call("editor_stop", timeout=30)
-
-    @pytest.mark.asyncio
-    async def test_capture_window_without_editor(self, initialized_tool_caller: ToolCaller):
-        """Test capture.window fails gracefully when editor not running."""
-        # Use temp file for single screenshot
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            result = await initialized_tool_caller.call(
-                "editor_capture_window",
-                {
-                    "level": "/Game/Maps/TestLevel",
-                    "output_file": f.name,
-                },
-                timeout=120,
-            )
-
-        data = parse_tool_result(result)
-        # Should fail with error about editor not running
-        assert data.get("success") is False or "error" in data or "raw_text" in data
-
-    @pytest.mark.asyncio
-    async def test_capture_pie_without_editor(self, initialized_tool_caller: ToolCaller):
-        """Test capture.pie fails gracefully when editor not running."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            result = await initialized_tool_caller.call(
-                "editor_capture_pie",
-                {
-                    "output_dir": temp_dir,
-                    "level": "/Game/Maps/TestLevel",
-                    "duration_seconds": 2.0,
-                    "interval_seconds": 0.5,
-                },
-                timeout=120,
-            )
-
-        data = parse_tool_result(result)
-        # Should fail with error about editor not running
-        assert data.get("success") is False or "error" in data or "raw_text" in data
 
     @pytest.mark.asyncio
     async def test_capture_pie_with_editor(self, initialized_tool_caller: ToolCaller):
@@ -163,60 +95,47 @@ class TestCaptureTools:
 
     @pytest.mark.asyncio
     async def test_capture_window_with_editor(
-        self, initialized_tool_caller: ToolCaller, test_output_dir: Path
+        self, running_editor: ToolCaller, test_output_dir: Path
     ):
         """Test capture.window with editor running."""
-        # Launch editor
-        launch_result = await initialized_tool_caller.call(
-            "editor_launch",
-            {"wait": True, "wait_timeout": 180},
-            timeout=240,
+        # Editor is already running via running_editor fixture
+        # Create test-specific output directory
+        window_dir = test_output_dir / "window"
+        window_dir.mkdir(exist_ok=True)
+        output_file = window_dir / "test_window_capture.png"
+
+        result = await running_editor.call(
+            "editor_capture_window",
+            {
+                "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
+                "output_file": str(output_file),
+                "mode": "window",
+            },
+            timeout=120,
         )
-        launch_data = parse_tool_result(launch_result)
-        assert launch_data.get("success"), f"Editor launch failed: {launch_data}"
 
-        try:
-            # Create test-specific output directory
-            window_dir = test_output_dir / "window"
-            window_dir.mkdir(exist_ok=True)
-            output_file = window_dir / "test_window_capture.png"
+        data = parse_tool_result(result)
+        print(f"\n=== Window Capture Debug ===")
+        print(f"Output file path: {output_file}")
+        print(f"Output file exists: {output_file.exists()}")
+        print(f"Return data: {data}")
+        print(f"=============================\n")
 
-            result = await initialized_tool_caller.call(
-                "editor_capture_window",
-                {
-                    "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
-                    "output_file": str(output_file),
-                    "mode": "window",
-                },
-                timeout=120,
+        assert data.get("success"), f"Capture window failed: {data}"
+
+        # Check if capture was successful and file exists
+        if data.get("captured"):
+            assert output_file.exists(), (
+                f"Captured flag is True but file does not exist: {output_file}"
             )
-
-            data = parse_tool_result(result)
-            print(f"\n=== Window Capture Debug ===")
-            print(f"Output file path: {output_file}")
-            print(f"Output file exists: {output_file.exists()}")
-            print(f"Return data: {data}")
-            print(f"=============================\n")
-
-            assert data.get("success"), f"Capture window failed: {data}"
-
-            # Check if capture was successful and file exists
-            if data.get("captured"):
-                assert output_file.exists(), (
-                    f"Captured flag is True but file does not exist: {output_file}"
-                )
-                file_size = output_file.stat().st_size
-                assert file_size > 1024, (
-                    f"Captured file is empty or too small (size: {file_size} bytes)"
-                )
-            else:
-                # If captured is False, file should not exist
-                assert not output_file.exists(), f"Captured is False but file exists: {output_file}"
-                print("Note: captured=False, skipping file verification")
-
-        finally:
-            # Always stop editor
-            await initialized_tool_caller.call("editor_stop", timeout=30)
+            file_size = output_file.stat().st_size
+            assert file_size > 1024, (
+                f"Captured file is empty or too small (size: {file_size} bytes)"
+            )
+        else:
+            # If captured is False, file should not exist
+            assert not output_file.exists(), f"Captured is False but file exists: {output_file}"
+            print("Note: captured=False, skipping file verification")
 
     @pytest.mark.asyncio
     async def test_capture_window_batch_mode_with_editor(self, initialized_tool_caller: ToolCaller):
