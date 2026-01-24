@@ -17,6 +17,7 @@ UE-MCP 服务器提供以下工具：
 | `editor_status` | 获取当前编辑器状态（not_running/starting/ready/stopped） |
 | `editor_stop` | 停止运行中的编辑器 |
 | `editor_configure` | 检查和修复项目的 Python 远程执行配置（包括 ExtraPythonAPIs 插件安装） |
+| `editor_load_level` | 加载指定关卡到编辑器（使用 LevelEditorSubsystem） |
 
 ### Python 执行
 | 工具 | 描述 |
@@ -94,6 +95,7 @@ result = editor_asset_open(asset_path="/Game/BP_Test")
 |------|---------|-------------|
 | `asset_open.py` | `editor_asset_open` | `python asset_open.py --asset-path=/Game/BP_Test --tab-id=Inspector` |
 | `pie_control.py` | `editor_start_pie`, `editor_stop_pie` | `python pie_control.py --command=start` |
+| `level_load.py` | `editor_load_level` | `python level_load.py --level-path=/Game/Maps/MyLevel` |
 | `api_search.py` | `python_api_search` | `python api_search.py --mode=list_classes --query=*Actor*` |
 | `ue_mcp_capture/capture_orbital.py` | `editor_capture_orbital` | `python capture_orbital.py --level=/Game/Maps/Test --target-x=0 ...` |
 | `ue_mcp_capture/capture_pie.py` | `editor_capture_pie` | `python capture_pie.py --output-dir=./screenshots --level=/Game/Maps/Test` |

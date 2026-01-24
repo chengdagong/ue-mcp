@@ -812,6 +812,40 @@ def stop_pie() -> dict[str, Any]:
     return _parse_json_result(result)
 
 
+@mcp.tool(name="editor_load_level")
+def load_level(
+    level_path: Annotated[str, Field(description="Path to the level to load (e.g., /Game/Maps/MyLevel)")],
+) -> dict[str, Any]:
+    """
+    Load a level in the editor.
+
+    This uses LevelEditorSubsystem.load_level() to open a level in the editor.
+
+    Args:
+        level_path: Path to the level to load (must start with /Game/)
+
+    Returns:
+        Result containing:
+        - success: Whether level was loaded successfully
+        - message: Status message
+        - level_path: The level path that was loaded
+        - error: Error message (if failed)
+    """
+    manager = _get_editor_manager()
+
+    from .script_executor import execute_script_from_path
+    script_path = Path(__file__).parent / "extra" / "scripts" / "level_load.py"
+
+    result = execute_script_from_path(
+        manager,
+        script_path,
+        params={"level_path": level_path},
+        timeout=30.0,
+    )
+
+    return _parse_json_result(result)
+
+
 @mcp.tool(name="editor_capture_orbital")
 def capture_orbital(
     level: Annotated[str, Field(description="Path to the level to load (e.g. /Game/Maps/MyLevel)")],
