@@ -414,3 +414,121 @@ os.environ['UE_MCP_MODE'] = '1'
                     }
 
     return changes
+
+
+def gather_actor_change_details(manager, actor_changes: dict[str, Any]) -> dict[str, Any]:
+    """
+    Gather diagnostic information when actor changes are detected.
+
+    Runs level diagnostic on the current level when actors are created,
+    deleted, or modified in memory (even without saving).
+
+    This function works for both persistent levels (/Game/) and temporary
+    levels (/Temp/) by using diagnose_current_level() which operates on
+    the currently loaded level in memory.
+
+    Args:
+        manager: ExecutionManager instance
+        actor_changes: Actor changes dictionary from compare_level_actor_snapshots
+
+    Returns:
+        Updated actor_changes dictionary with diagnostic details
+    """
+    # Get the level path from actor_changes
+    level_path = actor_changes.get("level_path", "")
+
+    # Skip if no valid level path
+    if not level_path:
+        logger.debug("Skipping diagnostic: no level path")
+        return actor_changes
+
+    # Use diagnose_current_level() which works for both persistent and temp levels
+    # This diagnoses the currently loaded level in memory, not by asset path
+    diagnostic_code = '''
+import json
+import sys
+
+# Force reload asset_diagnostic module to ensure latest version
+modules_to_remove = [k for k in list(sys.modules.keys()) if k.startswith("asset_diagnostic")]
+for mod_name in modules_to_remove:
+    del sys.modules[mod_name]
+
+import asset_diagnostic
+
+# Run diagnostic on current level (works for both /Game/ and /Temp/ levels)
+result = asset_diagnostic.diagnose_current_level(verbose=True)
+
+if result is None:
+    print(json.dumps({"success": False, "error": "No diagnostic result"}))
+else:
+    # Serialize result
+    if hasattr(result, "to_dict"):
+        result_dict = result.to_dict()
+    else:
+        # Fallback manual serialization
+        issues = []
+        for issue in result.issues:
+            issues.append({
+                "severity": issue.severity.value if hasattr(issue.severity, "value") else str(issue.severity),
+                "category": issue.category,
+                "message": issue.message,
+                "actor": issue.actor,
+                "details": issue.details,
+                "suggestion": issue.suggestion,
+            })
+        result_dict = {
+            "asset_path": result.asset_path,
+            "asset_type": result.asset_type.value if hasattr(result.asset_type, "value") else str(result.asset_type),
+            "asset_name": result.asset_name,
+            "errors": result.error_count if hasattr(result, "error_count") else 0,
+            "warnings": result.warning_count if hasattr(result, "warning_count") else 0,
+            "issues": issues,
+        }
+    result_dict["success"] = True
+    print(json.dumps(result_dict))
+'''
+
+    # Execute diagnostic
+    logger.debug(f"Running diagnostic for level with actor changes: {level_path}")
+    result = manager.execute(diagnostic_code, timeout=60.0)
+
+    if not result.get("success"):
+        logger.warning(f"Diagnostic execution failed: {result.get('error')}")
+        return actor_changes
+
+    # Parse pure JSON output
+    output = result.get("output", [])
+
+    diagnostic_result = None
+    for line in reversed(output):
+        line_str = str(line.get("output", "")) if isinstance(line, dict) else str(line)
+        line_str = line_str.strip()
+        if line_str.startswith("{") or line_str.startswith("["):
+            try:
+                diagnostic_result = json.loads(line_str)
+                break
+            except json.JSONDecodeError:
+                continue
+
+    if diagnostic_result and diagnostic_result.get("success"):
+        # Convert level path to asset path format for display
+        # e.g., "/Game/Maps/TestLevel.TestLevel:PersistentLevel" -> "/Game/Maps/TestLevel"
+        # For temp levels, keep the path as is
+        asset_path = level_path
+        if "." in asset_path:
+            asset_path = asset_path.split(".")[0]
+
+        actor_changes["level_diagnostic"] = {
+            "asset_path": asset_path,
+            "errors": diagnostic_result.get("errors", 0),
+            "warnings": diagnostic_result.get("warnings", 0),
+            "issues": diagnostic_result.get("issues", []),
+        }
+        logger.info(
+            f"Level diagnostic: {diagnostic_result.get('errors', 0)} errors, "
+            f"{diagnostic_result.get('warnings', 0)} warnings"
+        )
+    elif diagnostic_result:
+        logger.warning(f"Diagnostic returned error: {diagnostic_result.get('error')}")
+
+    return actor_changes

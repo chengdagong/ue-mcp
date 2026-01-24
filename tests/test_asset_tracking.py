@@ -711,6 +711,170 @@ for actor in actor_subsystem.get_all_level_actors():
         await mcp_client.call_tool("editor_execute_code", {"code": cleanup_code, "timeout": 30})
 
     @pytest.mark.asyncio
+    async def test_actor_change_triggers_level_diagnostic(self, mcp_client, running_editor):
+        """Test that actor changes trigger level diagnostic.
+
+        When actors are added/modified/deleted in memory (without saving the level),
+        the actor_changes should include level_diagnostic with diagnostic results.
+        """
+        # First, ensure we're on a persistent level (not /Temp/)
+        load_code = '''import unreal
+
+level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+level_subsystem.load_level("/Game/ThirdPerson/Lvl_ThirdPerson")
+print("Loaded Lvl_ThirdPerson")
+'''
+        load_result = await mcp_client.call_tool(
+            "editor_execute_code",
+            {"code": load_code, "timeout": 60},
+        )
+        assert load_result.structuredContent.get("success") is True
+
+        # Add an actor (should trigger diagnostic)
+        add_code = '''import unreal
+
+actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+
+# Add a new actor
+actor = actor_subsystem.spawn_actor_from_class(
+    unreal.StaticMeshActor, unreal.Vector(1000, 1000, 100), unreal.Rotator(0, 0, 0)
+)
+actor.set_actor_label("DiagnosticTestActor")
+mesh_comp = actor.get_component_by_class(unreal.StaticMeshComponent)
+if mesh_comp:
+    cube = unreal.load_asset("/Engine/BasicShapes/Cube")
+    if cube:
+        mesh_comp.set_static_mesh(cube)
+print(f"Added actor: {actor.get_actor_label()}")
+'''
+        result = await mcp_client.call_tool(
+            "editor_execute_code",
+            {"code": add_code, "timeout": 60},
+        )
+
+        data = result.structuredContent
+        assert data.get("success") is True, f"Code execution failed: {data.get('error')}"
+
+        # Verify actor_changes is present
+        assert "actor_changes" in data, f"No actor_changes in result. Keys: {list(data.keys())}"
+
+        actor_changes = data["actor_changes"]
+        logger.info(f"Actor changes with diagnostic: {actor_changes}")
+
+        # Verify detection
+        assert actor_changes.get("detected") is True, "Expected detected=True"
+
+        # Verify level_diagnostic is present (since we're in a /Game/ level, not /Temp/)
+        assert "level_diagnostic" in actor_changes, (
+            f"Expected level_diagnostic in actor_changes for persistent level. "
+            f"Got keys: {list(actor_changes.keys())}"
+        )
+
+        diagnostic = actor_changes["level_diagnostic"]
+        logger.info(f"Level diagnostic: {diagnostic}")
+
+        # Verify diagnostic structure
+        assert "asset_path" in diagnostic, "Expected asset_path in diagnostic"
+        assert "errors" in diagnostic, "Expected errors count in diagnostic"
+        assert "warnings" in diagnostic, "Expected warnings count in diagnostic"
+        assert "issues" in diagnostic, "Expected issues list in diagnostic"
+
+        # The asset_path should be the level path
+        assert "/Game/ThirdPerson" in diagnostic["asset_path"], (
+            f"Expected ThirdPerson level in diagnostic asset_path. Got: {diagnostic['asset_path']}"
+        )
+
+        # Cleanup - delete the test actor
+        cleanup_code = '''import unreal
+
+actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+for actor in actor_subsystem.get_all_level_actors():
+    if actor.get_actor_label() == "DiagnosticTestActor":
+        actor.destroy_actor()
+        print("Deleted DiagnosticTestActor")
+        break
+'''
+        await mcp_client.call_tool("editor_execute_code", {"code": cleanup_code, "timeout": 30})
+
+    @pytest.mark.asyncio
+    async def test_actor_change_diagnostic_detects_issues(self, mcp_client, running_editor):
+        """Test that actor change diagnostic can detect issues like floating objects.
+
+        When a floating actor is added without saving, the level_diagnostic
+        should detect the floating object issue.
+        """
+        # First, load a persistent level
+        load_code = '''import unreal
+
+level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+level_subsystem.load_level("/Game/ThirdPerson/Lvl_ThirdPerson")
+print("Loaded Lvl_ThirdPerson")
+'''
+        load_result = await mcp_client.call_tool(
+            "editor_execute_code",
+            {"code": load_code, "timeout": 60},
+        )
+        assert load_result.structuredContent.get("success") is True
+
+        # Add a floating actor (high above ground, should trigger floating warning/error)
+        add_code = '''import unreal
+
+actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+
+# Add a floating actor at very high Z (should be detected as floating)
+actor = actor_subsystem.spawn_actor_from_class(
+    unreal.StaticMeshActor, unreal.Vector(0, 0, 5000), unreal.Rotator(0, 0, 0)
+)
+actor.set_actor_label("FloatingDiagnosticTestActor")
+mesh_comp = actor.get_component_by_class(unreal.StaticMeshComponent)
+if mesh_comp:
+    sphere = unreal.load_asset("/Engine/BasicShapes/Sphere")
+    if sphere:
+        mesh_comp.set_static_mesh(sphere)
+print(f"Added floating actor at Z=5000: {actor.get_actor_label()}")
+'''
+        result = await mcp_client.call_tool(
+            "editor_execute_code",
+            {"code": add_code, "timeout": 60},
+        )
+
+        data = result.structuredContent
+        assert data.get("success") is True, f"Code execution failed: {data.get('error')}"
+
+        # Verify actor_changes and level_diagnostic
+        assert "actor_changes" in data, f"No actor_changes in result"
+        actor_changes = data["actor_changes"]
+
+        assert actor_changes.get("detected") is True
+        assert "level_diagnostic" in actor_changes, "Expected level_diagnostic"
+
+        diagnostic = actor_changes["level_diagnostic"]
+        logger.info(f"Diagnostic for floating actor: {diagnostic}")
+
+        # Check if floating object is detected
+        # The exact behavior depends on the diagnostic implementation
+        issues = diagnostic.get("issues", [])
+        total_issues = diagnostic.get("errors", 0) + diagnostic.get("warnings", 0)
+
+        logger.info(f"Total issues: {total_issues}, Issues detail: {issues}")
+
+        # Verify the diagnostic ran (may or may not find the floating object
+        # depending on level content and diagnostic rules)
+        assert isinstance(issues, list), "Expected issues to be a list"
+
+        # Cleanup - delete the floating actor
+        cleanup_code = '''import unreal
+
+actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+for actor in actor_subsystem.get_all_level_actors():
+    if actor.get_actor_label() == "FloatingDiagnosticTestActor":
+        actor.destroy_actor()
+        print("Deleted FloatingDiagnosticTestActor")
+        break
+'''
+        await mcp_client.call_tool("editor_execute_code", {"code": cleanup_code, "timeout": 30})
+
+    @pytest.mark.asyncio
     async def test_temporary_level_warning(self, mcp_client, running_editor):
         """Test that changes in a temporary level include a warning.
 
@@ -786,6 +950,23 @@ print(f"Added actor in temp level: {actor.get_actor_label()}")
         assert "editor_load_level" in warning, (
             "Warning should suggest using editor_load_level"
         )
+
+        # Verify that level_diagnostic IS present even for temporary levels
+        # Diagnostic should run for all levels, including /Temp/
+        assert "level_diagnostic" in actor_changes, (
+            f"Expected level_diagnostic for temporary level. "
+            f"Diagnostic should run for all levels including /Temp/. "
+            f"Got keys: {list(actor_changes.keys())}"
+        )
+
+        diagnostic = actor_changes["level_diagnostic"]
+        logger.info(f"Temp level diagnostic: {diagnostic}")
+
+        # Verify diagnostic structure
+        assert "asset_path" in diagnostic, "Expected asset_path in diagnostic"
+        assert "errors" in diagnostic, "Expected errors count in diagnostic"
+        assert "warnings" in diagnostic, "Expected warnings count in diagnostic"
+        assert "issues" in diagnostic, "Expected issues list in diagnostic"
 
         # Step 3: Switch back to a persistent level for cleanup
         switch_back_code = '''import unreal

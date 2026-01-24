@@ -15,6 +15,7 @@ from ..asset_tracker import (
     compare_snapshots,
     create_snapshot,
     extract_game_paths,
+    gather_actor_change_details,
     gather_change_details,
     get_current_level_path,
 )
@@ -513,6 +514,11 @@ else:
                             logger.warning(
                                 f"Actor changes in temporary level: {level_path}"
                             )
+                        # Run diagnostic for the level with actor changes
+                        # This works for both persistent (/Game/) and temporary (/Temp/) levels
+                        actor_changes = gather_actor_change_details(
+                            self, actor_changes
+                        )
                     else:
                         logger.debug("Actor tracking: no changes detected")
                     result["actor_changes"] = actor_changes
