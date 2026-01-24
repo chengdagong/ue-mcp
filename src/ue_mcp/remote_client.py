@@ -453,7 +453,6 @@ class RemoteExecutionClient:
                     "success": success,
                     "result": result,
                     "output": output,
-                    "raw": result_data,
                 }
             else:
                 return {"success": False, "error": "No response from UE5", "output": []}

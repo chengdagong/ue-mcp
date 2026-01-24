@@ -520,18 +520,25 @@ else:
                             self, actor_changes
                         )
 
-                        # Promote diagnostic to top level for visibility
-                        # This ensures LLMs notice diagnostic issues prominently
+                        # Promote diagnostic summary to top level for visibility
+                        # Only include brief summary to save context; full details in actor_changes
                         if "level_diagnostic" in actor_changes:
                             diag = actor_changes["level_diagnostic"]
                             errors = diag.get("errors", 0)
                             warnings = diag.get("warnings", 0)
                             if errors > 0 or warnings > 0:
-                                result["level_diagnostic"] = diag
-                                result["diagnostic_summary"] = (
-                                    f"⚠️ Level diagnostic: {errors} error(s), "
-                                    f"{warnings} warning(s) detected"
-                                )
+                                # Brief summary with issue messages only (no details)
+                                brief_issues = [
+                                    f"[{i.get('severity', 'ERROR')}] {i.get('actor', 'Unknown')}: {i.get('message', '')}"
+                                    for i in diag.get("issues", [])
+                                    if i.get("severity") in ("ERROR", "WARNING")
+                                ]
+                                result["diagnostic_summary"] = {
+                                    "level": diag.get("asset_path", ""),
+                                    "errors": errors,
+                                    "warnings": warnings,
+                                    "issues": brief_issues[:5],  # Limit to top 5
+                                }
                     else:
                         logger.debug("Actor tracking: no changes detected")
                     result["actor_changes"] = actor_changes
