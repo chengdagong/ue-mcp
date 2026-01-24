@@ -16,6 +16,11 @@ from ..asset_tracker import (
     create_snapshot,
     extract_game_paths,
     gather_change_details,
+    get_current_level_path,
+)
+from ..actor_snapshot import (
+    compare_level_actor_snapshots,
+    create_level_actor_snapshot,
 )
 from ..code_inspector import inspect_code
 from ..pip_install import (
@@ -310,15 +315,36 @@ else:
 
         # Step 3.5: Asset change tracking - Pre-execution snapshot
         # Extract /Game/xxx/ paths from code and take a snapshot before execution
+        # Also auto-track the current level even if not explicitly referenced in code
         pre_snapshot = None
+        pre_actor_snapshot = None
         game_paths = extract_game_paths(code)
+
+        # Auto-add current level path to tracking list
+        # This ensures changes to the current level are tracked even when the code
+        # doesn't explicitly contain /Game/ path strings
+        if self._ctx.editor and self._ctx.editor.status == "ready":
+            current_level_dir = get_current_level_path(self)
+            if current_level_dir and current_level_dir not in game_paths:
+                game_paths.append(current_level_dir)
+                logger.debug(f"Asset tracking: auto-added current level {current_level_dir}")
+
         if game_paths and self._ctx.editor and self._ctx.editor.status == "ready":
-            logger.debug(f"Asset tracking: detected paths {game_paths}")
+            logger.debug(f"Asset tracking: creating pre-snapshot for paths {game_paths}")
             pre_snapshot = create_snapshot(self, game_paths, str(self._ctx.project_root))
             if pre_snapshot:
                 logger.debug(
                     f"Asset tracking: pre-snapshot captured "
                     f"{len(pre_snapshot.get('assets', {}))} assets"
+                )
+
+        # Also create actor snapshot for OFPA mode support
+        if self._ctx.editor and self._ctx.editor.status == "ready":
+            pre_actor_snapshot = create_level_actor_snapshot(self)
+            if pre_actor_snapshot:
+                logger.debug(
+                    f"Actor tracking: pre-snapshot captured "
+                    f"{pre_actor_snapshot.get('actor_count', 0)} actors"
                 )
 
         if import_statements:
@@ -392,11 +418,33 @@ else:
                         )
                         # Gather detailed info for changed assets
                         changes = gather_change_details(self, changes)
-                        result["asset_changes"] = changes
                     else:
                         logger.debug("Asset tracking: no changes detected")
+                    # Always include asset_changes to show what was tracked
+                    result["asset_changes"] = changes
             except Exception as e:
                 logger.warning(f"Asset tracking failed: {e}")
+
+        # Actor-based change tracking for OFPA mode
+        if pre_actor_snapshot is not None and result.get("success"):
+            try:
+                post_actor_snapshot = create_level_actor_snapshot(self)
+                if post_actor_snapshot:
+                    actor_changes = compare_level_actor_snapshots(
+                        pre_actor_snapshot, post_actor_snapshot
+                    )
+                    if actor_changes.get("detected"):
+                        logger.info(
+                            f"Actor tracking: detected changes - "
+                            f"created={len(actor_changes.get('created', []))}, "
+                            f"deleted={len(actor_changes.get('deleted', []))}, "
+                            f"modified={len(actor_changes.get('modified', []))}"
+                        )
+                    else:
+                        logger.debug("Actor tracking: no changes detected")
+                    result["actor_changes"] = actor_changes
+            except Exception as e:
+                logger.warning(f"Actor tracking failed: {e}")
 
         return result
 
