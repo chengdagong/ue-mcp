@@ -519,6 +519,19 @@ else:
                         actor_changes = gather_actor_change_details(
                             self, actor_changes
                         )
+
+                        # Promote diagnostic to top level for visibility
+                        # This ensures LLMs notice diagnostic issues prominently
+                        if "level_diagnostic" in actor_changes:
+                            diag = actor_changes["level_diagnostic"]
+                            errors = diag.get("errors", 0)
+                            warnings = diag.get("warnings", 0)
+                            if errors > 0 or warnings > 0:
+                                result["level_diagnostic"] = diag
+                                result["diagnostic_summary"] = (
+                                    f"⚠️ Level diagnostic: {errors} error(s), "
+                                    f"{warnings} warning(s) detected"
+                                )
                     else:
                         logger.debug("Actor tracking: no changes detected")
                     result["actor_changes"] = actor_changes
