@@ -1044,7 +1044,7 @@ class EditorManager:
         """
         Execute Python code in the managed editor (internal use only).
 
-        External callers should use execute_with_auto_install() instead.
+        External callers should use execute_with_checks() instead.
 
         Args:
             code: Python code to execute
@@ -1154,7 +1154,7 @@ class EditorManager:
             logger.error(f"Failed to get Python path from editor: {e}")
         return None
 
-    def execute_with_auto_install(
+    def execute_with_checks(
         self,
         code: str,
         timeout: float = 30.0,
@@ -1200,6 +1200,11 @@ class EditorManager:
             }
 
         # Step 2.5: Code inspection for blocking calls and other issues
+        # Run inspection in two phases:
+        # 1. Server-side inspection (for checks that don't need unreal module)
+        # 2. Editor-side inspection (for UnrealAPIChecker that needs unreal module)
+
+        # Server-side inspection
         inspection = inspect_code(code)
         if not inspection.allowed:
             return {
@@ -1207,6 +1212,78 @@ class EditorManager:
                 "error": inspection.format_error(),
                 "inspection_issues": [i.to_dict() for i in inspection.issues],
             }
+
+        # Editor-side inspection (only if editor is ready)
+        if self._editor and self._editor.status == "ready":
+            logger.debug("Running editor-side code inspection for UnrealAPIChecker")
+            # Prepare code inspector execution in editor
+            # Calculate src path relative to this file
+            src_path = Path(__file__).parent.parent
+
+            inspector_code = f'''
+import sys
+
+# Add src to path (absolute path, since __file__ is not available in editor)
+src_path = r"{str(src_path)}"
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
+
+from ue_mcp.code_inspector import inspect_code
+
+# Inspect the user's code
+code_to_inspect = r"""
+{code.replace(chr(92), chr(92)*2).replace('"""', chr(92)+'"""')}
+"""
+
+result = inspect_code(code_to_inspect)
+
+if not result.allowed:
+    # Return error information
+    print("CODE_INSPECTION_FAILED")
+    print(result.format_error())
+else:
+    print("CODE_INSPECTION_PASSED")
+'''
+
+            logger.debug(f"Inspector code prepared, executing in editor...")
+            # Execute inspector in editor
+            inspector_result = self._execute(inspector_code, timeout=10.0)
+
+            logger.debug(f"Inspector execution result: success={inspector_result.get('success')}")
+
+            # Check inspection result
+            if inspector_result.get("success"):
+                output = inspector_result.get("output", [])
+                output_str = ""
+                if isinstance(output, list):
+                    for line in output:
+                        if isinstance(line, dict):
+                            output_str += str(line.get("output", ""))
+                        else:
+                            output_str += str(line)
+                else:
+                    output_str = str(output)
+
+                logger.debug(f"Inspector output: {output_str[:200]}")
+
+                if "CODE_INSPECTION_FAILED" in output_str:
+                    # Extract error message
+                    error_msg = output_str.split("CODE_INSPECTION_FAILED", 1)[1].strip()
+                    logger.info(f"Code inspection failed in editor: {error_msg[:200]}")
+                    return {
+                        "success": False,
+                        "error": error_msg,
+                    }
+                elif "CODE_INSPECTION_PASSED" in output_str:
+                    logger.debug("Code inspection passed in editor")
+            # If inspection execution failed or output unclear, log but continue
+            # (better to allow code execution than block it due to inspector issues)
+            elif not inspector_result.get("success"):
+                logger.warning(
+                    f"Editor-side code inspection failed to execute: {inspector_result.get('error')}"
+                )
+        else:
+            logger.debug(f"Skipping editor-side inspection: editor_status={self._editor.status if self._editor else 'None'}")
 
         # Step 3: Detect and prepare bundled module reload
         # This ensures bundled modules are reloaded to pick up latest code changes

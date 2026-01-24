@@ -11,6 +11,7 @@ from ue_mcp.code_inspector import (
     InspectionIssue,
     InspectionResult,
     IssueSeverity,
+    UnrealAPIChecker,
     inspect_code,
 )
 
@@ -236,3 +237,152 @@ class TestInspectionResult:
         )
         assert result.warning_count == 2
         assert result.error_count == 0
+
+
+class TestUnrealAPIChecker:
+    """Tests for UnrealAPIChecker - requires unreal module (run in UE5 editor)."""
+
+    @pytest.fixture
+    def unreal_available(self):
+        """Check if unreal module is available."""
+        try:
+            import unreal
+            return True
+        except ImportError:
+            return False
+
+    def test_skips_when_unreal_not_available(self):
+        """Checker gracefully skips when unreal module is not available."""
+        code = """
+import unreal
+unreal.log("Hello")
+"""
+        result = inspect_code(code)
+        # Without unreal module, UnrealAPIChecker skips, so no errors from it
+        # (but code is still allowed to execute)
+        assert result.allowed
+
+    def test_detects_invalid_direct_api(self, unreal_available):
+        """Detects invalid direct API call as ERROR."""
+        if not unreal_available:
+            pytest.skip("unreal module not available")
+
+        code = """
+import unreal
+unreal.NonExistentAPI()
+"""
+        result = inspect_code(code)
+        assert not result.allowed  # ERROR blocks execution
+        assert result.error_count >= 1
+        assert any("NonExistentAPI" in i.message for i in result.issues)
+        assert any(i.checker == "UnrealAPIChecker" for i in result.issues)
+
+    def test_detects_invalid_chained_api(self, unreal_available):
+        """Detects invalid chained API call as ERROR."""
+        if not unreal_available:
+            pytest.skip("unreal module not available")
+
+        code = """
+import unreal
+unreal.EditorAssetLibrary.nonexistent_method()
+"""
+        result = inspect_code(code)
+        assert not result.allowed
+        assert result.error_count >= 1
+        assert any("nonexistent_method" in i.message for i in result.issues)
+
+    def test_detects_invalid_from_import(self, unreal_available):
+        """Detects invalid from unreal import as ERROR."""
+        if not unreal_available:
+            pytest.skip("unreal module not available")
+
+        code = """
+from unreal import NonExistentClass
+obj = NonExistentClass()
+"""
+        result = inspect_code(code)
+        assert not result.allowed
+        assert result.error_count >= 1
+        assert any("NonExistentClass" in i.message for i in result.issues)
+
+    def test_allows_valid_unreal_api(self, unreal_available):
+        """Allows valid unreal API calls."""
+        if not unreal_available:
+            pytest.skip("unreal module not available")
+
+        code = """
+import unreal
+unreal.log("Test message")
+unreal.EditorAssetLibrary.list_assets("/Game/")
+"""
+        result = inspect_code(code)
+        # Should not have errors from UnrealAPIChecker
+        unreal_errors = [i for i in result.issues if i.checker == "UnrealAPIChecker"]
+        assert len(unreal_errors) == 0
+
+    def test_handles_import_alias(self, unreal_available):
+        """Handles unreal module imported with alias."""
+        if not unreal_available:
+            pytest.skip("unreal module not available")
+
+        code = """
+import unreal as u
+u.InvalidAPI()
+"""
+        result = inspect_code(code)
+        assert not result.allowed
+        assert result.error_count >= 1
+        assert any("InvalidAPI" in i.message for i in result.issues)
+
+    def test_line_number_tracking(self, unreal_available):
+        """Correctly tracks line numbers of invalid API calls."""
+        if not unreal_available:
+            pytest.skip("unreal module not available")
+
+        code = """import unreal
+# comment
+unreal.NonExistentAPI()
+"""
+        result = inspect_code(code)
+        assert result.error_count >= 1
+        # Line 3 has the invalid API call
+        assert any(i.line_number == 3 for i in result.issues)
+
+    def test_provides_suggestion(self, unreal_available):
+        """Provides helpful suggestion for invalid API calls."""
+        if not unreal_available:
+            pytest.skip("unreal module not available")
+
+        code = """
+import unreal
+unreal.InvalidAPI()
+"""
+        result = inspect_code(code)
+        assert result.error_count >= 1
+        unreal_issues = [i for i in result.issues if i.checker == "UnrealAPIChecker"]
+        assert len(unreal_issues) > 0
+        assert unreal_issues[0].suggestion is not None
+        assert "documentation" in unreal_issues[0].suggestion.lower()
+
+    def test_detects_multiple_invalid_apis(self, unreal_available):
+        """Detects multiple invalid API calls."""
+        if not unreal_available:
+            pytest.skip("unreal module not available")
+
+        code = """
+import unreal
+unreal.InvalidAPI1()
+unreal.InvalidAPI2()
+from unreal import NonExistentClass
+"""
+        result = inspect_code(code)
+        assert not result.allowed
+        # Should detect all 3 invalid APIs
+        assert result.error_count >= 2
+
+    def test_checker_registered_by_default(self):
+        """UnrealAPIChecker is registered by default in CodeInspector."""
+        inspector = CodeInspector()
+        checkers = inspector.get_checkers()
+        checker_names = [c.name for c in checkers]
+        assert "UnrealAPIChecker" in checker_names

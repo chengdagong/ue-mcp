@@ -256,6 +256,165 @@ class BlockingCallChecker(BaseChecker):
         return None
 
 
+class UnrealAPIChecker(BaseChecker):
+    """
+    Detects calls to unreal module APIs and validates their existence.
+
+    This checker validates:
+    - Direct API calls: unreal.SomeAPI
+    - Chained API calls: unreal.SomeClass.some_method
+    - From imports: from unreal import Something
+
+    Note: This checker requires the unreal module to be available.
+    If unreal is not importable, the checker will be skipped.
+    """
+
+    @property
+    def name(self) -> str:
+        return "UnrealAPIChecker"
+
+    @property
+    def description(self) -> str:
+        return "Validates that unreal module API calls reference existing APIs"
+
+    def check(self, tree: ast.AST, code: str) -> List[InspectionIssue]:
+        """Check for invalid unreal API calls."""
+        issues: List[InspectionIssue] = []
+
+        # Try to import unreal module
+        try:
+            import unreal
+        except ImportError:
+            # unreal module not available, skip this check
+            logger.debug("unreal module not available, skipping UnrealAPIChecker")
+            return issues
+
+        # Track unreal module aliases and direct imports
+        # unreal_aliases: names that refer to the unreal module (e.g., "unreal" or "u")
+        # direct_imports: names imported from unreal (e.g., from unreal import EditorAssetLibrary)
+        unreal_aliases: Set[str] = set()
+        direct_imports: Dict[str, str] = {}  # alias -> original_name
+
+        # First pass: collect import information
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "unreal":
+                        name = alias.asname if alias.asname else alias.name
+                        unreal_aliases.add(name)
+
+            elif isinstance(node, ast.ImportFrom):
+                if node.module == "unreal":
+                    for alias in node.names:
+                        # from unreal import Something / from unreal import Something as S
+                        imported_name = alias.asname if alias.asname else alias.name
+                        direct_imports[imported_name] = alias.name
+
+                        # Validate that the imported name exists
+                        if not hasattr(unreal, alias.name):
+                            issues.append(
+                                InspectionIssue(
+                                    severity=IssueSeverity.ERROR,
+                                    checker=self.name,
+                                    message=f"Cannot import '{alias.name}' from unreal module (does not exist)",
+                                    line_number=node.lineno,
+                                    suggestion="Check the API name spelling or refer to UE5 Python API documentation",
+                                )
+                            )
+
+        # Second pass: find unreal API attribute accesses and validate them
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute):
+                # Extract the API path if this is an unreal API call
+                api_path = self._extract_api_path(node, unreal_aliases)
+                if api_path:
+                    # Validate the API path
+                    valid, invalid_attr, _ = self._validate_api_path(
+                        api_path, unreal
+                    )
+                    if not valid:
+                        # Build the full path string for error message
+                        full_path = "unreal." + ".".join(api_path)
+                        # Find where it breaks
+                        valid_path = "unreal." + ".".join(
+                            api_path[: api_path.index(invalid_attr)]
+                        )
+
+                        issues.append(
+                            InspectionIssue(
+                                severity=IssueSeverity.ERROR,
+                                checker=self.name,
+                                message=f"API '{full_path}' does not exist ('{invalid_attr}' not found in {valid_path})",
+                                line_number=node.lineno,
+                                suggestion="Check the API name spelling or refer to UE5 Python API documentation",
+                            )
+                        )
+
+            # Also check direct use of imported names
+            elif isinstance(node, ast.Name):
+                if node.id in direct_imports:
+                    # The name itself is valid (we checked it during import),
+                    # but we could add additional checks here if needed
+                    pass
+
+        return issues
+
+    def _extract_api_path(
+        self, node: ast.Attribute, unreal_aliases: Set[str]
+    ) -> Optional[List[str]]:
+        """
+        Extract the API path from an attribute access node.
+
+        For example:
+        - unreal.EditorAssetLibrary -> ['EditorAssetLibrary']
+        - unreal.EditorAssetLibrary.list_assets -> ['EditorAssetLibrary', 'list_assets']
+
+        Args:
+            node: An ast.Attribute node
+            unreal_aliases: Set of names that refer to the unreal module
+
+        Returns:
+            List of attribute names if this is an unreal API call, None otherwise
+        """
+        path = []
+        current = node
+
+        # Walk up the attribute chain
+        while isinstance(current, ast.Attribute):
+            path.insert(0, current.attr)
+            current = current.value
+
+        # Check if the base is the unreal module
+        if isinstance(current, ast.Name) and current.id in unreal_aliases:
+            return path
+
+        return None
+
+    def _validate_api_path(
+        self, path: List[str], unreal_module
+    ) -> tuple[bool, Optional[str], Any]:
+        """
+        Validate that an API path exists in the unreal module.
+
+        Args:
+            path: List of attribute names, e.g., ['EditorAssetLibrary', 'list_assets']
+            unreal_module: The imported unreal module
+
+        Returns:
+            Tuple of (valid, invalid_attr, last_valid_obj):
+            - valid: True if the entire path exists
+            - invalid_attr: The first attribute that doesn't exist (None if all valid)
+            - last_valid_obj: The last valid object in the path
+        """
+        current = unreal_module
+        for attr in path:
+            if not hasattr(current, attr):
+                return False, attr, current
+            current = getattr(current, attr)
+
+        return True, None, current
+
+
 class CodeInspector:
     """
     Main code inspector that runs all registered checkers.
@@ -274,6 +433,7 @@ class CodeInspector:
     def _register_default_checkers(self):
         """Register the default set of checkers."""
         self.register_checker(BlockingCallChecker())
+        self.register_checker(UnrealAPIChecker())
 
     def register_checker(self, checker: BaseChecker):
         """
