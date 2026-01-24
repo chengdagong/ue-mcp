@@ -502,6 +502,17 @@ else:
                             f"deleted={len(actor_changes.get('deleted', []))}, "
                             f"modified={len(actor_changes.get('modified', []))}"
                         )
+                        # Warn if changes are in a temporary level
+                        level_path = actor_changes.get("level_path", "")
+                        if level_path.startswith("/Temp/"):
+                            actor_changes["warning"] = (
+                                f"Changes detected in temporary level '{level_path}'. "
+                                "This level is not saved. If you intended to modify a "
+                                "persistent level, please load it first using editor_load_level."
+                            )
+                            logger.warning(
+                                f"Actor changes in temporary level: {level_path}"
+                            )
                     else:
                         logger.debug("Actor tracking: no changes detected")
                     result["actor_changes"] = actor_changes

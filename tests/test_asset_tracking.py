@@ -709,3 +709,149 @@ for actor in actor_subsystem.get_all_level_actors():
         break
 '''
         await mcp_client.call_tool("editor_execute_code", {"code": cleanup_code, "timeout": 30})
+
+    @pytest.mark.asyncio
+    async def test_temporary_level_warning(self, mcp_client, running_editor):
+        """Test that changes in a temporary level include a warning.
+
+        When actors are modified in a temporary level (path starts with /Temp/),
+        the actor_changes should include a warning field alerting the user that
+        they are working in an unsaved level.
+        """
+        # Step 1: Create a new temporary level (unsaved)
+        new_level_code = '''import unreal
+
+level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+# Create a new level - this creates a /Temp/Untitled level
+level_subsystem.new_level("/Temp/TempLevelWarningTest")
+print("Created temporary level")
+'''
+        new_level_result = await mcp_client.call_tool(
+            "editor_execute_code",
+            {"code": new_level_code, "timeout": 60},
+        )
+        assert new_level_result.structuredContent.get("success") is True
+
+        # Step 2: Add an actor in the temporary level
+        add_actor_code = '''import unreal
+
+actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+
+# Add an actor to the temporary level
+actor = actor_subsystem.spawn_actor_from_class(
+    unreal.StaticMeshActor, unreal.Vector(0, 0, 100), unreal.Rotator(0, 0, 0)
+)
+actor.set_actor_label("TempLevelTestActor")
+mesh_comp = actor.get_component_by_class(unreal.StaticMeshComponent)
+if mesh_comp:
+    sphere = unreal.load_asset("/Engine/BasicShapes/Sphere")
+    if sphere:
+        mesh_comp.set_static_mesh(sphere)
+print(f"Added actor in temp level: {actor.get_actor_label()}")
+'''
+        result = await mcp_client.call_tool(
+            "editor_execute_code",
+            {"code": add_actor_code, "timeout": 60},
+        )
+
+        data = result.structuredContent
+        assert data.get("success") is True, f"Code execution failed: {data.get('error')}"
+
+        # Verify actor_changes is present
+        assert "actor_changes" in data, f"No actor_changes in result. Keys: {list(data.keys())}"
+
+        actor_changes = data["actor_changes"]
+        logger.info(f"Actor changes in temp level: {actor_changes}")
+
+        # Verify we're in a temporary level
+        level_path = actor_changes.get("level_path", "")
+        assert level_path.startswith("/Temp/"), (
+            f"Expected temporary level path starting with /Temp/. Got: {level_path}"
+        )
+
+        # Verify changes were detected
+        assert actor_changes.get("detected") is True, "Expected detected=True"
+
+        # Verify the warning is present
+        assert "warning" in actor_changes, (
+            f"Expected 'warning' field in actor_changes for temporary level. "
+            f"Got keys: {list(actor_changes.keys())}"
+        )
+
+        warning = actor_changes["warning"]
+        logger.info(f"Temporary level warning: {warning}")
+
+        # Verify warning message content
+        assert "/Temp/" in warning, "Warning should mention /Temp/ path"
+        assert "editor_load_level" in warning, (
+            "Warning should suggest using editor_load_level"
+        )
+
+        # Step 3: Switch back to a persistent level for cleanup
+        switch_back_code = '''import unreal
+
+level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+level_subsystem.load_level("/Game/ThirdPerson/Lvl_ThirdPerson")
+print("Switched back to Lvl_ThirdPerson")
+'''
+        await mcp_client.call_tool(
+            "editor_execute_code",
+            {"code": switch_back_code, "timeout": 60},
+        )
+
+
+@pytest.mark.integration
+class TestEditorLoadLevel:
+    """Tests for the editor_load_level MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_load_existing_level(self, mcp_client, running_editor):
+        """Test that loading an existing level succeeds."""
+        result = await mcp_client.call_tool(
+            "editor_load_level",
+            {"level_path": "/Game/ThirdPerson/Lvl_ThirdPerson"},
+        )
+
+        data = result.structuredContent
+        logger.info(f"Load existing level result: {data}")
+
+        assert data.get("success") is True, f"Expected success. Got: {data}"
+        assert "level_path" in data, "Expected level_path in result"
+        assert "current_level" in data, "Expected current_level in result"
+        assert "Lvl_ThirdPerson" in data.get("current_level", ""), (
+            f"Expected current_level to contain Lvl_ThirdPerson. Got: {data}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_load_nonexistent_level_fails(self, mcp_client, running_editor):
+        """Test that loading a non-existent level returns an error."""
+        result = await mcp_client.call_tool(
+            "editor_load_level",
+            {"level_path": "/Game/NonExistent/FakeLevel12345"},
+        )
+
+        data = result.structuredContent
+        logger.info(f"Load non-existent level result: {data}")
+
+        assert data.get("success") is False, f"Expected failure for non-existent level. Got: {data}"
+        assert "error" in data, "Expected error message"
+        assert "not found" in data.get("error", "").lower(), (
+            f"Expected 'not found' in error message. Got: {data.get('error')}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_load_invalid_path_fails(self, mcp_client, running_editor):
+        """Test that loading with invalid path format returns an error."""
+        result = await mcp_client.call_tool(
+            "editor_load_level",
+            {"level_path": "/Engine/Maps/Entry"},  # Not a /Game/ path
+        )
+
+        data = result.structuredContent
+        logger.info(f"Load invalid path result: {data}")
+
+        assert data.get("success") is False, f"Expected failure for invalid path. Got: {data}"
+        assert "error" in data, "Expected error message"
+        assert "/Game/" in data.get("error", ""), (
+            f"Expected error to mention /Game/ requirement. Got: {data.get('error')}"
+        )
