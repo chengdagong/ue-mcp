@@ -5,6 +5,7 @@ FastMCP-based MCP server for Unreal Editor interaction.
 """
 
 import asyncio
+import json
 import logging
 import signal
 import sys
@@ -171,6 +172,7 @@ Available tools:
 - editor_asset_inspect: Inspect a UE5 asset and return all its properties
 - editor_asset_open: Open an asset in its editor (Blueprint Editor, Material Editor, etc.)
 - project_build: Build the UE5 project using UnrealBuildTool (supports Editor, Game, etc.)
+- python_api_search: Search UE5 Python APIs in the running editor (list_classes, list_functions, class_info, member_info, search)
 """,
 )
 
@@ -1528,6 +1530,479 @@ def inspect_asset(
     result = manager.execute_with_checks(full_code, timeout=120.0)
 
     return _parse_diagnostic_result(result)
+
+
+# =============================================================================
+# Python API Search Tools
+# =============================================================================
+
+
+def _generate_api_search_code(
+    mode: str,
+    query: str | None,
+    include_inherited: bool,
+    include_private: bool,
+    limit: int,
+) -> str:
+    """Generate Python introspection code for the specified mode."""
+
+    # Common imports and marker
+    common_header = '''
+import unreal
+import inspect
+import json
+import re
+
+def _output_result(data):
+    print("__API_SEARCH_RESULT__" + json.dumps(data, default=str))
+'''
+
+    if mode == "list_classes":
+        pattern_code = ""
+        if query:
+            pattern_code = f'''
+import fnmatch
+pattern = {repr(query)}
+'''
+        return common_header + pattern_code + f'''
+result = []
+for name, obj in inspect.getmembers(unreal):
+    if inspect.isclass(obj) and (not name.startswith('_') or {include_private}):
+        {"if not fnmatch.fnmatch(name, pattern): continue" if query else ""}
+        doc = (obj.__doc__ or '').split('\\n')[0][:200]
+        result.append({{"name": name, "type": "class", "docstring": doc}})
+result.sort(key=lambda x: x["name"])
+_output_result({{"success": True, "results": result[:{limit}], "count": len(result), "truncated": len(result) > {limit}, "pattern": {repr(query) if query else "None"}}})
+'''
+
+    elif mode == "list_functions":
+        # 支持三种模式:
+        # 1. 无 query 或不含 "."：列出模块级函数
+        # 2. "ClassName.*" 或 "ClassName.*pattern*"：列出指定类的方法
+        # 3. "*.*pattern*"：搜索所有类中匹配的方法
+        return common_header + f'''
+import fnmatch
+
+query = {repr(query)}
+include_private = {include_private}
+limit = {limit}
+result = []
+
+if query is None or '.' not in query:
+    # 模式 1: 模块级函数
+    pattern = query
+    for name, obj in inspect.getmembers(unreal):
+        if callable(obj) and not inspect.isclass(obj) and (not name.startswith('_') or include_private):
+            if pattern and not fnmatch.fnmatch(name, pattern):
+                continue
+            try:
+                sig = str(inspect.signature(obj))
+            except (ValueError, TypeError):
+                sig = "()"
+            doc = (getattr(obj, '__doc__', '') or '').split('\\n')[0][:200]
+            result.append({{"name": name, "type": "function", "signature": f"def {{name}}{{sig}}", "docstring": doc}})
+    result.sort(key=lambda x: x["name"])
+    _output_result({{"success": True, "results": result[:limit], "count": len(result), "truncated": len(result) > limit, "pattern": pattern, "scope": "module"}})
+else:
+    # 模式 2 或 3: 类方法
+    parts = query.split('.', 1)
+    class_pattern = parts[0]
+    method_pattern = parts[1] if len(parts) > 1 else '*'
+
+    # 获取要搜索的类列表
+    if '*' in class_pattern or '?' in class_pattern:
+        # 模式 3: 搜索多个类
+        classes_to_search = [(name, cls) for name, cls in inspect.getmembers(unreal, inspect.isclass)
+                             if fnmatch.fnmatch(name, class_pattern) and (not name.startswith('_') or include_private)]
+    else:
+        # 模式 2: 指定单个类
+        cls = getattr(unreal, class_pattern, None)
+        if cls is None:
+            _output_result({{"success": False, "error": f"Class '{{class_pattern}}' not found"}})
+            classes_to_search = []
+        else:
+            classes_to_search = [(class_pattern, cls)]
+
+    for cls_name, cls in classes_to_search:
+        for mem_name, mem in inspect.getmembers(cls):
+            if mem_name.startswith('_') and not include_private:
+                continue
+            if not fnmatch.fnmatch(mem_name, method_pattern):
+                continue
+            if callable(mem) and not inspect.isclass(mem):
+                try:
+                    sig = str(inspect.signature(mem))
+                except:
+                    sig = "(self)"
+                doc = (mem.__doc__ or '').split('\\n')[0][:200]
+                result.append({{
+                    "name": f"{{cls_name}}.{{mem_name}}",
+                    "type": "method",
+                    "signature": f"def {{mem_name}}{{sig}}",
+                    "docstring": doc,
+                    "class": cls_name
+                }})
+            if len(result) >= limit * 2:
+                break
+        if len(result) >= limit * 2:
+            break
+
+    result.sort(key=lambda x: x["name"])
+    _output_result({{
+        "success": True,
+        "results": result[:limit],
+        "count": len(result),
+        "truncated": len(result) > limit,
+        "class_pattern": class_pattern,
+        "method_pattern": method_pattern,
+        "scope": "class"
+    }})
+'''
+
+    elif mode == "class_info":
+        return common_header + f'''
+class_name = {repr(query)}
+include_inherited = {include_inherited}
+include_private = {include_private}
+limit = {limit}
+
+cls = getattr(unreal, class_name, None)
+if cls is None:
+    _output_result({{"success": False, "error": f"Class '{{class_name}}' not found in unreal module"}})
+else:
+    bases = [b.__name__ for b in cls.__mro__[1:5] if hasattr(b, '__name__')]
+    docstring = (cls.__doc__ or "")[:2000]
+
+    properties = []
+    methods = []
+    inherited_from = {{}}
+
+    # Helper to parse UE property docstring: "(Type): [Read-Only/Read-Write] description"
+    def parse_ue_property_doc(doc):
+        if not doc:
+            return None, "read-write", ""
+        import re
+        # Match pattern like "(SceneComponent):  [Read-Only] description"
+        match = re.match(r'\\(([^)]+)\\):\\s*(?:\\[([^\\]]+)\\])?\\s*(.*)', doc, re.DOTALL)
+        if match:
+            prop_type = match.group(1)
+            access_str = match.group(2) or ""
+            desc = match.group(3) or ""
+            access = "read-only" if "Read-Only" in access_str else "read-write"
+            return prop_type, access, desc.split('\\n')[0][:150]
+        return None, "read-write", doc.split('\\n')[0][:150]
+
+    for name, obj in inspect.getmembers(cls):
+        if name.startswith('_') and not include_private:
+            continue
+
+        defining_class = None
+        for parent in cls.__mro__:
+            if name in getattr(parent, '__dict__', {{}}):
+                defining_class = parent.__name__
+                break
+
+        type_name = type(obj).__name__
+
+        # Check for UE5 properties (getset_descriptor) or Python properties
+        if type_name == 'getset_descriptor' or isinstance(obj, property):
+            doc = getattr(obj, '__doc__', '') or ''
+            if type_name == 'getset_descriptor':
+                prop_type, access, desc = parse_ue_property_doc(doc)
+                properties.append({{
+                    "name": name,
+                    "type": prop_type,
+                    "access": access,
+                    "docstring": desc
+                }})
+            else:
+                properties.append({{"name": name, "type": None, "access": "read-write" if obj.fset else "read-only", "docstring": ""}})
+            if defining_class and defining_class != class_name:
+                inherited_from[name] = defining_class
+        elif callable(obj) and not inspect.isclass(obj):
+            try:
+                sig = str(inspect.signature(obj))
+            except:
+                sig = "(self)"
+            doc = (obj.__doc__ or '').split('\\n')[0][:200]
+            methods.append({{"name": name, "signature": f"def {{name}}{{sig}}", "docstring": doc}})
+            if defining_class and defining_class != class_name:
+                inherited_from[name] = defining_class
+
+    result = {{
+        "success": True,
+        "class_name": class_name,
+        "base_classes": bases,
+        "docstring": docstring,
+        "properties": properties[:limit],
+        "methods": methods[:limit],
+        "property_count": len(properties),
+        "method_count": len(methods),
+    }}
+    if include_inherited:
+        result["inherited_from"] = inherited_from
+    _output_result(result)
+'''
+
+    elif mode == "member_info":
+        return common_header + f'''
+query = {repr(query)}
+parts = query.split('.', 1)
+
+# Helper to parse UE property docstring
+def parse_ue_property_doc(doc):
+    if not doc:
+        return None, "read-write", ""
+    match = re.match(r'\\(([^)]+)\\):\\s*(?:\\[([^\\]]+)\\])?\\s*(.*)', doc, re.DOTALL)
+    if match:
+        prop_type = match.group(1)
+        access_str = match.group(2) or ""
+        desc = match.group(3) or ""
+        access = "read-only" if "Read-Only" in access_str else "read-write"
+        return prop_type, access, desc
+    return None, "read-write", doc
+
+if len(parts) == 1:
+    # Module-level lookup
+    name = parts[0]
+    obj = getattr(unreal, name, None)
+    if obj is None:
+        _output_result({{"success": False, "error": f"'{{name}}' not found in unreal module"}})
+    elif inspect.isclass(obj):
+        _output_result({{"success": True, "member_name": name, "member_type": "class", "signature": f"class {{name}}", "docstring": obj.__doc__ or ""}})
+    elif callable(obj):
+        try:
+            sig = str(inspect.signature(obj))
+        except:
+            sig = "()"
+        _output_result({{"success": True, "member_name": name, "member_type": "function", "signature": f"def {{name}}{{sig}}", "docstring": obj.__doc__ or ""}})
+    else:
+        _output_result({{"success": True, "member_name": name, "member_type": "constant", "signature": f"{{name}}: {{type(obj).__name__}}", "docstring": ""}})
+else:
+    class_name, member_name = parts
+    cls = getattr(unreal, class_name, None)
+    if cls is None:
+        _output_result({{"success": False, "error": f"Class '{{class_name}}' not found"}})
+    else:
+        obj = getattr(cls, member_name, None)
+        if obj is None:
+            _output_result({{"success": False, "error": f"Member '{{member_name}}' not found in '{{class_name}}'"}})
+        else:
+            type_name = type(obj).__name__
+            # Check for UE5 properties (getset_descriptor) or Python properties
+            if type_name == 'getset_descriptor':
+                doc = getattr(obj, '__doc__', '') or ''
+                prop_type, access, desc = parse_ue_property_doc(doc)
+                _output_result({{
+                    "success": True,
+                    "member_name": member_name,
+                    "member_type": "property",
+                    "property_type": prop_type,
+                    "access": access,
+                    "signature": f"{{member_name}}: {{prop_type or 'Unknown'}} ({{access}})",
+                    "docstring": desc
+                }})
+            elif isinstance(obj, property):
+                doc = (obj.fget.__doc__ if obj.fget else "") or ""
+                access = "read-write" if obj.fset else "read-only"
+                _output_result({{"success": True, "member_name": member_name, "member_type": "property", "access": access, "signature": f"{{member_name}} ({{access}})", "docstring": doc}})
+            elif callable(obj):
+                try:
+                    sig = str(inspect.signature(obj))
+                except:
+                    sig = "(self)"
+                _output_result({{"success": True, "member_name": member_name, "member_type": "method", "signature": f"def {{member_name}}{{sig}}", "docstring": obj.__doc__ or ""}})
+            else:
+                _output_result({{"success": True, "member_name": member_name, "member_type": "attribute", "signature": f"{{member_name}}: {{type(obj).__name__}}", "docstring": ""}})
+'''
+
+    elif mode == "search":
+        return common_header + f'''
+search_term = {repr(query)}.lower()
+include_private = {include_private}
+limit = {limit}
+results = []
+
+def matches_word(term, name):
+    normalized = re.sub(r'([a-z])([A-Z])', r'\\1_\\2', name)
+    words = [w.lower() for w in normalized.split('_') if w]
+    return term in words or any(term in w for w in words)
+
+# Search module-level items
+for name, obj in inspect.getmembers(unreal):
+    if name.startswith('_') and not include_private:
+        continue
+    if search_term in name.lower() or matches_word(search_term, name):
+        if inspect.isclass(obj):
+            doc = (obj.__doc__ or '').split('\\n')[0][:100]
+            results.append({{"name": name, "type": "class", "docstring": doc}})
+        elif callable(obj):
+            results.append({{"name": name, "type": "function"}})
+
+# Search class members (limit classes for performance)
+class_count = 0
+for cls_name, cls in inspect.getmembers(unreal, inspect.isclass):
+    if cls_name.startswith('_'):
+        continue
+    class_count += 1
+    if class_count > 50:
+        break
+    for mem_name, mem in inspect.getmembers(cls):
+        if mem_name.startswith('_') and not include_private:
+            continue
+        if search_term in mem_name.lower() or matches_word(search_term, mem_name):
+            if isinstance(mem, property):
+                results.append({{"name": f"{{cls_name}}.{{mem_name}}", "type": "property", "parent_class": cls_name}})
+            elif callable(mem) and not inspect.isclass(mem):
+                results.append({{"name": f"{{cls_name}}.{{mem_name}}", "type": "method", "parent_class": cls_name}})
+            if len(results) >= limit * 2:
+                break
+    if len(results) >= limit * 2:
+        break
+
+results.sort(key=lambda x: (x["type"] != "class", x["name"]))
+truncated = len(results) > limit
+_output_result({{"success": True, "results": results[:limit], "count": len(results), "truncated": truncated}})
+'''
+
+    return 'print("__API_SEARCH_RESULT__" + json.dumps({"success": False, "error": "Unknown mode"}))'
+
+
+def _parse_api_search_result(exec_result: dict[str, Any], mode: str) -> dict[str, Any]:
+    """Parse the API search result from editor output."""
+    if not exec_result.get("success"):
+        return {
+            "success": False,
+            "mode": mode,
+            "error": exec_result.get("error", "Execution failed"),
+        }
+
+    output = exec_result.get("output", "")
+    if isinstance(output, list):
+        output = "\n".join(
+            str(line.get("output", "")) if isinstance(line, dict) else str(line)
+            for line in output
+        )
+
+    marker = "__API_SEARCH_RESULT__"
+
+    if marker not in output:
+        return {
+            "success": False,
+            "mode": mode,
+            "error": "No result marker found in output",
+            "raw_output": output[:1000],
+        }
+
+    try:
+        json_str = output.split(marker)[1].strip().split("\n")[0]
+        result = json.loads(json_str)
+        result["mode"] = mode
+        return result
+    except (json.JSONDecodeError, IndexError) as e:
+        return {
+            "success": False,
+            "mode": mode,
+            "error": f"Failed to parse result: {e}",
+            "raw_output": output[:1000],
+        }
+
+
+@mcp.tool(name="python_api_search")
+def python_api_search(
+    mode: Annotated[str, Field(description="Query mode: 'list_classes', 'list_functions', 'class_info', 'member_info', 'search'")],
+    query: Annotated[str | None, Field(default=None, description="Class name, member path (Class.member), search term, or wildcard pattern (e.g., '*Actor*')")],
+    include_inherited: Annotated[bool, Field(default=True, description="For class_info: include inherited members")],
+    include_private: Annotated[bool, Field(default=False, description="Include private members (_underscore)")],
+    limit: Annotated[int, Field(default=100, description="Maximum results to return")],
+) -> dict[str, Any]:
+    """
+    Query UE5 Python APIs from the running editor using runtime introspection.
+
+    This tool introspects the live 'unreal' module in the running editor,
+    providing accurate API information for the current UE5 version.
+
+    Args:
+        mode: Query mode - one of:
+            - "list_classes": List all classes (supports wildcard pattern in query)
+            - "list_functions": List functions/methods (supports multiple formats, see below)
+            - "class_info": Get class details with all members (requires query)
+            - "member_info": Get specific member details (requires query)
+            - "search": Fuzzy search across all names (requires query)
+        query: Depends on mode:
+            - list_classes: Optional wildcard pattern (e.g., "*Actor*", "Static*")
+            - list_functions: Multiple formats supported:
+                - None or no ".": Module-level functions (e.g., "*asset*")
+                - "ClassName.*": All methods of a class (e.g., "Actor.*")
+                - "ClassName.*pattern*": Methods matching pattern (e.g., "Actor.*location*")
+                - "*.*pattern*": Search methods across all classes (e.g., "*.*spawn*")
+            - class_info: Class name (e.g., "Actor")
+            - member_info: Member path (e.g., "Actor.get_actor_location")
+            - search: Search term (e.g., "spawn")
+        include_inherited: For class_info: include inherited members (default: True)
+        include_private: Include private members starting with underscore (default: False)
+        limit: Maximum number of results to return (default: 100)
+
+    Returns:
+        Result containing:
+        - success: Whether query succeeded
+        - mode: The query mode used
+        - results: (for list/search modes) List of matching items
+        - pattern: (for list modes with query) The wildcard pattern used
+        - class_name/member_name: (for info modes) The queried item
+        - properties/methods: (for class_info) Lists of class members
+        - signature/docstring: (for member_info) Member details
+        - error: Error message (if failed)
+
+    Examples:
+        # List all classes
+        python_api_search(mode="list_classes", limit=10)
+
+        # List classes matching wildcard pattern
+        python_api_search(mode="list_classes", query="*Actor*")
+        python_api_search(mode="list_classes", query="Static*")
+
+        # List module-level functions
+        python_api_search(mode="list_functions")
+        python_api_search(mode="list_functions", query="*asset*")
+
+        # List all methods of a class
+        python_api_search(mode="list_functions", query="Actor.*")
+
+        # List methods matching pattern in a class
+        python_api_search(mode="list_functions", query="Actor.*location*")
+
+        # Search methods across all classes
+        python_api_search(mode="list_functions", query="*.*spawn*")
+
+        # Get Actor class info
+        python_api_search(mode="class_info", query="Actor")
+
+        # Get specific method info
+        python_api_search(mode="member_info", query="Actor.get_actor_location")
+
+        # Search for spawn-related APIs
+        python_api_search(mode="search", query="spawn")
+    """
+    manager = _get_editor_manager()
+
+    # Validate mode
+    valid_modes = ["list_classes", "list_functions", "class_info", "member_info", "search"]
+    if mode not in valid_modes:
+        return {"success": False, "error": f"Invalid mode '{mode}'. Must be one of: {valid_modes}"}
+
+    # Validate query required for certain modes
+    if mode in ["class_info", "member_info", "search"] and not query:
+        return {"success": False, "error": f"query parameter required for mode '{mode}'"}
+
+    # Generate introspection code
+    code = _generate_api_search_code(mode, query, include_inherited, include_private, limit)
+
+    # Execute in editor
+    result = manager.execute_with_checks(code, timeout=30.0)
+
+    # Parse result
+    return _parse_api_search_result(result, mode)
 
 
 def _cleanup_on_shutdown() -> None:
