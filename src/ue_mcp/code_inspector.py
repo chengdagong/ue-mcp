@@ -256,6 +256,190 @@ class BlockingCallChecker(BaseChecker):
         return None
 
 
+class DeprecatedAPIChecker(BaseChecker):
+    """
+    Detects usage of deprecated UE5 Python APIs.
+
+    This checker warns when code uses APIs that have been deprecated
+    in favor of newer alternatives (typically Subsystem-based APIs).
+    """
+
+    # Deprecated APIs: (module_path, method) -> (replacement, suggestion)
+    # module_path is the path after 'unreal.', e.g., "EditorLevelLibrary"
+    DEPRECATED_APIS = {
+        ("EditorLevelLibrary", "new_level"): (
+            "LevelEditorSubsystem.new_level()",
+            "level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)\n"
+            "level_subsystem.new_level(level_path)",
+        ),
+        ("EditorLevelLibrary", "save_current_level"): (
+            "LevelEditorSubsystem.save_current_level()",
+            "level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)\n"
+            "level_subsystem.save_current_level()",
+        ),
+        ("EditorLevelLibrary", "load_level"): (
+            "LevelEditorSubsystem.load_level()",
+            "level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)\n"
+            "level_subsystem.load_level(level_path)",
+        ),
+        ("EditorLevelLibrary", "get_editor_world"): (
+            "UnrealEditorSubsystem.get_editor_world()",
+            "editor_subsystem = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem)\n"
+            "editor_subsystem.get_editor_world()",
+        ),
+        ("EditorLevelLibrary", "save_all_dirty_levels"): (
+            "LevelEditorSubsystem.save_all_dirty_levels()",
+            "level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)\n"
+            "level_subsystem.save_all_dirty_levels()",
+        ),
+        ("EditorLevelLibrary", "set_current_level_by_name"): (
+            "LevelEditorSubsystem.set_current_level_by_name()",
+            "level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)\n"
+            "level_subsystem.set_current_level_by_name(level_name)",
+        ),
+        ("EditorLevelLibrary", "spawn_actor_from_class"): (
+            "EditorActorSubsystem.spawn_actor_from_class()",
+            "actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)\n"
+            "actor_subsystem.spawn_actor_from_class(actor_class, location)",
+        ),
+        ("EditorLevelLibrary", "spawn_actor_from_object"): (
+            "EditorActorSubsystem.spawn_actor_from_object()",
+            "actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)\n"
+            "actor_subsystem.spawn_actor_from_object(object, location)",
+        ),
+        ("EditorLevelLibrary", "destroy_actor"): (
+            "EditorActorSubsystem.destroy_actor()",
+            "actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)\n"
+            "actor_subsystem.destroy_actor(actor)",
+        ),
+        ("EditorLevelLibrary", "get_all_level_actors"): (
+            "EditorActorSubsystem.get_all_level_actors()",
+            "actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)\n"
+            "actor_subsystem.get_all_level_actors()",
+        ),
+        ("EditorLevelLibrary", "get_selected_level_actors"): (
+            "EditorActorSubsystem.get_selected_level_actors()",
+            "actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)\n"
+            "actor_subsystem.get_selected_level_actors()",
+        ),
+        ("EditorLevelLibrary", "set_selected_level_actors"): (
+            "EditorActorSubsystem.set_selected_level_actors()",
+            "actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)\n"
+            "actor_subsystem.set_selected_level_actors(actors)",
+        ),
+        ("EditorLevelLibrary", "select_nothing"): (
+            "EditorActorSubsystem.select_nothing()",
+            "actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)\n"
+            "actor_subsystem.select_nothing()",
+        ),
+        ("EditorLevelLibrary", "set_actor_selection_state"): (
+            "EditorActorSubsystem.set_actor_selection_state()",
+            "actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)\n"
+            "actor_subsystem.set_actor_selection_state(actor, should_be_selected)",
+        ),
+        ("EditorLevelLibrary", "pilot_level_actor"): (
+            "LevelEditorSubsystem.pilot_level_actor()",
+            "level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)\n"
+            "level_subsystem.pilot_level_actor(actor)",
+        ),
+        ("EditorLevelLibrary", "eject_pilot_level_actor"): (
+            "LevelEditorSubsystem.eject_pilot_level_actor()",
+            "level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)\n"
+            "level_subsystem.eject_pilot_level_actor()",
+        ),
+        ("EditorLevelLibrary", "editor_play_simulate"): (
+            "LevelEditorSubsystem.editor_play_simulate()",
+            "level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)\n"
+            "level_subsystem.editor_play_simulate()",
+        ),
+        ("EditorLevelLibrary", "editor_end_play"): (
+            "LevelEditorSubsystem.editor_end_play()",
+            "level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)\n"
+            "level_subsystem.editor_end_play()",
+        ),
+    }
+
+    @property
+    def name(self) -> str:
+        return "DeprecatedAPIChecker"
+
+    @property
+    def description(self) -> str:
+        return "Detects usage of deprecated UE5 Python APIs"
+
+    def check(self, tree: ast.AST, code: str) -> List[InspectionIssue]:
+        """Check for deprecated API calls."""
+        issues: List[InspectionIssue] = []
+
+        # Track unreal module aliases
+        unreal_aliases: Set[str] = set()
+
+        # First pass: collect import information
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "unreal":
+                        name = alias.asname if alias.asname else alias.name
+                        unreal_aliases.add(name)
+
+        # Second pass: find deprecated API calls
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute):
+                deprecated_info = self._is_deprecated_call(node, unreal_aliases)
+                if deprecated_info:
+                    class_name, method_name, replacement, suggestion = deprecated_info
+                    issues.append(
+                        InspectionIssue(
+                            severity=IssueSeverity.ERROR,
+                            checker=self.name,
+                            message=f"Deprecated API: 'unreal.{class_name}.{method_name}()' - use '{replacement}' instead",
+                            line_number=node.lineno,
+                            suggestion=f"Replace with:\n    {suggestion}",
+                        )
+                    )
+
+        return issues
+
+    def _is_deprecated_call(
+        self, node: ast.Attribute, unreal_aliases: Set[str]
+    ) -> Optional[tuple]:
+        """
+        Check if an Attribute node is a deprecated API call.
+
+        Args:
+            node: AST Attribute node
+            unreal_aliases: Set of names that refer to the unreal module
+
+        Returns:
+            (class_name, method_name, replacement, suggestion) if deprecated, None otherwise
+        """
+        # Pattern: unreal.EditorLevelLibrary.load_level
+        # node.attr = "load_level"
+        # node.value = Attribute(value=Name("unreal"), attr="EditorLevelLibrary")
+
+        if not isinstance(node.value, ast.Attribute):
+            return None
+
+        inner_attr = node.value
+        if not isinstance(inner_attr.value, ast.Name):
+            return None
+
+        # Check if base is unreal module
+        if inner_attr.value.id not in unreal_aliases:
+            return None
+
+        class_name = inner_attr.attr
+        method_name = node.attr
+
+        # Look up in deprecated APIs
+        key = (class_name, method_name)
+        if key in self.DEPRECATED_APIS:
+            replacement, suggestion = self.DEPRECATED_APIS[key]
+            return (class_name, method_name, replacement, suggestion)
+
+        return None
+
+
 class UnrealAPIChecker(BaseChecker):
     """
     Detects calls to unreal module APIs and validates their existence.
@@ -433,6 +617,7 @@ class CodeInspector:
     def _register_default_checkers(self):
         """Register the default set of checkers."""
         self.register_checker(BlockingCallChecker())
+        self.register_checker(DeprecatedAPIChecker())
         self.register_checker(UnrealAPIChecker())
 
     def register_checker(self, checker: BaseChecker):

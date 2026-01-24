@@ -8,6 +8,7 @@ from ue_mcp.code_inspector import (
     BaseChecker,
     BlockingCallChecker,
     CodeInspector,
+    DeprecatedAPIChecker,
     InspectionIssue,
     InspectionResult,
     IssueSeverity,
@@ -386,3 +387,160 @@ from unreal import NonExistentClass
         checkers = inspector.get_checkers()
         checker_names = [c.name for c in checkers]
         assert "UnrealAPIChecker" in checker_names
+
+
+class TestDeprecatedAPIChecker:
+    """Tests for DeprecatedAPIChecker."""
+
+    def test_detects_deprecated_load_level(self):
+        """Detects deprecated EditorLevelLibrary.load_level() as ERROR (blocks execution)."""
+        code = """
+import unreal
+unreal.EditorLevelLibrary.load_level("/Game/Maps/TestLevel")
+"""
+        result = inspect_code(code)
+        assert not result.allowed  # ERROR blocks execution
+        assert result.error_count >= 1
+        deprecated_issues = [i for i in result.issues if i.checker == "DeprecatedAPIChecker"]
+        assert len(deprecated_issues) >= 1
+        assert "load_level" in deprecated_issues[0].message
+        assert "LevelEditorSubsystem" in deprecated_issues[0].message
+
+    def test_detects_deprecated_new_level(self):
+        """Detects deprecated EditorLevelLibrary.new_level() as ERROR."""
+        code = """
+import unreal
+unreal.EditorLevelLibrary.new_level("/Game/Maps/NewLevel")
+"""
+        result = inspect_code(code)
+        assert not result.allowed  # ERROR blocks execution
+        deprecated_issues = [i for i in result.issues if i.checker == "DeprecatedAPIChecker"]
+        assert len(deprecated_issues) >= 1
+        assert "new_level" in deprecated_issues[0].message
+
+    def test_detects_deprecated_save_current_level(self):
+        """Detects deprecated EditorLevelLibrary.save_current_level() as ERROR."""
+        code = """
+import unreal
+unreal.EditorLevelLibrary.save_current_level()
+"""
+        result = inspect_code(code)
+        assert not result.allowed  # ERROR blocks execution
+        deprecated_issues = [i for i in result.issues if i.checker == "DeprecatedAPIChecker"]
+        assert len(deprecated_issues) >= 1
+        assert "save_current_level" in deprecated_issues[0].message
+
+    def test_detects_deprecated_spawn_actor(self):
+        """Detects deprecated EditorLevelLibrary.spawn_actor_from_class() as ERROR."""
+        code = """
+import unreal
+unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.Actor, unreal.Vector())
+"""
+        result = inspect_code(code)
+        assert not result.allowed  # ERROR blocks execution
+        deprecated_issues = [i for i in result.issues if i.checker == "DeprecatedAPIChecker"]
+        assert len(deprecated_issues) >= 1
+        assert "spawn_actor_from_class" in deprecated_issues[0].message
+        assert "EditorActorSubsystem" in deprecated_issues[0].message
+
+    def test_detects_deprecated_get_all_level_actors(self):
+        """Detects deprecated EditorLevelLibrary.get_all_level_actors() as ERROR."""
+        code = """
+import unreal
+actors = unreal.EditorLevelLibrary.get_all_level_actors()
+"""
+        result = inspect_code(code)
+        assert not result.allowed  # ERROR blocks execution
+        deprecated_issues = [i for i in result.issues if i.checker == "DeprecatedAPIChecker"]
+        assert len(deprecated_issues) >= 1
+        assert "get_all_level_actors" in deprecated_issues[0].message
+
+    def test_handles_unreal_alias(self):
+        """Detects deprecated API with unreal module alias as ERROR."""
+        code = """
+import unreal as ue
+ue.EditorLevelLibrary.load_level("/Game/Maps/TestLevel")
+"""
+        result = inspect_code(code)
+        assert not result.allowed  # ERROR blocks execution
+        deprecated_issues = [i for i in result.issues if i.checker == "DeprecatedAPIChecker"]
+        assert len(deprecated_issues) >= 1
+        assert "load_level" in deprecated_issues[0].message
+
+    def test_allows_non_deprecated_api(self):
+        """Allows non-deprecated API calls from EditorLevelLibrary."""
+        code = """
+import unreal
+# EditorAssetLibrary is not deprecated
+assets = unreal.EditorAssetLibrary.list_assets("/Game/")
+"""
+        result = inspect_code(code)
+        deprecated_issues = [i for i in result.issues if i.checker == "DeprecatedAPIChecker"]
+        assert len(deprecated_issues) == 0
+
+    def test_allows_subsystem_api(self):
+        """Allows the recommended Subsystem-based API calls."""
+        code = """
+import unreal
+level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+level_subsystem.load_level("/Game/Maps/TestLevel")
+"""
+        result = inspect_code(code)
+        deprecated_issues = [i for i in result.issues if i.checker == "DeprecatedAPIChecker"]
+        assert len(deprecated_issues) == 0
+
+    def test_detects_multiple_deprecated_calls(self):
+        """Detects multiple deprecated API calls as ERRORs."""
+        code = """
+import unreal
+unreal.EditorLevelLibrary.new_level("/Game/Maps/New")
+unreal.EditorLevelLibrary.save_current_level()
+unreal.EditorLevelLibrary.load_level("/Game/Maps/Existing")
+"""
+        result = inspect_code(code)
+        assert not result.allowed  # ERROR blocks execution
+        assert result.error_count >= 3
+        deprecated_issues = [i for i in result.issues if i.checker == "DeprecatedAPIChecker"]
+        assert len(deprecated_issues) == 3
+
+    def test_line_number_tracking(self):
+        """Correctly tracks line numbers of deprecated API calls."""
+        code = """import unreal
+# comment
+unreal.EditorLevelLibrary.load_level("/Game/Maps/Test")
+"""
+        result = inspect_code(code)
+        deprecated_issues = [i for i in result.issues if i.checker == "DeprecatedAPIChecker"]
+        assert len(deprecated_issues) >= 1
+        assert deprecated_issues[0].line_number == 3
+
+    def test_provides_suggestion(self):
+        """Provides helpful suggestion for deprecated API calls."""
+        code = """
+import unreal
+unreal.EditorLevelLibrary.load_level("/Game/Maps/Test")
+"""
+        result = inspect_code(code)
+        deprecated_issues = [i for i in result.issues if i.checker == "DeprecatedAPIChecker"]
+        assert len(deprecated_issues) >= 1
+        assert deprecated_issues[0].suggestion is not None
+        assert "get_editor_subsystem" in deprecated_issues[0].suggestion
+        assert "LevelEditorSubsystem" in deprecated_issues[0].suggestion
+
+    def test_checker_registered_by_default(self):
+        """DeprecatedAPIChecker is registered by default in CodeInspector."""
+        inspector = CodeInspector()
+        checkers = inspector.get_checkers()
+        checker_names = [c.name for c in checkers]
+        assert "DeprecatedAPIChecker" in checker_names
+
+    def test_ignores_unrelated_code(self):
+        """Ignores code that doesn't use unreal module."""
+        code = """
+import time
+import os
+print("Hello")
+"""
+        result = inspect_code(code)
+        deprecated_issues = [i for i in result.issues if i.checker == "DeprecatedAPIChecker"]
+        assert len(deprecated_issues) == 0
