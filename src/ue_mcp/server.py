@@ -375,7 +375,7 @@ def execute_code(
         execute_code("import unreal; print(unreal.EditorAssetLibrary.list_assets('/Game/'))")
     """
     manager = _get_editor_manager()
-    return manager.execute_with_auto_install(code, timeout=timeout)
+    return manager.execute_with_checks(code, timeout=timeout)
 
 
 @mcp.tool(name="editor_execute_script")
@@ -429,7 +429,7 @@ def execute_script(
         }
 
     manager = _get_editor_manager()
-    return manager.execute_with_auto_install(code, timeout=timeout)
+    return manager.execute_with_checks(code, timeout=timeout)
 
 
 @mcp.tool(name="editor_configure")
@@ -752,7 +752,7 @@ else:
     else:
         print("__PIE_RESULT__FAILED")
 """
-    exec_result = manager.execute_with_auto_install(code, timeout=10.0)
+    exec_result = manager.execute_with_checks(code, timeout=10.0)
 
     if not exec_result.get("success"):
         return {
@@ -801,7 +801,7 @@ else:
     else:
         print("__PIE_RESULT__FAILED")
 """
-    exec_result = manager.execute_with_auto_install(code, timeout=10.0)
+    exec_result = manager.execute_with_checks(code, timeout=10.0)
 
     if not exec_result.get("success"):
         return {
@@ -1336,7 +1336,7 @@ else:
     subsystem.open_editor_for_assets([asset])
     print("__OPEN_ASSET_RESULT__SUCCESS:" + asset.get_name())
 """
-    exec_result = manager.execute_with_auto_install(code, timeout=30.0)
+    exec_result = manager.execute_with_checks(code, timeout=30.0)
 
     if not exec_result.get("success"):
         return {
@@ -1455,7 +1455,7 @@ def diagnose_asset(
     )
 
     full_code = params_code + script_content
-    result = manager.execute_with_auto_install(full_code, timeout=120.0)
+    result = manager.execute_with_checks(full_code, timeout=120.0)
 
     return _parse_diagnostic_result(result)
 
@@ -1525,7 +1525,7 @@ def inspect_asset(
     )
 
     full_code = params_code + script_content
-    result = manager.execute_with_auto_install(full_code, timeout=120.0)
+    result = manager.execute_with_checks(full_code, timeout=120.0)
 
     return _parse_diagnostic_result(result)
 

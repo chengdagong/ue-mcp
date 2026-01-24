@@ -27,7 +27,7 @@ def parse_pid_from_output(output: list[Any]) -> int:
     Extract PID integer from execution output.
 
     Args:
-        output: List of output items from execute_with_auto_install()
+        output: List of output items from execute_with_checks()
 
     Returns:
         Parsed PID as integer
@@ -135,11 +135,11 @@ class TestMultiInstanceIsolation:
             print("\n[STEP 4] Verifying code execution isolation...")
             code = "print(__import__('os').getpid())"
 
-            exec_result1 = manager1.execute_with_auto_install(code, timeout=30.0)
+            exec_result1 = manager1.execute_with_checks(code, timeout=30.0)
             assert exec_result1.get("success"), f"Execution 1 failed: {exec_result1}"
             actual_pid1 = parse_pid_from_output(exec_result1.get("output", []))
 
-            exec_result2 = manager2.execute_with_auto_install(code, timeout=30.0)
+            exec_result2 = manager2.execute_with_checks(code, timeout=30.0)
             assert exec_result2.get("success"), f"Execution 2 failed: {exec_result2}"
             actual_pid2 = parse_pid_from_output(exec_result2.get("output", []))
 
@@ -160,12 +160,12 @@ class TestMultiInstanceIsolation:
             # === STEP 5: Verify interleaved execution ===
             print("\n[STEP 5] Verifying interleaved execution (3 iterations)...")
             for i in range(3):
-                r1 = manager1.execute_with_auto_install(
+                r1 = manager1.execute_with_checks(
                     f"import os; print(f'M1-{i}:{{os.getpid()}}')", timeout=30.0
                 )
                 assert r1.get("success"), f"Iteration {i} manager1 failed: {r1}"
 
-                r2 = manager2.execute_with_auto_install(
+                r2 = manager2.execute_with_checks(
                     f"import os; print(f'M2-{i}:{{os.getpid()}}')", timeout=30.0
                 )
                 assert r2.get("success"), f"Iteration {i} manager2 failed: {r2}"
@@ -199,11 +199,11 @@ class TestMultiInstanceIsolation:
             print("  Forced disconnect, testing reconnection...")
 
             # Execute again - should trigger reconnection
-            r1_after = manager1.execute_with_auto_install("import os; print(os.getpid())")
+            r1_after = manager1.execute_with_checks("import os; print(os.getpid())")
             assert r1_after.get("success"), f"Manager 1 reconnection failed: {r1_after}"
             pid1_after = parse_pid_from_output(r1_after.get("output", []))
 
-            r2_after = manager2.execute_with_auto_install("import os; print(os.getpid())")
+            r2_after = manager2.execute_with_checks("import os; print(os.getpid())")
             assert r2_after.get("success"), f"Manager 2 reconnection failed: {r2_after}"
             pid2_after = parse_pid_from_output(r2_after.get("output", []))
 

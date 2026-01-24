@@ -62,4 +62,4 @@ def execute_script(
 
     full_code = params_code + script_content
 
-    return manager.execute_with_auto_install(full_code, timeout=timeout)
+    return manager.execute_with_checks(full_code, timeout=timeout)

@@ -9,6 +9,7 @@ For tests requiring editor:
 """
 
 import json
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -17,8 +18,14 @@ from typing import Any
 import pytest
 from mcp_pytest import ToolCaller, ToolCallResult
 
+# Configure logging for tests
+logger = logging.getLogger(__name__)
+
 # Test project fixture path
 FIXTURE_PROJECT = Path(__file__).parent / "fixtures" / "ThirdPersonTemplate"
+
+# Test output directory (for trace data and screenshots)
+TEST_OUTPUT_DIR = Path(__file__).parent / "test_output"
 
 
 def parse_tool_result(result: ToolCallResult) -> dict[str, Any]:
@@ -53,10 +60,10 @@ class TestTraceActorsWithEditor:
     """
 
     @pytest.mark.asyncio
-    async def test_trace_single_actor(self, running_editor: ToolCaller):
+    async def test_trace_single_actor(self, running_editor: ToolCaller, test_level_path: str):
         """Test tracing a single actor (player character)."""
-        # Use fixed output path in project's Saved directory
-        output_dir = FIXTURE_PROJECT / "Saved" / "Tests" / "TraceSingleActor"
+        # Use test output directory
+        output_dir = TEST_OUTPUT_DIR / "test_trace_single_actor"
         if output_dir.exists():
             shutil.rmtree(output_dir)
 
@@ -65,8 +72,8 @@ class TestTraceActorsWithEditor:
                 "editor_trace_actors_in_pie",
                 {
                     "output_dir": str(output_dir),
-                    "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
-                    "actor_names": ["BP_ThirdPersonCharacter"],
+                    "level": test_level_path,
+                    "actor_names": ["BP_ThirdPersonCharacter_0"],
                     "duration_seconds": 3.0,
                     "interval_seconds": 0.1,
                 },
@@ -114,22 +121,33 @@ class TestTraceActorsWithEditor:
             assert "location" in transform_data, "Missing 'location' in transform.json"
             assert "rotation" in transform_data, "Missing 'rotation' in transform.json"
 
-            print(f"\n[OK] Trace completed:")
-            print(f"  - Samples: {data.get('sample_count')}")
-            print(f"  - Actors: {data.get('actor_count')}")
-            print(f"  - Duration: {data.get('duration'):.2f}s")
-            print(f"  - Output dir: {output_dir}")
-            print(f"  - Sample dirs: {len(sample_dirs)}")
+            logger.info("[OK] Trace completed:")
+            logger.info(f"  - Samples: {data.get('sample_count')}")
+            logger.info(f"  - Actors: {data.get('actor_count')}")
+            logger.info(f"  - Duration: {data.get('duration'):.2f}s")
+            logger.info(f"  - Output dir: {output_dir}")
+            logger.info(f"  - Sample dirs: {len(sample_dirs)}")
+
+            # Log all generated files
+            logger.info("Generated files:")
+            for actor_dir in actor_dirs:
+                logger.info(f"  Actor: {actor_dir.name}")
+                for sample_dir in sorted(actor_dir.glob("sample_at_tick_*")):
+                    logger.info(f"    {sample_dir.name}/")
+                    for file in sorted(sample_dir.rglob("*")):
+                        if file.is_file():
+                            rel_path = file.relative_to(sample_dir)
+                            logger.info(f"      - {rel_path}")
 
         finally:
             # Preserve all outputs for inspection
             pass
 
     @pytest.mark.asyncio
-    async def test_trace_actor_not_found(self, running_editor: ToolCaller):
+    async def test_trace_actor_not_found(self, running_editor: ToolCaller, test_level_path: str):
         """Test tracing with non-existent actor name."""
-        # Use fixed output path in project's Saved directory
-        output_dir = FIXTURE_PROJECT / "Saved" / "Tests" / "TraceActorNotFound"
+        # Use test output directory
+        output_dir = TEST_OUTPUT_DIR / "test_trace_actor_not_found"
         if output_dir.exists():
             shutil.rmtree(output_dir)
 
@@ -138,7 +156,7 @@ class TestTraceActorsWithEditor:
                 "editor_trace_actors_in_pie",
                 {
                     "output_dir": str(output_dir),
-                    "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
+                    "level": test_level_path,
                     "actor_names": ["NonExistentActor_12345"],
                     "duration_seconds": 2.0,
                     "interval_seconds": 0.1,
@@ -153,18 +171,18 @@ class TestTraceActorsWithEditor:
             assert "NonExistentActor_12345" in data.get("actors_not_found", []), \
                 "Should list the not-found actor"
 
-            print(f"\n[OK] Actor not found test passed:")
-            print(f"  - actors_not_found: {data.get('actors_not_found')}")
+            logger.info("[OK] Actor not found test passed:")
+            logger.info(f"  - actors_not_found: {data.get('actors_not_found')}")
 
         finally:
             # Preserve all outputs for inspection
             pass
 
     @pytest.mark.asyncio
-    async def test_trace_multiple_actors(self, running_editor: ToolCaller):
+    async def test_trace_multiple_actors(self, running_editor: ToolCaller, test_level_path: str):
         """Test tracing multiple actors."""
-        # Use fixed output path in project's Saved directory
-        output_dir = FIXTURE_PROJECT / "Saved" / "Tests" / "TraceMultipleActors"
+        # Use test output directory
+        output_dir = TEST_OUTPUT_DIR / "test_trace_multiple_actors"
         if output_dir.exists():
             shutil.rmtree(output_dir)
 
@@ -173,11 +191,11 @@ class TestTraceActorsWithEditor:
                 "editor_trace_actors_in_pie",
                 {
                     "output_dir": str(output_dir),
-                    "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
+                    "level": test_level_path,
                     "actor_names": [
-                        "BP_ThirdPersonCharacter",  # Should exist
-                        "Floor",                     # Should exist (static mesh)
-                        "NonExistent_Actor",         # Should not exist
+                        "BP_ThirdPersonCharacter_0",  # Should exist
+                        "Floor",                       # Should exist (static mesh)
+                        "NonExistent_Actor",           # Should not exist
                     ],
                     "duration_seconds": 2.0,
                     "interval_seconds": 0.2,
@@ -187,27 +205,28 @@ class TestTraceActorsWithEditor:
 
             data = parse_tool_result(result)
 
-            print(f"\n[INFO] Multiple actors trace result:")
-            print(f"  - actor_count: {data.get('actor_count')}")
-            print(f"  - actors_not_found: {data.get('actors_not_found')}")
-            print(f"  - sample_count: {data.get('sample_count')}")
+            logger.info("[INFO] Multiple actors trace result:")
+            logger.info(f"  - actor_count: {data.get('actor_count')}")
+            logger.info(f"  - actors_not_found: {data.get('actors_not_found')}")
+            logger.info(f"  - sample_count: {data.get('sample_count')}")
 
             # At least one actor should be found
             assert data.get("actor_count", 0) >= 1, "At least one actor should be tracked"
 
             # Verify multiple actor subdirectories exist
             actor_dirs = [d for d in output_dir.iterdir() if d.is_dir()]
-            print(f"  - Actor directories: {[d.name for d in actor_dirs]}")
+            logger.info(f"  - Actor directories: {[d.name for d in actor_dirs]}")
+            logger.info(f"  - Output dir: {output_dir}")
 
         finally:
             # Preserve all outputs for inspection
             pass
 
     @pytest.mark.asyncio
-    async def test_trace_with_screenshots(self, running_editor: ToolCaller):
+    async def test_trace_with_screenshots(self, running_editor: ToolCaller, test_level_path: str):
         """Test tracing with screenshot capture enabled."""
-        # Use fixed output path in project's Saved directory
-        output_dir = FIXTURE_PROJECT / "Saved" / "Tests" / "TraceWithScreenshots"
+        # Use test output directory
+        output_dir = TEST_OUTPUT_DIR / "test_trace_with_screenshots"
         if output_dir.exists():
             shutil.rmtree(output_dir)
 
@@ -216,8 +235,8 @@ class TestTraceActorsWithEditor:
                 "editor_trace_actors_in_pie",
                 {
                     "output_dir": str(output_dir),
-                    "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
-                    "actor_names": ["BP_ThirdPersonCharacter"],
+                    "level": test_level_path,
+                    "actor_names": ["BP_ThirdPersonCharacter_0"],
                     "duration_seconds": 3.0,
                     "interval_seconds": 1.0,  # Longer interval to reduce screenshot count
                     "capture_screenshots": True,
@@ -276,23 +295,34 @@ class TestTraceActorsWithEditor:
             # Count total screenshots across all samples
             total_screenshots = len(list(output_dir.glob("**/screenshots/*.png")))
 
-            print(f"\n[OK] Trace with screenshots completed:")
-            print(f"  - Samples: {data.get('sample_count')}")
-            print(f"  - Actors: {data.get('actor_count')}")
-            print(f"  - Duration: {data.get('duration'):.2f}s")
-            print(f"  - Output dir: {output_dir}")
-            print(f"  - Total screenshots: {total_screenshots}")
-            print(f"  - Screenshots per sample: {[f.name for f in screenshots]}")
+            logger.info("[OK] Trace with screenshots completed:")
+            logger.info(f"  - Samples: {data.get('sample_count')}")
+            logger.info(f"  - Actors: {data.get('actor_count')}")
+            logger.info(f"  - Duration: {data.get('duration'):.2f}s")
+            logger.info(f"  - Output dir: {output_dir}")
+            logger.info(f"  - Total screenshots: {total_screenshots}")
+            logger.info(f"  - Screenshots per sample: {[f.name for f in screenshots]}")
+
+            # Log all generated screenshot files
+            logger.info("Generated screenshot files:")
+            for actor_dir in actor_dirs:
+                logger.info(f"  Actor: {actor_dir.name}")
+                for sample_dir in sorted(actor_dir.glob("sample_at_tick_*")):
+                    screenshots_in_sample = list((sample_dir / "screenshots").glob("*.png"))
+                    if screenshots_in_sample:
+                        logger.info(f"    {sample_dir.name}/screenshots/")
+                        for screenshot in sorted(screenshots_in_sample):
+                            logger.info(f"      - {screenshot.name}: {screenshot}")
 
         finally:
             # Preserve all outputs for inspection
             pass
 
     @pytest.mark.asyncio
-    async def test_trace_with_screenshots_single_angle(self, running_editor: ToolCaller):
+    async def test_trace_with_screenshots_single_angle(self, running_editor: ToolCaller, test_level_path: str):
         """Test tracing with single-angle screenshot capture."""
-        # Use fixed output path in project's Saved directory
-        output_dir = FIXTURE_PROJECT / "Saved" / "Tests" / "TraceSingleAngle"
+        # Use test output directory
+        output_dir = TEST_OUTPUT_DIR / "test_trace_with_screenshots_single_angle"
         if output_dir.exists():
             shutil.rmtree(output_dir)
 
@@ -301,8 +331,8 @@ class TestTraceActorsWithEditor:
                 "editor_trace_actors_in_pie",
                 {
                     "output_dir": str(output_dir),
-                    "level": "/Game/ThirdPerson/DefaultAutomaticTestLevel",
-                    "actor_names": ["BP_ThirdPersonCharacter"],
+                    "level": test_level_path,
+                    "actor_names": ["BP_ThirdPersonCharacter_0"],
                     "duration_seconds": 2.0,
                     "interval_seconds": 1.0,
                     "capture_screenshots": True,
@@ -325,9 +355,18 @@ class TestTraceActorsWithEditor:
 
             # With single angle, should have fewer screenshots than multi-angle
             # (1 per sample per actor instead of 4)
-            print(f"\n[OK] Single-angle trace completed:")
-            print(f"  - Total screenshots: {total_screenshots}")
-            print(f"  - Sample count: {data.get('sample_count')}")
+            logger.info("[OK] Single-angle trace completed:")
+            logger.info(f"  - Total screenshots: {total_screenshots}")
+            logger.info(f"  - Sample count: {data.get('sample_count')}")
+            logger.info(f"  - Output dir: {output_dir}")
+
+            # Log all generated files
+            all_files = list(output_dir.rglob("*"))
+            all_files = [f for f in all_files if f.is_file()]
+            logger.info(f"All generated files ({len(all_files)} total):")
+            for file_path in sorted(all_files):
+                rel_path = file_path.relative_to(output_dir)
+                logger.info(f"  - {rel_path}")
 
         finally:
             # Preserve all outputs for inspection
