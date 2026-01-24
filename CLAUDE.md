@@ -48,6 +48,125 @@ UE-MCP 服务器提供以下工具：
 
 ---
 
+## 脚本热重载 (Hot-Reload)
+
+### 核心机制：EXECUTE_FILE 模式
+
+所有 MCP 工具的底层实现都是独立 Python 脚本，位于 `src/ue_mcp/extra/scripts/`。这些脚本支持**真正的热重载**：修改脚本后无需重启 MCP 服务器或 UE5 编辑器，立即生效。
+
+**执行方式（两步执行）：**
+1. **参数注入** (EXECUTE_STATEMENT) - MCP 将参数注入到 `sys.argv` 和 `builtins.__PARAMS__`
+2. **文件执行** (EXECUTE_FILE) - UE5 从磁盘直接加载并执行脚本文件
+
+**关键特性：**
+- 脚本文件在执行时从磁盘读取，而非服务器启动时缓存
+- 修改脚本 → 保存 → 调用工具 → 修改立即生效
+- 无需重启 MCP 服务器或 UE5 编辑器
+
+### 热重载工作流程
+
+```python
+# 1. 修改脚本：编辑 src/ue_mcp/extra/scripts/asset_open.py
+def main():
+    params = get_params(defaults=DEFAULTS, required=REQUIRED)
+    print(f"DEBUG: Opening {params['asset_path']}")  # 添加调试输出
+    # ... 现有代码 ...
+
+# 2. 保存文件：Ctrl+S
+
+# 3. 调用工具（无需任何重启）
+result = editor_asset_open(asset_path="/Game/BP_Test")
+
+# 4. 修改立即生效 - 看到调试输出！
+```
+
+**开发迭代流程：**
+```
+编辑脚本 → 保存 → 测试 → 看到效果 → 重复
+(无需任何重启操作！)
+```
+
+### 可用脚本列表
+
+所有脚本位于 `src/ue_mcp/extra/scripts/`：
+
+| 脚本 | MCP 工具 | CLI 用法示例 |
+|------|---------|-------------|
+| `asset_open.py` | `editor_asset_open` | `python asset_open.py --asset-path=/Game/BP_Test --tab-id=Inspector` |
+| `pie_control.py` | `editor_start_pie`, `editor_stop_pie` | `python pie_control.py --command=start` |
+| `api_search.py` | `python_api_search` | `python api_search.py --mode=list_classes --query=*Actor*` |
+| `ue_mcp_capture/capture_orbital.py` | `editor_capture_orbital` | `python capture_orbital.py --level=/Game/Maps/Test --target-x=0 ...` |
+| `ue_mcp_capture/capture_pie.py` | `editor_capture_pie` | `python capture_pie.py --output-dir=./screenshots --level=/Game/Maps/Test` |
+| `ue_mcp_capture/capture_window.py` | `editor_capture_window` | `python capture_window.py --level=/Game/Maps/Test --output-file=./screen.png` |
+| `ue_mcp_capture/trace_actors_pie.py` | `editor_trace_actors_in_pie` | `python trace_actors_pie.py --output-dir=./trace --level=/Game/Maps/Test` |
+| `ue_mcp_capture/execute_in_tick.py` | `editor_pie_execute_in_tick` | 参见脚本内文档 |
+| `diagnostic/diagnostic_runner.py` | `editor_asset_diagnostic` | `python diagnostic_runner.py --asset-path=/Game/Maps/TestLevel` |
+| `diagnostic/inspect_runner.py` | `editor_asset_inspect` | `python inspect_runner.py --asset-path=/Game/Meshes/Cube` |
+
+### 参数传递机制
+
+脚本支持两种参数访问方式：
+
+**1. MCP 模式（自动）：**
+```python
+from ue_mcp_capture.utils import get_params
+
+# MCP 调用时自动注入参数
+params = get_params(defaults=DEFAULTS, required=REQUIRED)
+asset_path = params["asset_path"]
+
+# 等价于：
+# builtins.__PARAMS__ = {'asset_path': '/Game/BP_Test', 'tab_id': 'Inspector'}
+# sys.argv = ['asset_open.py', '--asset-path', '/Game/BP_Test', '--tab-id', 'Inspector']
+```
+
+**2. CLI 模式（手动）：**
+```python
+# 在 UE5 Python 控制台直接执行
+import sys
+sys.argv = ['asset_open.py', '--asset-path', '/Game/BP_Test', '--tab-id', 'Inspector']
+exec(open(r'D:\code\ue-mcp\src\ue_mcp\extra\scripts\asset_open.py').read())
+```
+
+### 开发建议
+
+1. **快速迭代**：修改脚本 → 保存 → 测试 → 重复（无需重启）
+2. **调试输出**：随时添加 `print()` 语句调试，修改立即生效
+3. **使用 argparse**：脚本可使用标准 `argparse` 解析 `sys.argv`
+4. **保持简洁**：复杂逻辑放入 `site-packages` 模块，脚本作为入口点
+5. **纯 JSON 输出**：脚本输出纯 JSON（无特殊标记），MCP 解析最后一个有效 JSON 对象
+
+**脚本模板：**
+```python
+"""
+脚本描述和用法示例。
+
+Parameters:
+    param1: 必需参数描述
+    param2: 可选参数描述
+"""
+
+import json
+import unreal
+from ue_mcp_capture.utils import get_params
+
+DEFAULTS = {"param2": None}
+REQUIRED = ["param1"]
+
+def main():
+    params = get_params(defaults=DEFAULTS, required=REQUIRED)
+    # ... 实现逻辑 ...
+    result = {"success": True, "data": data}
+    print(json.dumps(result))  # 输出纯 JSON
+
+if __name__ == "__main__":
+    main()
+```
+
+**详细文档：** 参见 `src/ue_mcp/extra/scripts/README.md`
+
+---
+
 ## ExtraPythonAPIs Plugin
 
 UE-MCP 包含一个 C++ 插件 `ExtraPythonAPIs`，提供 UE5 默认未暴露给 Python 的额外 API。
@@ -100,6 +219,12 @@ UE-MCP 包含一个 C++ 插件 `ExtraPythonAPIs`，提供 UE5 默认未暴露给
 | `Debug` | 调试面板 |
 | `BookmarkList` | 书签 |
 | `TimelineEditor` | 时间轴编辑器 |
+
+### 使用 ThirdPersonTemplate 项目来测试代码片段和脚本
+
+./tests/fixtures/ThirdPersonTemplate
+
+API调用、简短的代码、完整的脚本，都可以在这个测试用UE项目中运行，进行测试
 
 ### Python 使用示例
 

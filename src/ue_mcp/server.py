@@ -68,6 +68,42 @@ def _get_editor_manager() -> EditorManager:
     return _editor_manager
 
 
+def _parse_json_result(exec_result: dict[str, Any]) -> dict[str, Any]:
+    """
+    Parse JSON result from script output.
+
+    Extracts the last valid JSON object from output list.
+    This is the standard way to parse results from all standalone scripts.
+
+    Args:
+        exec_result: Execution result from script
+
+    Returns:
+        Parsed JSON result or error dict
+    """
+    if not exec_result.get("success"):
+        return {
+            "success": False,
+            "error": exec_result.get("error", "Execution failed"),
+        }
+
+    output = exec_result.get("output", [])
+    if not output:
+        return {"success": False, "error": "No output from script"}
+
+    # Find last valid JSON in output
+    for line in reversed(output):
+        line_str = str(line.get("output", "")) if isinstance(line, dict) else str(line)
+        line_str = line_str.strip()
+        if line_str.startswith("{") or line_str.startswith("["):
+            try:
+                return json.loads(line_str)
+            except json.JSONDecodeError:
+                continue
+
+    return {"success": False, "error": "No valid JSON found in output"}
+
+
 def _initialize_server() -> Optional[EditorManager]:
     """
     Initialize the MCP server by detecting and binding to a UE5 project.
@@ -632,55 +668,6 @@ def pip_install_packages(
 # =============================================================================
 
 
-def _parse_capture_result(exec_result: dict[str, Any]) -> dict[str, Any]:
-    """Parse capture result from execution output."""
-    if not exec_result.get("success"):
-        # Check 'result' for proper exception details from UE
-        error_msg = exec_result.get("error", "Execution failed")
-        ue_result = exec_result.get("result")
-        if ue_result:
-             # If successful execution but returned False, result often contains the error/traceback
-             error_msg = f"{error_msg}. Details: {ue_result}"
-
-        return {
-            "success": False,
-            "error": error_msg,
-            "output": exec_result.get("output", ""),
-        }
-
-    output = exec_result.get("output", "")
-    if isinstance(output, list):
-        # Handle list of strings or list of dicts (if UE returns structured log)
-        processed_lines = []
-        for line in output:
-            if isinstance(line, dict):
-                processed_lines.append(str(line.get("output", "")))
-            else:
-                processed_lines.append(str(line))
-        output = "\n".join(processed_lines)
-    marker = "__CAPTURE_RESULT__"
-
-    if marker in output:
-        import json
-
-        try:
-            json_str = output.split(marker)[1].strip().split("\n")[0]
-            result_data = json.loads(json_str)
-            return {"success": True, **result_data}
-        except (json.JSONDecodeError, IndexError) as e:
-            return {
-                "success": True,
-                "warning": f"Could not parse result: {e}",
-                "output": output,
-            }
-
-    return {
-        "success": False,
-        "error": "No capture result returned from editor script", 
-        "output": output
-    }
-
-
 async def _run_pie_task(
     ctx: Context,
     script_name: str,
@@ -733,7 +720,7 @@ async def _run_pie_task(
     )
     
     if not result.get("success", False):
-        return _parse_capture_result(result)
+        return _parse_json_result(result)
     
     # Notify that task has started
     await ctx.log(f"{task_description} started (task_id={task_id}), monitoring for completion...", level="info")
@@ -783,37 +770,17 @@ def start_pie() -> dict[str, Any]:
     """
     manager = _get_editor_manager()
 
-    code = """
-import editor_capture.pie_capture as pie_capture
+    from .script_executor import execute_script_from_path
+    script_path = Path(__file__).parent / "extra" / "scripts" / "pie_control.py"
 
-result = pie_capture.start_pie_session()
-if result:
-    print("__PIE_RESULT__SUCCESS")
-else:
-    # Check if already running
-    if pie_capture.is_pie_running():
-        print("__PIE_RESULT__ALREADY_RUNNING")
-    else:
-        print("__PIE_RESULT__FAILED")
-"""
-    exec_result = manager.execute_with_checks(code, timeout=10.0)
+    result = execute_script_from_path(
+        manager,
+        script_path,
+        params={"command": "start"},
+        timeout=10.0,
+    )
 
-    if not exec_result.get("success"):
-        return {
-            "success": False,
-            "error": exec_result.get("error", "Failed to execute PIE start command"),
-        }
-
-    output = exec_result.get("output", "")
-    if isinstance(output, list):
-        output = "\n".join(str(line) for line in output)
-
-    if "__PIE_RESULT__SUCCESS" in output:
-        return {"success": True, "message": "PIE session started"}
-    elif "__PIE_RESULT__ALREADY_RUNNING" in output:
-        return {"success": False, "message": "PIE is already running"}
-    else:
-        return {"success": False, "error": "Failed to start PIE session"}
+    return _parse_json_result(result)
 
 
 @mcp.tool(name="editor_stop_pie")
@@ -832,37 +799,17 @@ def stop_pie() -> dict[str, Any]:
     """
     manager = _get_editor_manager()
 
-    code = """
-import editor_capture.pie_capture as pie_capture
+    from .script_executor import execute_script_from_path
+    script_path = Path(__file__).parent / "extra" / "scripts" / "pie_control.py"
 
-result = pie_capture.stop_pie_session()
-if result:
-    print("__PIE_RESULT__SUCCESS")
-else:
-    # Check if not running
-    if not pie_capture.is_pie_running():
-        print("__PIE_RESULT__NOT_RUNNING")
-    else:
-        print("__PIE_RESULT__FAILED")
-"""
-    exec_result = manager.execute_with_checks(code, timeout=10.0)
+    result = execute_script_from_path(
+        manager,
+        script_path,
+        params={"command": "stop"},
+        timeout=10.0,
+    )
 
-    if not exec_result.get("success"):
-        return {
-            "success": False,
-            "error": exec_result.get("error", "Failed to execute PIE stop command"),
-        }
-
-    output = exec_result.get("output", "")
-    if isinstance(output, list):
-        output = "\n".join(str(line) for line in output)
-
-    if "__PIE_RESULT__SUCCESS" in output:
-        return {"success": True, "message": "PIE session stopped"}
-    elif "__PIE_RESULT__NOT_RUNNING" in output:
-        return {"success": False, "message": "PIE is not running"}
-    else:
-        return {"success": False, "error": "Failed to stop PIE session"}
+    return _parse_json_result(result)
 
 
 @mcp.tool(name="editor_capture_orbital")
@@ -926,7 +873,7 @@ def capture_orbital(
         },
         timeout=120.0,
     )
-    return _parse_capture_result(result)
+    return _parse_json_result(result)
 
 
 @mcp.tool(name="editor_capture_pie")
@@ -1244,56 +1191,12 @@ def capture_window(
         params=params,
         timeout=120.0,
     )
-    return _parse_capture_result(result)
+    return _parse_json_result(result)
 
 
 # =============================================================================
 # Diagnostic Tools
 # =============================================================================
-
-
-def _parse_diagnostic_result(exec_result: dict[str, Any]) -> dict[str, Any]:
-    """Parse diagnostic result from execution output."""
-    if not exec_result.get("success"):
-        error_msg = exec_result.get("error", "Execution failed")
-        ue_result = exec_result.get("result")
-        if ue_result:
-            error_msg = f"{error_msg}. Details: {ue_result}"
-        return {
-            "success": False,
-            "error": error_msg,
-            "output": exec_result.get("output", ""),
-        }
-
-    output = exec_result.get("output", "")
-    if isinstance(output, list):
-        processed_lines = []
-        for line in output:
-            if isinstance(line, dict):
-                processed_lines.append(str(line.get("output", "")))
-            else:
-                processed_lines.append(str(line))
-        output = "\n".join(processed_lines)
-
-    marker = "__DIAGNOSTIC_RESULT__"
-    if marker in output:
-        import json
-        try:
-            json_str = output.split(marker)[1].strip().split("\n")[0]
-            result_data = json.loads(json_str)
-            return result_data
-        except (json.JSONDecodeError, IndexError) as e:
-            return {
-                "success": True,
-                "warning": f"Could not parse result: {e}",
-                "output": output,
-            }
-
-    return {
-        "success": False,
-        "error": "No diagnostic result returned from editor script",
-        "output": output,
-    }
 
 
 @mcp.tool(name="editor_asset_open")
@@ -1333,120 +1236,17 @@ def open_asset(
     """
     manager = _get_editor_manager()
 
-    # Build the Python code to execute
-    if tab_id:
-        code = f"""
-import unreal
+    from .script_executor import execute_script_from_path
+    script_path = Path(__file__).parent / "extra" / "scripts" / "asset_open.py"
 
-asset_path = {repr(asset_path)}
-tab_id = {repr(tab_id)}
-asset = unreal.load_asset(asset_path)
+    result = execute_script_from_path(
+        manager,
+        script_path,
+        params={"asset_path": asset_path, "tab_id": tab_id},
+        timeout=30.0,
+    )
 
-if asset is None:
-    print("__OPEN_ASSET_RESULT__ERROR:Asset not found: " + asset_path)
-else:
-    # Use get_editor_subsystem to get properly initialized subsystem
-    subsystem = unreal.get_editor_subsystem(unreal.AssetEditorSubsystem)
-    subsystem.open_editor_for_assets([asset])
-
-    # Try to switch to the specified tab
-    try:
-        tab_result = unreal.ExSlateTabLibrary.invoke_asset_editor_tab(
-            asset, unreal.Name(tab_id)
-        )
-        if tab_result:
-            print("__OPEN_ASSET_RESULT__SUCCESS:" + asset.get_name() + "|TAB_OK")
-        else:
-            # Tab switching failed - may be due to editor mode/layout
-            print("__OPEN_ASSET_RESULT__SUCCESS:" + asset.get_name() + "|TAB_FAILED:Tab '" + tab_id + "' could not be opened. It may not be available in the current editor mode/layout.")
-    except AttributeError:
-        # ExSlateTabLibrary not available (plugin not installed)
-        print("__OPEN_ASSET_RESULT__SUCCESS:" + asset.get_name() + "|TAB_FAILED:ExSlateTabLibrary not available. Ensure ExtraPythonAPIs plugin is installed and the project is rebuilt.")
-    except Exception as e:
-        print("__OPEN_ASSET_RESULT__SUCCESS:" + asset.get_name() + "|TAB_FAILED:" + str(e))
-"""
-    else:
-        code = f"""
-import unreal
-
-asset_path = {repr(asset_path)}
-asset = unreal.load_asset(asset_path)
-
-if asset is None:
-    print("__OPEN_ASSET_RESULT__ERROR:Asset not found: " + asset_path)
-else:
-    # Use get_editor_subsystem to get properly initialized subsystem
-    subsystem = unreal.get_editor_subsystem(unreal.AssetEditorSubsystem)
-    subsystem.open_editor_for_assets([asset])
-    print("__OPEN_ASSET_RESULT__SUCCESS:" + asset.get_name())
-"""
-    exec_result = manager.execute_with_checks(code, timeout=30.0)
-
-    if not exec_result.get("success"):
-        return {
-            "success": False,
-            "asset_path": asset_path,
-            "error": exec_result.get("error", "Failed to execute open asset command"),
-        }
-
-    output = exec_result.get("output", "")
-    if isinstance(output, list):
-        output = "\n".join(
-            str(line.get("output", "")) if isinstance(line, dict) else str(line)
-            for line in output
-        )
-
-    if "__OPEN_ASSET_RESULT__SUCCESS:" in output:
-        # Parse the success message
-        success_part = output.split("__OPEN_ASSET_RESULT__SUCCESS:")[1].strip().split("\n")[0]
-
-        # Check for tab result
-        if "|TAB_OK" in success_part:
-            asset_name = success_part.split("|TAB_OK")[0]
-            return {
-                "success": True,
-                "asset_path": asset_path,
-                "asset_name": asset_name,
-                "tab_id": tab_id,
-                "tab_switched": True,
-            }
-        elif "|TAB_FAILED:" in success_part:
-            parts = success_part.split("|TAB_FAILED:")
-            asset_name = parts[0]
-            tab_error = parts[1] if len(parts) > 1 else "Unknown tab error"
-            return {
-                "success": True,
-                "asset_path": asset_path,
-                "asset_name": asset_name,
-                "tab_id": tab_id,
-                "tab_switched": False,
-                "tab_error": tab_error,
-            }
-        else:
-            # No tab_id was requested
-            asset_name = success_part
-            result = {
-                "success": True,
-                "asset_path": asset_path,
-                "asset_name": asset_name,
-            }
-            if tab_id:
-                result["tab_id"] = tab_id
-            return result
-    elif "__OPEN_ASSET_RESULT__ERROR:" in output:
-        error_msg = output.split("__OPEN_ASSET_RESULT__ERROR:")[1].strip().split("\n")[0]
-        return {
-            "success": False,
-            "asset_path": asset_path,
-            "error": error_msg,
-        }
-    else:
-        return {
-            "success": False,
-            "asset_path": asset_path,
-            "error": "Unknown result from open asset command",
-            "output": output,
-        }
+    return _parse_json_result(result)
 
 
 @mcp.tool(name="editor_asset_diagnostic")
@@ -1477,31 +1277,19 @@ def diagnose_asset(
     """
     manager = _get_editor_manager()
 
-    from .script_executor import get_diagnostic_scripts_dir
+    from .script_executor import execute_script_from_path, get_diagnostic_scripts_dir
 
     scripts_dir = get_diagnostic_scripts_dir()
     script_path = scripts_dir / "diagnostic_runner.py"
 
-    if not script_path.exists():
-        return {"success": False, "error": f"Script not found: {script_path}"}
-
-    try:
-        script_content = script_path.read_text(encoding="utf-8")
-    except Exception as e:
-        return {"success": False, "error": f"Failed to read script: {e}"}
-
-    # Inject parameters
-    params = {"asset_path": asset_path}
-    params_code = (
-        "import builtins\n"
-        f"builtins.__PARAMS__ = {repr(params)}\n"
-        f"__PARAMS__ = builtins.__PARAMS__\n\n"
+    result = execute_script_from_path(
+        manager,
+        script_path,
+        params={"asset_path": asset_path},
+        timeout=120.0,
     )
 
-    full_code = params_code + script_content
-    result = manager.execute_with_checks(full_code, timeout=120.0)
-
-    return _parse_diagnostic_result(result)
+    return _parse_json_result(result)
 
 
 @mcp.tool(name="editor_asset_inspect")
@@ -1545,78 +1333,28 @@ def inspect_asset(
     """
     manager = _get_editor_manager()
 
-    from .script_executor import get_diagnostic_scripts_dir
+    from .script_executor import execute_script_from_path, get_diagnostic_scripts_dir
 
     scripts_dir = get_diagnostic_scripts_dir()
     script_path = scripts_dir / "inspect_runner.py"
 
-    if not script_path.exists():
-        return {"success": False, "error": f"Script not found: {script_path}"}
-
-    try:
-        script_content = script_path.read_text(encoding="utf-8")
-    except Exception as e:
-        return {"success": False, "error": f"Failed to read script: {e}"}
-
-    # Inject parameters
     params = {"asset_path": asset_path}
     if component_name is not None:
         params["component_name"] = component_name
-    params_code = (
-        "import builtins\n"
-        f"builtins.__PARAMS__ = {repr(params)}\n"
-        f"__PARAMS__ = builtins.__PARAMS__\n\n"
+
+    result = execute_script_from_path(
+        manager,
+        script_path,
+        params=params,
+        timeout=120.0,
     )
 
-    full_code = params_code + script_content
-    result = manager.execute_with_checks(full_code, timeout=120.0)
-
-    return _parse_diagnostic_result(result)
+    return _parse_json_result(result)
 
 
 # =============================================================================
 # Python API Search Tools
 # =============================================================================
-
-
-def _parse_api_search_result(exec_result: dict[str, Any], mode: str) -> dict[str, Any]:
-    """Parse the API search result from editor output."""
-    if not exec_result.get("success"):
-        return {
-            "success": False,
-            "mode": mode,
-            "error": exec_result.get("error", "Execution failed"),
-        }
-
-    output = exec_result.get("output", "")
-    if isinstance(output, list):
-        output = "\n".join(
-            str(line.get("output", "")) if isinstance(line, dict) else str(line)
-            for line in output
-        )
-
-    marker = "__API_SEARCH_RESULT__"
-
-    if marker not in output:
-        return {
-            "success": False,
-            "mode": mode,
-            "error": "No result marker found in output",
-            "raw_output": output[:1000],
-        }
-
-    try:
-        json_str = output.split(marker)[1].strip().split("\n")[0]
-        result = json.loads(json_str)
-        result["mode"] = mode
-        return result
-    except (json.JSONDecodeError, IndexError) as e:
-        return {
-            "success": False,
-            "mode": mode,
-            "error": f"Failed to parse result: {e}",
-            "raw_output": output[:1000],
-        }
 
 
 @mcp.tool(name="python_api_search")
@@ -1721,7 +1459,7 @@ def python_api_search(
     result = execute_script_from_path(manager, script_path, params, timeout=30.0)
 
     # Parse result
-    return _parse_api_search_result(result, mode)
+    return _parse_json_result(result)
 
 
 def _cleanup_on_shutdown() -> None:

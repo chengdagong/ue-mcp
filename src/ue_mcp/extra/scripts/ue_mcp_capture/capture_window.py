@@ -21,7 +21,7 @@ Usage (CLI):
     Optional arguments:
         --tab=<n>             Tab number to switch to (1-9)
 
-MCP mode (__PARAMS__):
+MCP mode (sys.argv):
     level: str - Level path to load
     mode: str - "window", "asset", or "batch"
     output_file: str - Output file path (for window/asset modes)
@@ -31,24 +31,26 @@ MCP mode (__PARAMS__):
     tab: int | None - Tab number to switch to (for window/asset modes)
 """
 
+import argparse
+import json
 import time
 import editor_capture
 
 
-from ue_mcp_capture.utils import get_params, ensure_level_loaded, output_result
+from ue_mcp_capture.utils import ensure_level_loaded, output_result
 
-# Default parameter values for CLI mode
-DEFAULTS = {
-    "mode": "window",
-    "output_file": None,
-    "output_dir": None,
-    "asset_path": None,
-    "asset_list": None,
-    "tab": None,
-}
+# Default parameter values for CLI mode (kept as reference)
+# DEFAULTS = {
+#     "mode": "window",
+#     "output_file": None,
+#     "output_dir": None,
+#     "asset_path": None,
+#     "asset_list": None,
+#     "tab": None,
+# }
 
 # Required parameters (level is always required, others depend on mode)
-REQUIRED = ["level"]
+# REQUIRED = ["level"]
 
 
 def capture_mode_window(params):
@@ -125,7 +127,39 @@ def capture_mode_batch(params):
 
 
 def main():
-    params = get_params(defaults=DEFAULTS, required=REQUIRED)
+    parser = argparse.ArgumentParser(
+        description="Window capture script for UE Editor",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    # Required parameters
+    parser.add_argument("--level", type=str, required=True, help="Level path to load (e.g., /Game/Maps/TestLevel)")
+
+    # Mode selection
+    parser.add_argument("--mode", type=str, default="window",
+                       choices=["window", "asset", "batch"],
+                       help="Capture mode: window (default), asset, or batch")
+
+    # Optional parameters (mode-dependent)
+    parser.add_argument("--output-file", type=str, default=None, dest="output_file",
+                       help="Output file path (required for window/asset modes)")
+    parser.add_argument("--output-dir", type=str, default=None, dest="output_dir",
+                       help="Output directory (required for batch mode)")
+    parser.add_argument("--asset-path", type=str, default=None, dest="asset_path",
+                       help="Asset path (required for asset mode)")
+    parser.add_argument("--asset-list", type=str, default=None, dest="asset_list",
+                       help="JSON list of asset paths (required for batch mode)")
+    parser.add_argument("--tab", type=int, default=None, help="Tab number to switch to (1-9)")
+
+    args = parser.parse_args()
+    params = vars(args)
+
+    # Parse asset_list if provided (JSON string to list)
+    if params.get("asset_list"):
+        try:
+            params["asset_list"] = json.loads(params["asset_list"])
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"Invalid JSON in --asset-list: {e}")
 
     # Validate mode-specific required parameters
     mode = params.get("mode", "window")

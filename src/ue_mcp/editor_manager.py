@@ -222,6 +222,23 @@ class EditorManager:
     # Execution Methods (delegated to ExecutionManager)
     # =========================================================================
 
+    def execute(self, code: str, timeout: float = 30.0) -> dict[str, Any]:
+        """
+        Execute Python code in the editor without additional checks.
+
+        This is a low-level execution method intended for internal use
+        (e.g., parameter injection, simple variable assignments).
+        For general code execution, use execute_with_checks() instead.
+
+        Args:
+            code: Python code to execute
+            timeout: Execution timeout in seconds
+
+        Returns:
+            Execution result dictionary
+        """
+        return self._execution_manager._execute(code=code, timeout=timeout)
+
     def execute_with_checks(
         self,
         code: str,
@@ -244,6 +261,24 @@ class EditorManager:
             code=code,
             timeout=timeout,
             max_install_attempts=max_install_attempts,
+        )
+
+    def execute_script_file(self, script_path: str, timeout: float = 120.0) -> dict[str, Any]:
+        """
+        Execute a Python script file using EXECUTE_FILE mode.
+
+        This enables true hot-reload as the file is executed directly from disk.
+
+        Args:
+            script_path: Absolute path to the Python script file
+            timeout: Execution timeout in seconds
+
+        Returns:
+            Execution result dictionary
+        """
+        return self._execution_manager.execute_script_file(
+            script_path=script_path,
+            timeout=timeout,
         )
 
     def pip_install_packages(

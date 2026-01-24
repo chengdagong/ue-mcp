@@ -102,7 +102,7 @@ except Exception as e:
 '''
 
     # Use _execute directly to avoid recursion
-    result = manager._execute(code, timeout=10.0)
+    result = manager.execute(code, timeout=10.0)
 
     if not result.get("success"):
         logger.debug(f"Failed to get current level path: {result.get('error')}")
@@ -158,28 +158,43 @@ def create_snapshot(manager, paths: list[str], project_dir: str) -> dict[str, An
         logger.warning(f"Snapshot script not found: {script_path}")
         return None
 
+    # Read script content
     try:
         script_content = script_path.read_text(encoding="utf-8")
     except Exception as e:
         logger.warning(f"Failed to read snapshot script: {e}")
         return None
 
-    # Inject parameters
+    # Build parameters
     params = {
         "paths": paths,
         "project_dir": project_dir,
     }
 
-    params_code = (
-        "import builtins\n"
-        f"builtins.__PARAMS__ = {repr(params)}\n"
-        f"__PARAMS__ = builtins.__PARAMS__\n\n"
-    )
+    # Build CLI args
+    import json as json_module
+    args = []
+    for key, value in params.items():
+        args.append(f"--{key.replace('_', '-')}")
+        # Use JSON encoding for lists/dicts to preserve structure
+        if isinstance(value, (list, dict)):
+            args.append(json_module.dumps(value))
+        else:
+            args.append(str(value))
 
-    full_code = params_code + script_content
+    # Build parameter injection code
+    injection_code = f"""import sys
+import os
+sys.argv = {repr([str(script_path)] + args)}
+os.environ['UE_MCP_MODE'] = '1'
 
-    # Use _execute directly to avoid recursion (execute_with_checks would trigger tracking again)
-    result = manager._execute(full_code, timeout=30.0)
+"""
+
+    # Concatenate injection with script content
+    full_code = injection_code + script_content
+
+    # Execute full code (avoid execute_with_checks to prevent recursion)
+    result = manager.execute(full_code, timeout=30.0)
 
     if not result.get("success"):
         logger.warning(f"Snapshot execution failed: {result.get('error')}")
@@ -323,53 +338,52 @@ def gather_change_details(manager, changes: dict[str, Any]) -> dict[str, Any]:
         if not script_path.exists():
             return None
 
+        # Read script content
         try:
             script_content = script_path.read_text(encoding="utf-8")
         except Exception:
             return None
 
-        params_code = (
-            "import builtins\n"
-            f"builtins.__PARAMS__ = {repr(params)}\n"
-            f"__PARAMS__ = builtins.__PARAMS__\n\n"
-        )
+        # Build CLI args
+        import json as json_module
+        args = []
+        for key, value in params.items():
+            args.append(f"--{key.replace('_', '-')}")
+            # Use JSON encoding for lists/dicts to preserve structure
+            if isinstance(value, (list, dict)):
+                args.append(json_module.dumps(value))
+            else:
+                args.append(str(value))
 
-        full_code = params_code + script_content
-        result = manager._execute(full_code, timeout=60.0)
+        # Build parameter injection code
+        injection_code = f"""import sys
+import os
+sys.argv = {repr([str(script_path)] + args)}
+os.environ['UE_MCP_MODE'] = '1'
+
+"""
+
+        # Concatenate injection with script content
+        full_code = injection_code + script_content
+
+        # Execute full code
+        result = manager.execute(full_code, timeout=60.0)
 
         if not result.get("success"):
             return None
 
-        # Parse JSON output
+        # Parse pure JSON output (no markers)
         output = result.get("output", [])
-        output_str = ""
-        if isinstance(output, list):
-            for line in output:
-                if isinstance(line, dict):
-                    output_str += str(line.get("output", ""))
-                else:
-                    output_str += str(line)
-        else:
-            output_str = str(output)
 
-        # Find JSON result (marked with MCP_RESULT:)
-        if "MCP_RESULT:" in output_str:
-            json_str = output_str.split("MCP_RESULT:", 1)[1].strip()
-            try:
-                brace_count = 0
-                end_idx = 0
-                for i, char in enumerate(json_str):
-                    if char == "{":
-                        brace_count += 1
-                    elif char == "}":
-                        brace_count -= 1
-                        if brace_count == 0:
-                            end_idx = i + 1
-                            break
-                json_str = json_str[:end_idx]
-                return json.loads(json_str)
-            except json.JSONDecodeError:
-                return None
+        # Find last valid JSON in output
+        for line in reversed(output):
+            line_str = str(line.get("output", "")) if isinstance(line, dict) else str(line)
+            line_str = line_str.strip()
+            if line_str.startswith("{") or line_str.startswith("["):
+                try:
+                    return json.loads(line_str)
+                except json.JSONDecodeError:
+                    continue
 
         return None
 

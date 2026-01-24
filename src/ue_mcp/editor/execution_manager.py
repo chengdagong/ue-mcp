@@ -57,6 +57,24 @@ class ExecutionManager:
         """
         self._ctx = context
 
+    def execute(self, code: str, timeout: float = 30.0) -> dict[str, Any]:
+        """
+        Execute Python code in the editor without additional checks.
+
+        This is a low-level execution method for simple operations like
+        parameter injection or querying editor state. For general code
+        execution with auto-install and bundled module support, use
+        execute_with_checks() instead.
+
+        Args:
+            code: Python code to execute
+            timeout: Execution timeout in seconds
+
+        Returns:
+            Execution result dictionary
+        """
+        return self._execute(code, timeout)
+
     def _execute(self, code: str, timeout: float = 30.0) -> dict[str, Any]:
         """
         Execute Python code in the managed editor (internal use only).
@@ -109,23 +127,67 @@ class ExecutionManager:
                     "error": "Failed to reconnect to editor. Editor may have crashed.",
                 }
 
-        # Wrap multi-line code in exec() since EXECUTE_STATEMENT only handles single statements
-        # For single-line code without newlines, execute directly
+        # Execute code using EXECUTE_STATEMENT
+        # Multi-line code must be wrapped in exec() as EXECUTE_STATEMENT only supports single statements
         if "\n" in code:
-            # Escape the code for use in exec()
-            escaped_code = code.replace("\\", "\\\\").replace("'", "\\'")
-            wrapped_code = f"exec('''{escaped_code}''')"
+            # Wrap multi-line code in exec()
+            wrapped_code = f"exec({repr(code)})"
             result = self._ctx.editor.remote_client.execute(
                 wrapped_code,
                 exec_type=self._ctx.editor.remote_client.ExecTypes.EXECUTE_STATEMENT,
                 timeout=timeout,
             )
         else:
+            # Single line, execute directly
             result = self._ctx.editor.remote_client.execute(
                 code,
                 exec_type=self._ctx.editor.remote_client.ExecTypes.EXECUTE_STATEMENT,
                 timeout=timeout,
             )
+
+        # Check for crash
+        if result.get("crashed", False):
+            self._ctx.editor.status = "stopped"
+            return {
+                "success": False,
+                "error": "Editor connection lost (may have crashed)",
+                "details": result,
+            }
+
+        return result
+
+    def execute_script_file(self, script_path: str, timeout: float = 120.0) -> dict[str, Any]:
+        """
+        Execute a Python script file using EXECUTE_FILE mode.
+
+        This enables true hot-reload as the file is executed directly from disk.
+        Parameters should be injected before calling this method using _execute().
+
+        Args:
+            script_path: Absolute path to the Python script file
+            timeout: Execution timeout in seconds
+
+        Returns:
+            Execution result dictionary
+        """
+        if self._ctx.editor is None:
+            return {
+                "success": False,
+                "error": "No editor is running. Call launch() first.",
+            }
+
+        if self._ctx.editor.status != "ready":
+            return {
+                "success": False,
+                "error": f"Editor is not ready (status: {self._ctx.editor.status})",
+            }
+
+        # Execute file directly (no string reading, no concatenation)
+        result = self._ctx.editor.remote_client.execute(
+            script_path,
+            exec_type=self._ctx.editor.remote_client.ExecTypes.EXECUTE_FILE,
+            timeout=timeout,
+        )
 
         # Check for crash
         if result.get("crashed", False):

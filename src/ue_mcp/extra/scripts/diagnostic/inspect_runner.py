@@ -10,10 +10,11 @@ Usage (CLI):
     Optional arguments:
         --component-name=<name>   Name of a specific component to inspect (for Blueprints)
 
-MCP mode (__PARAMS__):
+MCP mode (sys.argv):
     asset_path: str - Asset path to inspect (e.g., /Game/Meshes/MyMesh)
     component_name: str (optional) - Name of a specific component to inspect (for Blueprints)
 """
+import argparse
 import json
 import os
 import sys
@@ -34,83 +35,26 @@ def _is_mcp_mode() -> bool:
     """Check if running in MCP mode (vs CLI mode)."""
     global _mcp_mode
     if _mcp_mode is None:
-        import builtins
-        _mcp_mode = hasattr(builtins, "__PARAMS__")
+        import os
+        _mcp_mode = os.environ.get('UE_MCP_MODE') == '1'
     return _mcp_mode
-
-
-def _parse_cli_value(value_str: str):
-    """Parse a CLI argument value string to appropriate Python type."""
-    if value_str.lower() in ("none", "null"):
-        return None
-    if value_str.lower() in ("true", "yes", "1"):
-        return True
-    if value_str.lower() in ("false", "no", "0"):
-        return False
-    try:
-        return int(value_str)
-    except ValueError:
-        pass
-    try:
-        return float(value_str)
-    except ValueError:
-        pass
-    return value_str
-
-
-def get_params() -> dict:
-    """
-    Get parameters from MCP server or CLI arguments.
-
-    The MCP server injects __PARAMS__ into builtins before executing the script.
-    For direct execution, parameters are parsed from sys.argv.
-    """
-    import builtins
-
-    # Check MCP mode first
-    if hasattr(builtins, "__PARAMS__"):
-        return builtins.__PARAMS__
-
-    # CLI mode: parse arguments
-    params = {}
-    args = sys.argv[1:]
-    i = 0
-    while i < len(args):
-        arg = args[i]
-        if arg.startswith("--"):
-            arg = arg[2:]
-            if "=" in arg:
-                key, value = arg.split("=", 1)
-                params[key.replace("-", "_")] = _parse_cli_value(value)
-            elif i + 1 < len(args) and not args[i + 1].startswith("--"):
-                key = arg.replace("-", "_")
-                params[key] = _parse_cli_value(args[i + 1])
-                i += 1
-            else:
-                params[arg.replace("-", "_")] = True
-        i += 1
-
-    # Validate required parameters
-    if "asset_path" not in params:
-        raise RuntimeError(
-            "Missing required parameter: asset_path\n"
-            "Usage: python inspect_runner.py --asset-path=/Game/Meshes/MyMesh\n"
-            "       python inspect_runner.py --asset-path=/Game/BP_Test --component-name=Mesh"
-        )
-
-    return params
 
 
 def output_result(data: dict) -> None:
     """
-    Output result in format appropriate for current mode.
+    Output result as pure JSON (last line of output).
 
-    In MCP mode: Outputs JSON with special prefix for parsing.
-    In CLI mode: Outputs human-readable formatted JSON.
+    The MCP server will parse the last valid JSON object from the output.
+    This enables clean output without special markers.
+
+    In MCP mode: Outputs compact JSON for parsing
+    In CLI mode: Outputs formatted JSON for readability
     """
     if _is_mcp_mode():
-        print("__DIAGNOSTIC_RESULT__" + json.dumps(data))
+        # MCP mode: compact JSON (will be parsed as last line)
+        print(json.dumps(data))
     else:
+        # CLI mode: human-readable formatted output
         print("\n" + "=" * 60)
         print("INSPECTION RESULT")
         print("=" * 60)
@@ -618,9 +562,23 @@ def capture_asset_screenshot(asset, asset_path: str, asset_type) -> dict:
 
 def main():
     """Main entry point for asset inspection."""
-    params = get_params()
-    asset_path = params["asset_path"]
-    component_name = params.get("component_name")  # Optional parameter
+    parser = argparse.ArgumentParser(
+        description="Inspect a UE5 asset and return all its properties"
+    )
+    parser.add_argument(
+        "--asset-path",
+        required=True,
+        help="Asset path to inspect (e.g., /Game/Meshes/MyMesh)"
+    )
+    parser.add_argument(
+        "--component-name",
+        default=None,
+        help="Name of a specific component to inspect (for Blueprints only)"
+    )
+    args = parser.parse_args()
+
+    asset_path = args.asset_path
+    component_name = args.component_name
 
     # Detect asset type
     asset_type = detect_asset_type(asset_path)

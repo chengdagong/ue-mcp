@@ -37,7 +37,7 @@ Usage (CLI):
         --resolution-height=600   Screenshot height (default: 600)
         --multi-angle             Enable multi-angle capture (default: True)
 
-MCP mode (__PARAMS__):
+MCP mode (sys.argv):
     task_id: str - Unique task identifier for completion file
     output_dir: str - Output directory for trace data
     level: str - Level path to load
@@ -51,61 +51,165 @@ MCP mode (__PARAMS__):
     resolution_height: int - Screenshot height (default: 600)
     multi_angle: bool - Enable multi-angle capture (default: True)
 """
+import argparse
+import json
 import editor_capture
-from ue_mcp_capture.utils import get_params, ensure_level_loaded, output_result
+from ue_mcp_capture.utils import ensure_level_loaded, output_result
 
-# Default parameter values for CLI mode
-DEFAULTS = {
-    "task_id": None,
-    "duration_seconds": 10.0,
-    "interval_seconds": 0.1,
-    "capture_screenshots": False,
-    "camera_distance": 300,
-    "target_height": 90,
-    "resolution_width": 800,
-    "resolution_height": 600,
-    "multi_angle": True,
-}
+# Default parameter values (for reference)
+# DEFAULTS = {
+#     "task_id": None,
+#     "duration_seconds": 10.0,
+#     "interval_seconds": 0.1,
+#     "capture_screenshots": False,
+#     "camera_distance": 300,
+#     "target_height": 90,
+#     "resolution_width": 800,
+#     "resolution_height": 600,
+#     "multi_angle": True,
+# }
 
-# Required parameters
-REQUIRED = ["output_dir", "level", "actor_names"]
+# Required parameters (for reference)
+# REQUIRED = ["output_dir", "level", "actor_names"]
+
+
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="PIE actor tracing script for UE Editor",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    # Required arguments
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        required=True,
+        help="Output directory for trace data"
+    )
+    parser.add_argument(
+        "--level",
+        type=str,
+        required=True,
+        help="Level path to load (e.g., /Game/Maps/TestLevel)"
+    )
+    parser.add_argument(
+        "--actor-names",
+        type=str,
+        required=True,
+        help="List of actor names to track (JSON array string, e.g., '[\"Actor1\",\"Actor2\"]')"
+    )
+
+    # Optional arguments
+    parser.add_argument(
+        "--task-id",
+        type=str,
+        default=None,
+        help="Unique task identifier for completion file (optional)"
+    )
+    parser.add_argument(
+        "--duration-seconds",
+        type=float,
+        default=10.0,
+        help="Trace duration in seconds (default: 10.0)"
+    )
+    parser.add_argument(
+        "--interval-seconds",
+        type=float,
+        default=0.1,
+        help="Sampling interval in seconds (default: 0.1)"
+    )
+    parser.add_argument(
+        "--capture-screenshots",
+        action="store_true",
+        default=False,
+        help="Enable screenshot capture (default: False)"
+    )
+    parser.add_argument(
+        "--camera-distance",
+        type=float,
+        default=300,
+        help="Camera distance from actor in UE units (default: 300)"
+    )
+    parser.add_argument(
+        "--target-height",
+        type=float,
+        default=90,
+        help="Target height offset from actor origin (default: 90)"
+    )
+    parser.add_argument(
+        "--resolution-width",
+        type=int,
+        default=800,
+        help="Screenshot width in pixels (default: 800)"
+    )
+    parser.add_argument(
+        "--resolution-height",
+        type=int,
+        default=600,
+        help="Screenshot height in pixels (default: 600)"
+    )
+    parser.add_argument(
+        "--multi-angle",
+        action="store_true",
+        default=True,
+        help="Enable multi-angle capture (default: True)"
+    )
+    parser.add_argument(
+        "--no-multi-angle",
+        action="store_false",
+        dest="multi_angle",
+        help="Disable multi-angle capture"
+    )
+
+    args = parser.parse_args()
+
+    # Parse actor_names from JSON string
+    try:
+        args.actor_names = json.loads(args.actor_names)
+        if not isinstance(args.actor_names, list):
+            parser.error("--actor-names must be a JSON array")
+    except json.JSONDecodeError as e:
+        parser.error(f"--actor-names must be valid JSON: {e}")
+
+    return args
 
 
 def main():
-    params = get_params(defaults=DEFAULTS, required=REQUIRED)
+    args = parse_args()
 
     # Ensure correct level is loaded
-    ensure_level_loaded(params["level"])
+    ensure_level_loaded(args.level)
 
     # Build resolution tuple
-    resolution = (params["resolution_width"], params["resolution_height"])
+    resolution = (args.resolution_width, args.resolution_height)
 
     # Start PIE tracer with duration (will auto-stop via tick callback)
     # Returns immediately - tracing runs asynchronously
     tracer = editor_capture.start_pie_tracer(
-        output_dir=params["output_dir"],
-        actor_names=params["actor_names"],
-        interval_seconds=params["interval_seconds"],
+        output_dir=args.output_dir,
+        actor_names=args.actor_names,
+        interval_seconds=args.interval_seconds,
         auto_start_pie=True,
-        duration=params["duration_seconds"],
+        duration=args.duration_seconds,
         auto_stop_pie=True,
-        task_id=params.get("task_id"),
+        task_id=args.task_id,
         # Screenshot capture options
-        capture_screenshots=params["capture_screenshots"],
-        camera_distance=params["camera_distance"],
-        target_height=params["target_height"],
+        capture_screenshots=args.capture_screenshots,
+        camera_distance=args.camera_distance,
+        target_height=args.target_height,
         resolution=resolution,
-        multi_angle=params["multi_angle"],
+        multi_angle=args.multi_angle,
     )
 
     # Build result
     result = {
         "status": "started",
-        "output_dir": params["output_dir"],
-        "duration": params["duration_seconds"],
-        "interval": params["interval_seconds"],
-        "actor_count": len(params["actor_names"]),
-        "capture_screenshots": params["capture_screenshots"],
+        "output_dir": args.output_dir,
+        "duration": args.duration_seconds,
+        "interval": args.interval_seconds,
+        "actor_count": len(args.actor_names),
+        "capture_screenshots": args.capture_screenshots,
     }
 
     # Return immediately with started status

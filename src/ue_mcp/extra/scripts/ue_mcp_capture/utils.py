@@ -8,12 +8,13 @@ These functions are used by capture scripts to:
 - Handle errors gracefully
 
 These scripts can be run either:
-1. Via MCP server (parameters injected via builtins.__PARAMS__)
+1. Via MCP server (parameters injected via sys.argv + UE_MCP_MODE env var)
 2. Directly in UE Python console (parameters parsed from sys.argv)
 """
 
 import gc
 import json
+import os
 import sys
 import unreal
 
@@ -25,130 +26,8 @@ def _is_mcp_mode() -> bool:
     """Check if running in MCP mode (vs CLI mode)."""
     global _mcp_mode
     if _mcp_mode is None:
-        import builtins
-        _mcp_mode = hasattr(builtins, "__PARAMS__")
+        _mcp_mode = os.environ.get('UE_MCP_MODE') == '1'
     return _mcp_mode
-
-
-def _parse_cli_value(value_str: str):
-    """
-    Parse a CLI argument value string to appropriate Python type.
-
-    Supports: bool, int, float, None, list (JSON), string
-    """
-    # Handle None
-    if value_str.lower() in ("none", "null"):
-        return None
-
-    # Handle bool
-    if value_str.lower() in ("true", "yes", "1"):
-        return True
-    if value_str.lower() in ("false", "no", "0"):
-        return False
-
-    # Try int
-    try:
-        return int(value_str)
-    except ValueError:
-        pass
-
-    # Try float
-    try:
-        return float(value_str)
-    except ValueError:
-        pass
-
-    # Try JSON (for lists/dicts)
-    if value_str.startswith("[") or value_str.startswith("{"):
-        try:
-            return json.loads(value_str)
-        except json.JSONDecodeError:
-            pass
-
-    # Return as string
-    return value_str
-
-
-def parse_cli_args(defaults: dict = None) -> dict:
-    """
-    Parse CLI arguments in the format --key=value or --key value.
-
-    Args:
-        defaults: Default parameter values
-
-    Returns:
-        Dictionary of parsed parameters merged with defaults
-    """
-    params = dict(defaults) if defaults else {}
-
-    args = sys.argv[1:]  # Skip script name
-    i = 0
-    while i < len(args):
-        arg = args[i]
-
-        if arg.startswith("--"):
-            # Remove -- prefix
-            arg = arg[2:]
-
-            if "=" in arg:
-                # Format: --key=value
-                key, value = arg.split("=", 1)
-                params[key.replace("-", "_")] = _parse_cli_value(value)
-            elif i + 1 < len(args) and not args[i + 1].startswith("--"):
-                # Format: --key value
-                key = arg.replace("-", "_")
-                params[key] = _parse_cli_value(args[i + 1])
-                i += 1
-            else:
-                # Boolean flag: --key means True
-                params[arg.replace("-", "_")] = True
-
-        i += 1
-
-    return params
-
-
-def get_params(defaults: dict = None, required: list = None) -> dict:
-    """
-    Get parameters from MCP server or CLI arguments.
-
-    The MCP server injects __PARAMS__ into builtins before executing the script.
-    For direct execution, parameters are parsed from sys.argv.
-
-    Args:
-        defaults: Default parameter values (used for CLI mode)
-        required: List of required parameter names (validated in CLI mode)
-
-    Returns:
-        Dictionary of parameters
-
-    Raises:
-        RuntimeError: If required parameters are missing
-
-    Examples:
-        # In UE Python console or via script:
-        # python capture_orbital.py --level=/Game/Maps/Test --target-x=0 --target-y=0 --target-z=100
-    """
-    import builtins
-
-    # Check MCP mode first
-    if hasattr(builtins, "__PARAMS__"):
-        return builtins.__PARAMS__
-
-    # CLI mode: parse arguments
-    params = parse_cli_args(defaults)
-
-    # Validate required parameters
-    if required:
-        missing = [p for p in required if p not in params or params[p] is None]
-        if missing:
-            raise RuntimeError(
-                f"Missing required parameters: {', '.join(missing)}\n"
-                f"Use --{missing[0].replace('_', '-')}=<value> to provide them.\n"
-                f"Example: python script.py --{missing[0].replace('_', '-')}=value"
-            )
-
-    return params
 
 
 def ensure_level_loaded(target_level: str) -> None:
@@ -233,16 +112,19 @@ def ensure_level_loaded(target_level: str) -> None:
 
 def output_result(data: dict) -> None:
     """
-    Output result in format appropriate for current mode.
+    Output result as pure JSON (last line of output).
 
-    In MCP mode: Outputs JSON with special prefix for parsing.
-    In CLI mode: Outputs human-readable formatted JSON.
+    The MCP server will parse the last valid JSON object from the output.
+    This enables clean output without special markers.
+
+    In MCP mode: Outputs compact JSON for parsing
+    In CLI mode: Outputs formatted JSON for readability
     """
     if _is_mcp_mode():
-        # MCP mode: prefix for server parsing
-        print("__CAPTURE_RESULT__" + json.dumps(data))
+        # MCP mode: compact JSON (will be parsed as last line)
+        print(json.dumps(data))
     else:
-        # CLI mode: human-readable output
+        # CLI mode: human-readable formatted output
         print("\n" + "=" * 60)
         print("CAPTURE RESULT")
         print("=" * 60)

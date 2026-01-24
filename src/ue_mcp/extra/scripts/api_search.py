@@ -9,7 +9,7 @@ and query Python APIs. It supports multiple modes:
 - member_info: Get specific member details
 - search: Fuzzy search across all names
 
-Parameters (via __PARAMS__):
+Parameters (via sys.argv):
     mode: Query mode
     query: Search query or pattern
     include_inherited: Include inherited members (for class_info)
@@ -17,32 +17,69 @@ Parameters (via __PARAMS__):
     limit: Maximum results to return
 """
 
+import argparse
 import inspect
 import json
 import re
 
 import unreal
 
-# Get parameters from builtins (injected by script_executor)
-try:
-    from ue_mcp_capture.utils import get_params
-    params = get_params()
-except ImportError:
-    # Fallback for direct execution
-    import builtins
-    params = getattr(builtins, '__PARAMS__', {})
 
-# Extract parameters
-mode = params.get('mode', 'list_classes')
-query = params.get('query')
-include_inherited = params.get('include_inherited', True)
-include_private = params.get('include_private', False)
-limit = params.get('limit', 100)
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="UE5 Python API Search - Perform runtime introspection of the 'unreal' module"
+    )
+    parser.add_argument(
+        "--mode",
+        default="list_classes",
+        choices=["list_classes", "list_functions", "class_info", "member_info", "search"],
+        help="Query mode (default: list_classes)"
+    )
+    parser.add_argument(
+        "--query",
+        default=None,
+        help="Search query or pattern"
+    )
+    parser.add_argument(
+        "--include-inherited",
+        action="store_true",
+        default=True,
+        help="Include inherited members (for class_info mode)"
+    )
+    parser.add_argument(
+        "--no-include-inherited",
+        dest="include_inherited",
+        action="store_false",
+        help="Exclude inherited members"
+    )
+    parser.add_argument(
+        "--include-private",
+        action="store_true",
+        default=False,
+        help="Include private members (_underscore)"
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        help="Maximum results to return (default: 100)"
+    )
+    return parser.parse_args()
+
+
+# Parse arguments
+args = parse_args()
+mode = args.mode
+query = args.query
+include_inherited = args.include_inherited
+include_private = args.include_private
+limit = args.limit
 
 
 def output_result(data):
-    """Output result with marker for parsing."""
-    print("__API_SEARCH_RESULT__" + json.dumps(data, default=str))
+    """Output result as pure JSON (will be parsed as last line)."""
+    print(json.dumps(data, default=str))
 
 
 def parse_ue_property_doc(doc):

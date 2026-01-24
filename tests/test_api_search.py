@@ -16,7 +16,7 @@ import pytest
 
 from mcp_pytest import ToolCaller, ToolCallResult
 
-from ue_mcp.server import _parse_api_search_result
+from ue_mcp.server import _parse_json_result
 
 
 def parse_tool_result(result: ToolCallResult) -> dict[str, Any]:
@@ -30,25 +30,24 @@ def parse_tool_result(result: ToolCallResult) -> dict[str, Any]:
         return {"raw_text": text}
 
 
-class TestParseApiSearchResult:
-    """Unit tests for _parse_api_search_result function."""
+class TestParseJsonResult:
+    """Unit tests for _parse_json_result function."""
 
     def test_parse_successful_result(self):
-        """Parse successful execution result."""
+        """Parse successful execution result with pure JSON output."""
         exec_result = {
             "success": True,
             "output": [
-                {"type": "Info", "output": "__API_SEARCH_RESULT__" + json.dumps({
+                {"type": "Info", "output": json.dumps({
                     "success": True,
                     "results": [{"name": "Actor", "type": "class"}],
                     "count": 1
                 })}
             ]
         }
-        result = _parse_api_search_result(exec_result, "list_classes")
+        result = _parse_json_result(exec_result)
 
         assert result["success"] is True
-        assert result["mode"] == "list_classes"
         assert len(result["results"]) == 1
         assert result["results"][0]["name"] == "Actor"
 
@@ -58,48 +57,47 @@ class TestParseApiSearchResult:
             "success": False,
             "error": "Editor not connected"
         }
-        result = _parse_api_search_result(exec_result, "list_classes")
+        result = _parse_json_result(exec_result)
 
         assert result["success"] is False
-        assert result["mode"] == "list_classes"
         assert "error" in result
 
-    def test_parse_missing_marker(self):
-        """Parse result without API search marker."""
+    def test_parse_no_json_in_output(self):
+        """Parse result without valid JSON in output."""
         exec_result = {
             "success": True,
             "output": [{"type": "Info", "output": "Some other output"}]
         }
-        result = _parse_api_search_result(exec_result, "search")
+        result = _parse_json_result(exec_result)
 
         assert result["success"] is False
-        assert "No result marker found" in result["error"]
+        assert "No valid JSON found" in result["error"]
 
     def test_parse_invalid_json(self):
-        """Parse result with invalid JSON after marker."""
+        """Parse result with invalid JSON."""
         exec_result = {
             "success": True,
-            "output": "__API_SEARCH_RESULT__{invalid json}"
+            "output": [{"type": "Info", "output": "{invalid json}"}]
         }
-        result = _parse_api_search_result(exec_result, "class_info")
+        result = _parse_json_result(exec_result)
 
         assert result["success"] is False
-        assert "Failed to parse" in result["error"]
+        assert "No valid JSON found" in result["error"]
 
     def test_parse_string_output(self):
-        """Parse when output is a string instead of list."""
+        """Parse when output entry is a dict with 'output' key."""
         json_data = json.dumps({"success": True, "results": [], "count": 0})
         exec_result = {
             "success": True,
-            "output": f"__API_SEARCH_RESULT__{json_data}"
+            "output": [{"type": "Info", "output": json_data}]
         }
-        result = _parse_api_search_result(exec_result, "list_functions")
+        result = _parse_json_result(exec_result)
 
         assert result["success"] is True
-        assert result["mode"] == "list_functions"
+        assert result["count"] == 0
 
     def test_parse_multiline_output(self):
-        """Parse result with multiple output lines."""
+        """Parse result with multiple output lines, JSON is last valid one."""
         json_data = json.dumps({
             "success": True,
             "class_name": "Actor",
@@ -110,11 +108,11 @@ class TestParseApiSearchResult:
             "success": True,
             "output": [
                 {"type": "Info", "output": "Loading module...\n"},
-                {"type": "Info", "output": f"__API_SEARCH_RESULT__{json_data}\n"},
+                {"type": "Info", "output": json_data + "\n"},
                 {"type": "Info", "output": "Done\n"}
             ]
         }
-        result = _parse_api_search_result(exec_result, "class_info")
+        result = _parse_json_result(exec_result)
 
         assert result["success"] is True
         assert result["class_name"] == "Actor"

@@ -13,7 +13,7 @@ Usage (CLI):
         --resolution-width=800   Screenshot width (default: 800)
         --resolution-height=600  Screenshot height (default: 600)
 
-MCP mode (__PARAMS__):
+MCP mode (sys.argv):
     level: str - Level path to load
     target_x, target_y, target_z: float - Target location
     distance: float - Camera distance
@@ -22,28 +22,50 @@ MCP mode (__PARAMS__):
     resolution_width, resolution_height: int - Resolution
 """
 
+import argparse
 import gc
 import unreal
 import editor_capture
 
 
-from ue_mcp_capture.utils import get_params, ensure_level_loaded, output_result
+from ue_mcp_capture.utils import ensure_level_loaded, output_result
 
-# Default parameter values for CLI mode
-DEFAULTS = {
-    "distance": 500.0,
-    "preset": "orthographic",
-    "output_dir": None,
-    "resolution_width": 800,
-    "resolution_height": 600,
-}
+# Default parameter values for CLI mode (kept as reference)
+# DEFAULTS = {
+#     "distance": 500.0,
+#     "preset": "orthographic",
+#     "output_dir": None,
+#     "resolution_width": 800,
+#     "resolution_height": 600,
+# }
 
-# Required parameters
-REQUIRED = ["level", "target_x", "target_y", "target_z"]
+# Required parameters (kept as reference)
+# REQUIRED = ["level", "target_x", "target_y", "target_z"]
 
 
 def main():
-    params = get_params(defaults=DEFAULTS, required=REQUIRED)
+    parser = argparse.ArgumentParser(
+        description="Orbital capture script for UE Editor",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    # Required parameters
+    parser.add_argument("--level", type=str, required=True, help="Level path to load (e.g., /Game/Maps/TestLevel)")
+    parser.add_argument("--target-x", type=float, required=True, dest="target_x", help="Target X coordinate in world space")
+    parser.add_argument("--target-y", type=float, required=True, dest="target_y", help="Target Y coordinate in world space")
+    parser.add_argument("--target-z", type=float, required=True, dest="target_z", help="Target Z coordinate in world space")
+
+    # Optional parameters
+    parser.add_argument("--distance", type=float, default=500.0, help="Camera distance from target in UE units (default: 500)")
+    parser.add_argument("--preset", type=str, default="orthographic",
+                       choices=["all", "perspective", "orthographic", "birdseye", "horizontal", "technical"],
+                       help="View preset (default: orthographic)")
+    parser.add_argument("--output-dir", type=str, default=None, dest="output_dir", help="Output directory (default: auto-generated)")
+    parser.add_argument("--resolution-width", type=int, default=800, dest="resolution_width", help="Screenshot width in pixels (default: 800)")
+    parser.add_argument("--resolution-height", type=int, default=600, dest="resolution_height", help="Screenshot height in pixels (default: 600)")
+
+    args = parser.parse_args()
+    params = vars(args)
 
     # Ensure correct level is loaded
     ensure_level_loaded(params["level"])

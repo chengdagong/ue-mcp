@@ -4,10 +4,11 @@ Asset snapshot script for UE-MCP.
 Takes a snapshot of assets in specified directories, including their types and
 filesystem timestamps. Runs inside UE5 editor.
 
-MCP mode (__PARAMS__):
+MCP mode (sys.argv):
     paths: list[str] - Directory paths to scan (e.g., ["/Game/Maps/", "/Game/Blueprints/"])
     project_dir: str - Project directory path for filesystem path conversion
 """
+import argparse
 import json
 import os
 import sys
@@ -44,12 +45,35 @@ _ASSET_TYPE_MAP = {
 }
 
 
-def get_params() -> dict:
-    """Get parameters from MCP server."""
-    import builtins
-    if hasattr(builtins, "__PARAMS__"):
-        return builtins.__PARAMS__
-    raise RuntimeError("No __PARAMS__ found - this script must be run via MCP")
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Take a snapshot of assets in specified directories"
+    )
+    parser.add_argument(
+        "--paths",
+        required=True,
+        help="JSON array of directory paths to scan (e.g., '[\"/ Game/Maps/\", \"/Game/Blueprints/\"]')"
+    )
+    parser.add_argument(
+        "--project-dir",
+        required=True,
+        help="Project directory path for filesystem path conversion"
+    )
+    args = parser.parse_args()
+
+    # Parse JSON paths parameter
+    try:
+        paths_list = json.loads(args.paths)
+        if not isinstance(paths_list, list):
+            raise ValueError("--paths must be a JSON array")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON for --paths: {e}")
+
+    return {
+        "paths": paths_list,
+        "project_dir": args.project_dir
+    }
 
 
 def get_asset_type(asset_path: str) -> str:
@@ -309,7 +333,7 @@ def take_snapshot(paths: list[str], project_dir: str) -> dict:
 
 def main():
     """Main entry point."""
-    params = get_params()
+    params = parse_args()
 
     paths = params.get("paths", [])
     project_dir = params.get("project_dir", "")
