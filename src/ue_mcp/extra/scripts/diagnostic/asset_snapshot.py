@@ -103,6 +103,126 @@ def asset_to_filesystem_path(asset_path: str, project_dir: str) -> str | None:
     return None
 
 
+def get_external_dir_paths(asset_path: str, project_dir: str) -> tuple[str | None, str | None]:
+    """
+    Get the __ExternalActors__ and __ExternalObjects__ directory paths for a Level asset.
+
+    For OFPA (One File Per Actor) mode, UE5 stores actor and object data in separate
+    directories rather than in the main .umap file.
+
+    Args:
+        asset_path: UE asset path (e.g., /Game/ThirdPerson/Lvl_ThirdPerson)
+        project_dir: Project directory path
+
+    Returns:
+        Tuple of (external_actors_dir, external_objects_dir), either can be None if not found
+
+    Example:
+        For /Game/ThirdPerson/Lvl_ThirdPerson:
+        - external_actors: Content/__ExternalActors__/ThirdPerson/Lvl_ThirdPerson/
+        - external_objects: Content/__ExternalObjects__/ThirdPerson/Lvl_ThirdPerson/
+    """
+    if not asset_path.startswith("/Game/"):
+        return None, None
+
+    # Strip object name suffix if present
+    last_slash = asset_path.rfind("/")
+    last_dot = asset_path.rfind(".")
+    if last_dot > last_slash:
+        asset_path = asset_path[:last_dot]
+
+    # /Game/ThirdPerson/Lvl_ThirdPerson -> ThirdPerson/Lvl_ThirdPerson
+    relative = asset_path.replace("/Game/", "", 1)
+
+    external_actors_dir = os.path.join(project_dir, "Content", "__ExternalActors__", relative)
+    external_objects_dir = os.path.join(project_dir, "Content", "__ExternalObjects__", relative)
+
+    actors_path = external_actors_dir if os.path.isdir(external_actors_dir) else None
+    objects_path = external_objects_dir if os.path.isdir(external_objects_dir) else None
+
+    return actors_path, objects_path
+
+
+def get_dir_stats(dir_path: str) -> tuple[float, int]:
+    """
+    Get stats for all .uasset files in a directory tree.
+
+    Args:
+        dir_path: Directory path to scan
+
+    Returns:
+        Tuple of (max_timestamp, file_count)
+    """
+    max_ts = 0.0
+    file_count = 0
+    try:
+        for root, dirs, files in os.walk(dir_path):
+            for filename in files:
+                if filename.endswith(".uasset"):
+                    file_count += 1
+                    file_path = os.path.join(root, filename)
+                    try:
+                        ts = os.path.getmtime(file_path)
+                        if ts > max_ts:
+                            max_ts = ts
+                    except OSError:
+                        pass
+    except OSError:
+        pass
+    return max_ts, file_count
+
+
+def get_level_stats_with_externals(
+    asset_path: str, project_dir: str, main_file_path: str | None
+) -> tuple[float, int]:
+    """
+    Get the effective timestamp and external file count for a Level asset.
+
+    For Level assets with OFPA enabled, this considers:
+    - The main .umap file timestamp
+    - All files in __ExternalActors__/[level_path]/
+    - All files in __ExternalObjects__/[level_path]/
+
+    Args:
+        asset_path: UE asset path
+        project_dir: Project directory path
+        main_file_path: Filesystem path to the main .umap file (can be None)
+
+    Returns:
+        Tuple of (max_timestamp, total_external_file_count)
+        - max_timestamp: Maximum timestamp among main file and all external files
+        - total_external_file_count: Total number of files in external directories
+    """
+    max_ts = 0.0
+    total_file_count = 0
+
+    # Get main file timestamp
+    if main_file_path:
+        try:
+            max_ts = os.path.getmtime(main_file_path)
+        except OSError:
+            pass
+
+    # Get external directories
+    external_actors_dir, external_objects_dir = get_external_dir_paths(asset_path, project_dir)
+
+    # Check external actors
+    if external_actors_dir:
+        actors_ts, actors_count = get_dir_stats(external_actors_dir)
+        if actors_ts > max_ts:
+            max_ts = actors_ts
+        total_file_count += actors_count
+
+    # Check external objects
+    if external_objects_dir:
+        objects_ts, objects_count = get_dir_stats(external_objects_dir)
+        if objects_ts > max_ts:
+            max_ts = objects_ts
+        total_file_count += objects_count
+
+    return max_ts, total_file_count
+
+
 def take_snapshot(paths: list[str], project_dir: str) -> dict:
     """
     Take a snapshot of assets in the specified directories.
@@ -156,16 +276,29 @@ def take_snapshot(paths: list[str], project_dir: str) -> dict:
                 # Get filesystem timestamp
                 fs_path = asset_to_filesystem_path(asset_path, project_dir)
                 timestamp = 0.0
-                if fs_path:
+                external_file_count = None  # Only set for Level assets
+
+                # For Level assets, also check __ExternalActors__ and __ExternalObjects__
+                # directories (OFPA mode stores actor/object data separately)
+                if asset_type == "Level":
+                    timestamp, external_file_count = get_level_stats_with_externals(
+                        asset_path, project_dir, fs_path
+                    )
+                elif fs_path:
                     try:
                         timestamp = os.path.getmtime(fs_path)
                     except OSError:
                         pass
 
-                result["assets"][asset_path] = {
+                asset_data = {
                     "asset_type": asset_type,
                     "timestamp": timestamp,
                 }
+                # Add external file count for Level assets (used to detect file additions/deletions)
+                if external_file_count is not None:
+                    asset_data["external_file_count"] = external_file_count
+
+                result["assets"][asset_path] = asset_data
 
         except Exception as e:
             # Log but continue with other paths
