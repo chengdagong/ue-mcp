@@ -69,13 +69,13 @@ def capture_mode_window(params):
     if isinstance(result, dict):
         captured = result.get("success", False)
         error = result.get("error")
-        output = {"file": output_file, "captured": captured}
+        output = {"success": captured, "file": output_file, "captured": captured}
         if error:
             output["error"] = error
         output_result(output)
     else:
         # Legacy bool return
-        output_result({"file": output_file, "captured": result})
+        output_result({"success": result, "file": output_file, "captured": result})
 
 
 def capture_mode_asset(params):
@@ -92,6 +92,7 @@ def capture_mode_asset(params):
 
     output_result(
         {
+            "success": result["opened"] and result["screenshot"],
             "file": output_file,
             "opened": result["opened"],
             "captured": result["screenshot"],
@@ -118,6 +119,7 @@ def capture_mode_batch(params):
 
     output_result(
         {
+            "success": failed_count == 0,
             "files": files,
             "success_count": success_count,
             "failed_count": failed_count,

@@ -94,7 +94,11 @@ def main():
     # Output result
     files = {k: list(v) if v else [] for k, v in results.items()}
     total = sum(len(v) for v in files.values())
-    output_result({"files": files, "total_captures": total})
+    output_result({
+        "success": True,
+        "files": files,
+        "total_captures": total
+    })
 
 
 if __name__ == "__main__":

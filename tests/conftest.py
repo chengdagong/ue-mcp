@@ -671,3 +671,60 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     if has_ue5_log:
         ue5_abs_path = Path(ue5_log_path).resolve()
         terminalreporter.write_line(f"UE5 Editor log: {ue5_abs_path}")
+
+    # Display test timing summary
+    test_timings = getattr(config, "_test_timings", {})
+    if test_timings:
+        terminalreporter.write_sep("=", "Test Timing Summary")
+
+        # Sort by duration (slowest first)
+        sorted_timings = sorted(
+            test_timings.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        # Calculate total time
+        total_time = sum(test_timings.values())
+        terminalreporter.write_line(f"Total test time: {total_time:.2f}s")
+        terminalreporter.write_line("")
+
+        # Show all tests with timing
+        for test_name, duration in sorted_timings:
+            # Format duration with color hints
+            if duration >= 60:
+                time_str = f"{duration:.1f}s 🔴"  # Slow
+            elif duration >= 10:
+                time_str = f"{duration:.1f}s 🟡"  # Medium
+            else:
+                time_str = f"{duration:.1f}s 🟢"  # Fast
+            terminalreporter.write_line(f"  {time_str}  {test_name}")
+
+
+# =============================================================================
+# Test Timing Hooks
+# =============================================================================
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """
+    Record timing for each test phase (setup, call, teardown).
+
+    This hook captures the duration of the 'call' phase (actual test execution)
+    and stores it for the timing summary.
+    """
+    outcome = yield
+    report = outcome.get_result()
+
+    # Only record timing for the 'call' phase (actual test execution)
+    if report.when == "call":
+        # Get or initialize timing dict
+        if not hasattr(item.config, "_test_timings"):
+            item.config._test_timings = {}
+
+        # Use short test name (without full path)
+        test_name = item.nodeid
+        duration = report.duration
+
+        item.config._test_timings[test_name] = duration
