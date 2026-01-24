@@ -187,10 +187,16 @@ def create_exponential_height_fog(actor_subsystem):
 
 
 def create_physics_objects(actor_subsystem):
-    """Create physics-enabled sphere and cube that fall when game starts."""
-    physics_objects = []
+    """Create physics-enabled objects that fall when game starts.
 
-    # Create sphere with physics
+    Left side (Y=-150): Single sphere
+    Right side (Y=150): Stacked chain of 3 objects (bar + cube + sphere)
+    """
+    physics_objects = []
+    cube_mesh = unreal.load_asset("/Engine/BasicShapes/Cube")
+    sphere_mesh = unreal.load_asset("/Engine/BasicShapes/Sphere")
+
+    # === Left side: Single sphere ===
     sphere_actor = actor_subsystem.spawn_actor_from_class(
         unreal.StaticMeshActor,
         unreal.Vector(0, -150, 500),  # Left of center, suspended in air
@@ -198,43 +204,76 @@ def create_physics_objects(actor_subsystem):
     )
     sphere_actor.set_actor_label("PhysicsSphere")
 
-    # Set sphere mesh and enable physics
     sphere_mesh_comp = sphere_actor.get_component_by_class(unreal.StaticMeshComponent)
     if sphere_mesh_comp:
-        sphere_mesh = unreal.load_asset("/Engine/BasicShapes/Sphere")
         if sphere_mesh:
             sphere_mesh_comp.set_static_mesh(sphere_mesh)
-        # Set mobility to Movable (required for physics simulation)
         sphere_mesh_comp.set_mobility(unreal.ComponentMobility.MOVABLE)
-        # Enable physics simulation
         sphere_mesh_comp.set_simulate_physics(True)
-        # Set collision to allow physics interaction
         sphere_mesh_comp.set_collision_enabled(unreal.CollisionEnabled.QUERY_AND_PHYSICS)
 
     physics_objects.append(sphere_actor)
 
-    # Create cube with physics
+    # === Right side: Stacked chain of 3 objects ===
+    # Layout (from bottom to top at Y=150):
+    # 1. PhysicsBar: vertical bar (50x50x200), center at Z=600
+    # 2. PhysicsCube: cube (100x100x100), center at Z=750
+    # 3. PhysicsChainSphere: sphere (radius 50), center at Z=850
+
+    # 1. Bottom: Vertical bar (tall cube)
+    bar_actor = actor_subsystem.spawn_actor_from_class(
+        unreal.StaticMeshActor,
+        unreal.Vector(0, 150, 600),  # Center of bar
+        unreal.Rotator(0, 0, 0),
+    )
+    bar_actor.set_actor_label("PhysicsBar")
+    bar_actor.set_actor_scale3d(unreal.Vector(0.5, 0.5, 2))  # 50x50x200
+
+    bar_mesh_comp = bar_actor.get_component_by_class(unreal.StaticMeshComponent)
+    if bar_mesh_comp:
+        if cube_mesh:
+            bar_mesh_comp.set_static_mesh(cube_mesh)
+        bar_mesh_comp.set_mobility(unreal.ComponentMobility.MOVABLE)
+        bar_mesh_comp.set_simulate_physics(True)
+        bar_mesh_comp.set_collision_enabled(unreal.CollisionEnabled.QUERY_AND_PHYSICS)
+
+    physics_objects.append(bar_actor)
+
+    # 2. Middle: Cube
     cube_actor = actor_subsystem.spawn_actor_from_class(
         unreal.StaticMeshActor,
-        unreal.Vector(0, 150, 500),  # Right of center, suspended in air
+        unreal.Vector(0, 150, 750),  # On top of bar
         unreal.Rotator(0, 0, 0),
     )
     cube_actor.set_actor_label("PhysicsCube")
 
-    # Set cube mesh and enable physics
     cube_mesh_comp = cube_actor.get_component_by_class(unreal.StaticMeshComponent)
     if cube_mesh_comp:
-        cube_mesh = unreal.load_asset("/Engine/BasicShapes/Cube")
         if cube_mesh:
             cube_mesh_comp.set_static_mesh(cube_mesh)
-        # Set mobility to Movable (required for physics simulation)
         cube_mesh_comp.set_mobility(unreal.ComponentMobility.MOVABLE)
-        # Enable physics simulation
         cube_mesh_comp.set_simulate_physics(True)
-        # Set collision to allow physics interaction
         cube_mesh_comp.set_collision_enabled(unreal.CollisionEnabled.QUERY_AND_PHYSICS)
 
     physics_objects.append(cube_actor)
+
+    # 3. Top: Sphere
+    chain_sphere_actor = actor_subsystem.spawn_actor_from_class(
+        unreal.StaticMeshActor,
+        unreal.Vector(0, 150, 850),  # On top of cube
+        unreal.Rotator(0, 0, 0),
+    )
+    chain_sphere_actor.set_actor_label("PhysicsChainSphere")
+
+    chain_sphere_comp = chain_sphere_actor.get_component_by_class(unreal.StaticMeshComponent)
+    if chain_sphere_comp:
+        if sphere_mesh:
+            chain_sphere_comp.set_static_mesh(sphere_mesh)
+        chain_sphere_comp.set_mobility(unreal.ComponentMobility.MOVABLE)
+        chain_sphere_comp.set_simulate_physics(True)
+        chain_sphere_comp.set_collision_enabled(unreal.CollisionEnabled.QUERY_AND_PHYSICS)
+
+    physics_objects.append(chain_sphere_actor)
 
     return physics_objects
 
