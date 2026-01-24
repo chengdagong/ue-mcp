@@ -21,6 +21,7 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from .autoconfig import get_bundled_site_packages
 from .editor_manager import EditorManager
 from .log_watcher import watch_pie_capture_complete
+from .script_executor import execute_script_from_path, get_extra_scripts_dir
 from .utils import find_uproject_file
 
 # Configure logging
@@ -102,6 +103,36 @@ def _parse_json_result(exec_result: dict[str, Any]) -> dict[str, Any]:
                 continue
 
     return {"success": False, "error": "No valid JSON found in output"}
+
+
+def _query_project_assets(manager: EditorManager) -> dict[str, Any]:
+    """
+    Query Blueprint and World (Level) assets in the project.
+
+    Args:
+        manager: EditorManager instance (must be connected)
+
+    Returns:
+        Dict with assets info or error
+    """
+    try:
+        script_path = get_extra_scripts_dir() / "asset_query.py"
+        if not script_path.exists():
+            logger.warning(f"Asset query script not found: {script_path}")
+            return {"success": False, "error": "Asset query script not found"}
+
+        # Query Blueprint and World assets
+        exec_result = execute_script_from_path(
+            manager,
+            script_path,
+            {"types": "Blueprint,World", "base_path": "/Game", "limit": 100},
+            timeout=30.0,
+        )
+
+        return _parse_json_result(exec_result)
+    except Exception as e:
+        logger.warning(f"Failed to query project assets: {e}")
+        return {"success": False, "error": str(e)}
 
 
 def _initialize_server() -> Optional[EditorManager]:
@@ -312,17 +343,28 @@ async def launch_editor(
             logger.info(f"Including bundled site-packages: {bundled_path_str}")
 
     if wait:
-        return await manager.launch(
+        result = await manager.launch(
             notify=notify,
             additional_paths=all_paths if all_paths else None,
             wait_timeout=wait_timeout,
         )
     else:
-        return await manager.launch_async(
+        result = await manager.launch_async(
             notify=notify,
             additional_paths=all_paths if all_paths else None,
             wait_timeout=wait_timeout,
         )
+
+    # Query project assets if launch was successful
+    if result.get("success"):
+        assets_result = _query_project_assets(manager)
+        if assets_result.get("success"):
+            result["project_assets"] = assets_result.get("assets", {})
+        else:
+            # Include error info but don't fail the launch
+            result["project_assets_error"] = assets_result.get("error", "Unknown error")
+
+    return result
 
 
 @mcp.tool(name="editor_status")
