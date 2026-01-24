@@ -119,3 +119,52 @@ unreal.ExSlateTabLibrary.switch_to_graph_mode(blueprint)
 unreal.ExSlateTabLibrary.invoke_blueprint_editor_tab(blueprint, unreal.Name("CompilerResults"))
 ```
 
+---
+
+## UE5 Python API 注意事项
+
+### Deprecated API - 不要使用
+
+以下 API 已废弃，**禁止在新代码中使用**：
+
+| Deprecated API | 替代方案 |
+|----------------|----------|
+| `unreal.EditorLevelLibrary.new_level()` | `level_subsystem.new_level()` |
+| `unreal.EditorLevelLibrary.save_current_level()` | `level_subsystem.save_current_level()` |
+| `unreal.EditorLevelLibrary.load_level()` | `level_subsystem.load_level()` |
+
+### 正确的 Subsystem 获取方式
+
+```python
+import unreal
+
+# 获取 LevelEditorSubsystem（用于关卡操作）
+level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+
+# 获取 EditorActorSubsystem（用于 Actor 操作）
+actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+
+# 创建新关卡
+level_subsystem.new_level("/Game/Maps/MyLevel")
+
+# 保存当前关卡
+level_subsystem.save_current_level()
+```
+
+### 物理模拟设置
+
+为 Actor 启用物理模拟时，必须按以下顺序设置：
+
+```python
+mesh_comp = actor.get_component_by_class(unreal.StaticMeshComponent)
+
+# 1. 先设置 Mobility 为 Movable（必须！否则物理不生效）
+mesh_comp.set_mobility(unreal.ComponentMobility.MOVABLE)
+
+# 2. 启用物理模拟
+mesh_comp.set_simulate_physics(True)
+
+# 3. 设置碰撞
+mesh_comp.set_collision_enabled(unreal.CollisionEnabled.QUERY_AND_PHYSICS)
+```
+

@@ -296,7 +296,7 @@ def create_test_level():
 
     # Create new level
     # Note: new_level creates an empty level at the specified path
-    success = unreal.EditorLevelLibrary.new_level(LEVEL_PATH)
+    success = level_subsystem.new_level(LEVEL_PATH)
     if not success:
         result = {"success": False, "error": f"Failed to create level at {LEVEL_PATH}"}
         print(f"__RESULT__{json.dumps(result)}")
@@ -361,7 +361,7 @@ def create_test_level():
 
     # Save the level
     try:
-        unreal.EditorLevelLibrary.save_current_level()
+        level_subsystem.save_current_level()
     except Exception as e:
         result = {
             "success": False,
