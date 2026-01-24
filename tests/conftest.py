@@ -282,7 +282,7 @@ def temp_engine_ini(temp_project: Path) -> Path:
 
 
 @pytest.fixture(scope="session")
-async def running_editor(initialized_tool_caller):
+async def running_editor(initialized_tool_caller, request):
     """
     Session-scoped fixture that launches the editor once for all tests.
 
@@ -307,6 +307,13 @@ async def running_editor(initialized_tool_caller):
 
     logger = logging.getLogger(__name__)
 
+    # Helper: Store editor log path in pytest config for terminal summary
+    def store_editor_log_path(status_data):
+        log_path = status_data.get("log_file_path")
+        if log_path:
+            request.config._ue5_editor_log_path = log_path
+            logger.info(f"UE5 editor log path: {log_path}")
+
     # Check if editor is already running
     status_result = await initialized_tool_caller.call("editor_status", timeout=30)
     status_text = status_result.text_content
@@ -315,6 +322,7 @@ async def running_editor(initialized_tool_caller):
             status_data = json.loads(status_text)
             if status_data.get("status") == "ready":
                 logger.info("Editor already running, reusing existing instance")
+                store_editor_log_path(status_data)
                 yield initialized_tool_caller
                 return
         except json.JSONDecodeError:
@@ -335,6 +343,15 @@ async def running_editor(initialized_tool_caller):
             if not launch_data.get("success"):
                 raise RuntimeError(f"Editor launch failed: {launch_data}")
             logger.info("Editor launched successfully")
+
+            # Get status to retrieve and store log path
+            status_result = await initialized_tool_caller.call("editor_status", timeout=30)
+            if status_result.text_content:
+                try:
+                    status_data = json.loads(status_result.text_content)
+                    store_editor_log_path(status_data)
+                except json.JSONDecodeError:
+                    pass
         except json.JSONDecodeError:
             raise RuntimeError(f"Failed to parse editor launch result: {launch_text}")
     else:
@@ -573,16 +590,30 @@ def pytest_configure(config):
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """
-    Display log file path after test session completes.
+    Display log file paths after test session completes.
 
     This hook runs after all tests finish and displays the location
-    of the pytest log file for easy access.
+    of both the pytest log file and UE5 editor log file for easy access.
     """
-    # Get log file path from config (set in pytest_configure)
+    from pathlib import Path
+
+    # Get pytest log file path from config (set in pytest_configure)
     log_file = getattr(config, "_log_file_path", None)
 
-    if log_file and log_file.exists():
+    # Get UE5 editor log file path from config (set in running_editor fixture)
+    ue5_log_path = getattr(config, "_ue5_editor_log_path", None)
+
+    # Check which logs exist
+    has_pytest_log = log_file and log_file.exists()
+    has_ue5_log = ue5_log_path and Path(ue5_log_path).exists()
+
+    if has_pytest_log or has_ue5_log:
+        terminalreporter.write_sep("=", "Test Log Files")
+
+    if has_pytest_log:
         abs_path = log_file.resolve()
-        terminalreporter.write_sep("=", "Test Log File")
-        terminalreporter.write_line(f"Log file: {abs_path}")
-        terminalreporter.write_line(f"View with: cat {abs_path}")
+        terminalreporter.write_line(f"Pytest log: {abs_path}")
+
+    if has_ue5_log:
+        ue5_abs_path = Path(ue5_log_path).resolve()
+        terminalreporter.write_line(f"UE5 Editor log: {ue5_abs_path}")
