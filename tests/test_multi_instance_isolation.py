@@ -109,8 +109,8 @@ class TestMultiInstanceIsolation:
 
             pid1 = status1.get("pid")
             pid2 = status2.get("pid")
-            port1 = manager1._editor.multicast_port
-            port2 = manager2._editor.multicast_port
+            port1 = manager1._context.editor.multicast_port
+            port2 = manager2._context.editor.multicast_port
 
             print(f"  Manager 1: PID={pid1}, Port={port1}")
             print(f"  Manager 2: PID={pid2}, Port={port2}")
@@ -188,13 +188,13 @@ class TestMultiInstanceIsolation:
             print("\n[STEP 6] Verifying reconnection maintains isolation...")
 
             # Force disconnect by closing remote_client sockets
-            if manager1._editor and manager1._editor.remote_client:
-                manager1._editor.remote_client._cleanup_sockets()
-                manager1._editor.remote_client = None
+            if manager1._context.editor and manager1._context.editor.remote_client:
+                manager1._context.editor.remote_client._cleanup_sockets()
+                manager1._context.editor.remote_client = None
 
-            if manager2._editor and manager2._editor.remote_client:
-                manager2._editor.remote_client._cleanup_sockets()
-                manager2._editor.remote_client = None
+            if manager2._context.editor and manager2._context.editor.remote_client:
+                manager2._context.editor.remote_client._cleanup_sockets()
+                manager2._context.editor.remote_client = None
 
             print("  Forced disconnect, testing reconnection...")
 
