@@ -16,6 +16,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Coroutine, Optional
 
+from .asset_tracker import (
+    compare_snapshots,
+    create_snapshot,
+    extract_game_paths,
+    gather_change_details,
+)
 from .autoconfig import run_config_check
 from .code_inspector import inspect_code
 from .pip_install import (
@@ -1293,6 +1299,16 @@ else:
             code = unload_code + code
             logger.debug(f"Injected unload code for bundled modules: {bundled_imports}")
 
+        # Step 3.5: Asset change tracking - Pre-execution snapshot
+        # Extract /Game/xxx/ paths from code and take a snapshot before execution
+        pre_snapshot = None
+        game_paths = extract_game_paths(code)
+        if game_paths and self._editor and self._editor.status == "ready":
+            logger.debug(f"Asset tracking: detected paths {game_paths}")
+            pre_snapshot = create_snapshot(self, game_paths, str(self.project_path))
+            if pre_snapshot:
+                logger.debug(f"Asset tracking: pre-snapshot captured {len(pre_snapshot.get('assets', {}))} assets")
+
         if import_statements:
             # Combine all import statements into one code block
             import_code = "\n".join(import_statements)
@@ -1348,6 +1364,27 @@ else:
         # Add installation info
         if installed_packages:
             result["auto_installed"] = installed_packages
+
+        # Step 5: Asset change tracking - Post-execution snapshot and comparison
+        if pre_snapshot is not None and result.get("success"):
+            try:
+                post_snapshot = create_snapshot(self, game_paths, str(self.project_path))
+                if post_snapshot:
+                    changes = compare_snapshots(pre_snapshot, post_snapshot)
+                    if changes.get("detected"):
+                        logger.debug(
+                            f"Asset tracking: detected changes - "
+                            f"created={len(changes.get('created', []))}, "
+                            f"deleted={len(changes.get('deleted', []))}, "
+                            f"modified={len(changes.get('modified', []))}"
+                        )
+                        # Gather detailed info for changed assets
+                        changes = gather_change_details(self, changes)
+                        result["asset_changes"] = changes
+                    else:
+                        logger.debug("Asset tracking: no changes detected")
+            except Exception as e:
+                logger.warning(f"Asset tracking failed: {e}")
 
         return result
 

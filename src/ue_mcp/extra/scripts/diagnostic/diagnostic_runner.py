@@ -104,6 +104,10 @@ def output_result(data: dict) -> None:
     In CLI mode: Outputs human-readable formatted JSON.
     """
     if _is_mcp_mode():
+        # Output with both markers for compatibility
+        # MCP_RESULT: is used by asset_tracker for change detection
+        # __DIAGNOSTIC_RESULT__ is used by server.py for regular diagnostic
+        print("MCP_RESULT:" + json.dumps(data))
         print("__DIAGNOSTIC_RESULT__" + json.dumps(data))
     else:
         print("\n" + "=" * 60)

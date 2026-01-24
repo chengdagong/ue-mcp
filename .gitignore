@@ -39,6 +39,9 @@ tests/fixtures/*/*.sln
 tests/fixtures/*/*.xcode-project
 tests/fixtures/*/*.code-workspace
 
+# Test Output
+tests/test_output/
+
 #Screenshots
 Screenshots/
 
