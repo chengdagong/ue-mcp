@@ -199,6 +199,7 @@ class LaunchManager:
                     str(self._ctx.project_path),
                     f"-ABSLOG={log_file_path}",
                     ini_override,
+                    "-AutoDeclinePackageRecovery",  # Skip package recovery dialogs on startup
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
