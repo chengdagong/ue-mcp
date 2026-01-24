@@ -4,7 +4,7 @@ Unit tests for execute_script argument passing feature.
 
 import pytest
 
-from ue_mcp.server import _build_script_args_injection
+from ue_mcp.tools._helpers import build_script_args_injection as _build_script_args_injection
 
 
 class TestBuildScriptArgsInjection:

@@ -16,7 +16,7 @@ import pytest
 
 from mcp_pytest import ToolCaller, ToolCallResult
 
-from ue_mcp.server import _parse_json_result
+from ue_mcp.tools._helpers import parse_json_result as _parse_json_result
 
 
 def parse_tool_result(result: ToolCallResult) -> dict[str, Any]:
