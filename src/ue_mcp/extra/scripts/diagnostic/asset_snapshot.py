@@ -69,7 +69,8 @@ def asset_to_filesystem_path(asset_path: str, project_dir: str) -> str | None:
     Convert an asset path to filesystem path.
 
     Args:
-        asset_path: UE asset path (e.g., /Game/Maps/TestLevel)
+        asset_path: UE asset path (e.g., /Game/Maps/TestLevel or
+                    /Game/Maps/TestLevel.TestLevel with object name suffix)
         project_dir: Project directory path
 
     Returns:
@@ -78,6 +79,14 @@ def asset_to_filesystem_path(asset_path: str, project_dir: str) -> str | None:
     # /Game/xxx -> Content/xxx
     if not asset_path.startswith("/Game/"):
         return None
+
+    # Strip object name suffix if present
+    # e.g., /Game/Tests/MyLevel.MyLevel -> /Game/Tests/MyLevel
+    # The object name is after the last dot, but only if it comes after the last slash
+    last_slash = asset_path.rfind("/")
+    last_dot = asset_path.rfind(".")
+    if last_dot > last_slash:
+        asset_path = asset_path[:last_dot]
 
     relative = asset_path.replace("/Game/", "Content/", 1)
 
