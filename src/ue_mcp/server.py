@@ -380,10 +380,40 @@ def execute_code(
     return manager.execute_with_checks(code, timeout=timeout)
 
 
+def _build_script_args_injection(script_path: str, args: list[str] | None, kwargs: dict | None) -> str:
+    """Build code to inject arguments before script execution.
+
+    Args:
+        script_path: Path to the script file (used as sys.argv[0])
+        args: List of command-line arguments (becomes sys.argv[1:])
+        kwargs: Dictionary of keyword arguments (becomes __SCRIPT_ARGS__)
+
+    Returns:
+        Python code string to prepend to the script
+    """
+    lines = ["import sys"]
+
+    # Always set sys.argv[0] to script path for standard Python behavior
+    if args:
+        argv_list = [script_path] + [str(a) for a in args]
+        lines.append(f"sys.argv = {repr(argv_list)}")
+    else:
+        lines.append(f"sys.argv = [{repr(script_path)}]")
+
+    if kwargs:
+        lines.append("import builtins")
+        lines.append(f"builtins.__SCRIPT_ARGS__ = {repr(kwargs)}")
+        lines.append("__SCRIPT_ARGS__ = builtins.__SCRIPT_ARGS__")
+
+    return "\n".join(lines) + "\n\n"
+
+
 @mcp.tool(name="editor_execute_script")
 def execute_script(
     script_path: Annotated[str, Field(description="Path to the Python script file to execute")],
     timeout: Annotated[float, Field(default=30.0, description="Execution timeout in seconds")],
+    args: Annotated[list[str] | None, Field(default=None, description="List of command-line arguments passed to the script via sys.argv[1:]")] = None,
+    kwargs: Annotated[dict[str, Any] | None, Field(default=None, description="Dictionary of keyword arguments accessible via __SCRIPT_ARGS__ global variable")] = None,
 ) -> dict[str, Any]:
     """
     Execute a Python script file in the managed Unreal Editor.
@@ -395,6 +425,8 @@ def execute_script(
     Args:
         script_path: Path to the Python script file to execute
         timeout: Execution timeout in seconds (default: 30)
+        args: List of command-line arguments to pass to the script via sys.argv[1:]
+        kwargs: Dictionary of keyword arguments accessible via __SCRIPT_ARGS__ global variable
 
     Returns:
         Execution result containing:
@@ -406,6 +438,12 @@ def execute_script(
 
     Example:
         execute_script("/path/to/my_script.py")
+
+        # With command-line arguments (accessible via sys.argv or argparse):
+        execute_script("/path/to/my_script.py", args=["--level", "/Game/Maps/Test", "--verbose"])
+
+        # With keyword arguments (accessible via __SCRIPT_ARGS__):
+        execute_script("/path/to/my_script.py", kwargs={"level": "/Game/Maps/Test", "actors": ["A", "B"]})
     """
     from pathlib import Path
 
@@ -430,8 +468,12 @@ def execute_script(
             "error": f"Failed to read script file: {e}",
         }
 
+    # Inject arguments before script content
+    injection_code = _build_script_args_injection(script_path, args, kwargs)
+    full_code = injection_code + code
+
     manager = _get_editor_manager()
-    return manager.execute_with_checks(code, timeout=timeout)
+    return manager.execute_with_checks(full_code, timeout=timeout)
 
 
 @mcp.tool(name="editor_configure")
