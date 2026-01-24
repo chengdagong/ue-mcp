@@ -204,6 +204,8 @@ def create_physics_objects(actor_subsystem):
         sphere_mesh = unreal.load_asset("/Engine/BasicShapes/Sphere")
         if sphere_mesh:
             sphere_mesh_comp.set_static_mesh(sphere_mesh)
+        # Set mobility to Movable (required for physics simulation)
+        sphere_mesh_comp.set_mobility(unreal.ComponentMobility.MOVABLE)
         # Enable physics simulation
         sphere_mesh_comp.set_simulate_physics(True)
         # Set collision to allow physics interaction
@@ -225,6 +227,8 @@ def create_physics_objects(actor_subsystem):
         cube_mesh = unreal.load_asset("/Engine/BasicShapes/Cube")
         if cube_mesh:
             cube_mesh_comp.set_static_mesh(cube_mesh)
+        # Set mobility to Movable (required for physics simulation)
+        cube_mesh_comp.set_mobility(unreal.ComponentMobility.MOVABLE)
         # Enable physics simulation
         cube_mesh_comp.set_simulate_physics(True)
         # Set collision to allow physics interaction
