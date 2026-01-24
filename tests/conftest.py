@@ -185,89 +185,127 @@ def temp_uproject(temp_project: Path) -> Path:
     return temp_project / "thirdperson_template.uproject"
 
 
-@pytest.fixture(scope="session")
-def test_output_dir() -> Path:
-    """
-    Create a persistent test output directory for screenshot captures.
+# =============================================================================
+# Session Output Directory Management
+# =============================================================================
 
-    This directory is NOT automatically deleted, allowing inspection of
-    generated files after tests pass or fail.
-
-    Returns:
-        Path to the test output directory
-    """
-    tests_dir = Path(__file__).parent
-    output_dir = tests_dir / "test_output"
-    output_dir.mkdir(exist_ok=True)
-    return output_dir
+# Maximum number of session directories to keep
+MAX_SESSION_DIRS = 10
 
 
-@pytest.fixture
-def temp_uproject(temp_project: Path) -> Path:
-    """Return the path to the temp project's .uproject file."""
-    return temp_project / "thirdperson_template.uproject"
+def _get_session_dirs(output_dir: Path) -> list[Path]:
+    """Get all session directories sorted by name (oldest first)."""
+    if not output_dir.exists():
+        return []
+
+    session_dirs = [
+        d for d in output_dir.iterdir()
+        if d.is_dir() and d.name.startswith("session_")
+    ]
+    # Sort by name (which includes timestamp, so chronological order)
+    return sorted(session_dirs, key=lambda d: d.name)
+
+
+def _cleanup_old_sessions(output_dir: Path, keep_count: int = MAX_SESSION_DIRS):
+    """Remove old session directories, keeping only the most recent ones."""
+    session_dirs = _get_session_dirs(output_dir)
+
+    # If we have more than keep_count, remove the oldest ones
+    dirs_to_remove = session_dirs[:-keep_count] if len(session_dirs) > keep_count else []
+
+    for old_dir in dirs_to_remove:
+        try:
+            shutil.rmtree(old_dir)
+        except (PermissionError, OSError):
+            # Skip directories that are in use or can't be deleted
+            pass
 
 
 @pytest.fixture(scope="session", autouse=True)
-def clean_test_output_dir():
+def clean_old_sessions():
     """
-    Clean test output directory before test session starts.
+    Clean old session directories before test session starts.
 
-    This fixture runs automatically before all tests to ensure
-    a clean slate and prevent old screenshots from interfering
-    with verification.
+    This fixture runs automatically before all tests to:
+    1. Keep only the most recent MAX_SESSION_DIRS (10) session directories
+    2. Clean up any non-session files in the output directory
 
-    Note: Screenshots are preserved after tests complete for inspection.
-    To clean up manually, delete the tests/test_output/ directory.
+    Note: The current session directory is created AFTER this cleanup runs.
     """
-    import shutil
-
     tests_dir = Path(__file__).parent
     output_dir = tests_dir / "test_output"
 
-    # Clear directory if it exists (clean slate for new session)
-    # Skip log directory as it contains timestamped log files
     if output_dir.exists():
+        # Clean up old session directories (keep last MAX_SESSION_DIRS)
+        _cleanup_old_sessions(output_dir, MAX_SESSION_DIRS)
+
+        # Clean up any loose files (not in session directories)
         for item in output_dir.iterdir():
-            if item.name == "log":
-                # Skip the log directory - we keep timestamped logs
-                continue
-            try:
-                if item.is_dir():
-                    shutil.rmtree(item)
-                else:
+            if item.is_file():
+                try:
                     item.unlink()
-            except (PermissionError, OSError):
-                # Skip files that are currently in use
-                pass
+                except (PermissionError, OSError):
+                    pass
 
     yield
 
-    # Screenshots are preserved after tests for inspection
-    # No cleanup after session
+
+@pytest.fixture(scope="session")
+def test_session_dir(request) -> Path:
+    """
+    Get the timestamped session directory for this test run.
+
+    The session directory is created in pytest_configure to ensure
+    both log files and test outputs go to the same directory.
+
+    Each test session gets its own unique directory with format:
+        session_YYYYMMDD_HHMMSS
+
+    This ensures test outputs from different runs don't overwrite each other.
+
+    Returns:
+        Path to the session-specific output directory
+    """
+    # Get session directory from pytest config (created in pytest_configure)
+    session_dir = getattr(request.config, "_test_session_dir", None)
+
+    if session_dir is None:
+        # Fallback: create session directory if not set (e.g., in some test scenarios)
+        from datetime import datetime
+
+        tests_dir = Path(__file__).parent
+        output_dir = tests_dir / "test_output"
+        output_dir.mkdir(exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        session_dir = output_dir / f"session_{timestamp}"
+        session_dir.mkdir(exist_ok=True)
+
+    return session_dir
 
 
 @pytest.fixture(scope="session")
-def test_output_dir() -> Path:
+def test_output_dir(test_session_dir: Path) -> Path:
     """
     Test output directory for screenshots and test artifacts.
 
-    Directory is automatically cleaned at the start of each test session.
+    Returns the current session's output directory. Each test session
+    gets a unique timestamped directory to preserve outputs across runs.
 
     Directory structure:
         tests/test_output/
-            ├── orbital/       - Orbital capture screenshots
-            ├── pie/          - PIE capture screenshots
-            ├── window/       - Window capture screenshots
-            └── batch/        - Batch capture screenshots
+            └── session_YYYYMMDD_HHMMSS/   <- Current session
+                ├── log/                    - Pytest log file
+                ├── orbital/                - Orbital capture screenshots
+                ├── pie/                    - PIE capture screenshots
+                ├── window/                 - Window capture screenshots
+                ├── test_trace_*/           - Actor trace outputs
+                └── ...
 
     Returns:
-        Path to the test output directory
+        Path to the current session's output directory
     """
-    tests_dir = Path(__file__).parent
-    output_dir = tests_dir / "test_output"
-    output_dir.mkdir(exist_ok=True)
-    return output_dir
+    return test_session_dir
 
 
 @pytest.fixture
@@ -557,10 +595,12 @@ def mock_remote_client():
 def pytest_configure(config):
     """
     Configure pytest to show logs only when -v flag is used.
-    Also sets up timestamped log file in test_output/log/ directory.
+    Also sets up session directory and log file.
 
-    This hook runs before tests start and adjusts log_cli setting
-    based on verbosity level.
+    This hook runs before tests start and:
+    1. Creates a timestamped session directory for all test outputs
+    2. Sets up log file within the session directory
+    3. Adjusts log_cli setting based on verbosity level
     """
     from datetime import datetime
 
@@ -574,14 +614,23 @@ def pytest_configure(config):
         # Set to very high level to effectively disable
         config._inicache["log_cli_level"] = "CRITICAL"
 
-    # Set up timestamped log file
+    # Create session directory with timestamp
     tests_dir = Path(__file__).parent
-    log_dir = tests_dir / "test_output" / "log"
-    log_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = tests_dir / "test_output"
+    output_dir.mkdir(exist_ok=True)
 
-    # Generate timestamp for log file
+    # Generate timestamp for session directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = log_dir / f"pytest-{timestamp}.log"
+    session_dir = output_dir / f"session_{timestamp}"
+    session_dir.mkdir(exist_ok=True)
+
+    # Store session directory path in config for fixtures to access
+    config._test_session_dir = session_dir
+
+    # Set up log file in session directory
+    log_dir = session_dir / "log"
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / "pytest.log"
 
     # Set log file path
     config.option.log_file = str(log_file)
@@ -590,12 +639,15 @@ def pytest_configure(config):
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """
-    Display log file paths after test session completes.
+    Display session directory and log file paths after test session completes.
 
     This hook runs after all tests finish and displays the location
-    of both the pytest log file and UE5 editor log file for easy access.
+    of the session output directory, pytest log, and UE5 editor log.
     """
     from pathlib import Path
+
+    # Get session directory from config (set in pytest_configure)
+    session_dir = getattr(config, "_test_session_dir", None)
 
     # Get pytest log file path from config (set in pytest_configure)
     log_file = getattr(config, "_log_file_path", None)
@@ -603,12 +655,16 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     # Get UE5 editor log file path from config (set in running_editor fixture)
     ue5_log_path = getattr(config, "_ue5_editor_log_path", None)
 
-    # Check which logs exist
+    # Check which paths exist
+    has_session_dir = session_dir and session_dir.exists()
     has_pytest_log = log_file and log_file.exists()
     has_ue5_log = ue5_log_path and Path(ue5_log_path).exists()
 
-    if has_pytest_log or has_ue5_log:
-        terminalreporter.write_sep("=", "Test Log Files")
+    if has_session_dir or has_pytest_log or has_ue5_log:
+        terminalreporter.write_sep("=", "Test Session Output")
+
+    if has_session_dir:
+        terminalreporter.write_line(f"Session directory: {session_dir.resolve()}")
 
     if has_pytest_log:
         abs_path = log_file.resolve()

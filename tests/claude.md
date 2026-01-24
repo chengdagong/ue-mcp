@@ -327,7 +327,8 @@ output_dir/
 | `tool_caller` | function | 基础 MCP 工具调用器（未初始化项目） |
 | `initialized_tool_caller` | session | 已初始化项目的工具调用器 |
 | `running_editor` | session | **共享的运行中编辑器实例**（所有测试共享以减少启动次数） |
-| `test_output_dir` | function | 测试输出目录（自动清理） |
+| `test_session_dir` | session | 带时间戳的会话目录（格式：`session_YYYYMMDD_HHMMSS`） |
+| `test_output_dir` | session | 测试输出目录（等同于 `test_session_dir`） |
 | `test_level_path` | session | 测试关卡路径 |
 
 ### 测试项目 Fixture
@@ -356,10 +357,26 @@ output_dir/
 
 ### 测试数据隔离
 
-每个测试使用独立的输出目录：
-- 通过 `test_output_dir` fixture 提供
-- 自动创建和清理
-- 位于 `tests/fixtures/ThirdPersonTemplate/Saved/Tests/` 下
+每次测试会话使用独立的带时间戳目录：
+- 通过 `test_session_dir` / `test_output_dir` fixture 提供
+- 目录格式：`tests/test_output/session_YYYYMMDD_HHMMSS/`
+- 自动保留最近 10 个会话目录，旧目录自动清理
+- 每个会话包含：日志文件、截图、trace 数据等所有测试输出
+
+**目录结构示例**:
+```
+tests/test_output/
+├── session_20260124_143000/   # 较早的会话
+│   ├── log/pytest.log
+│   ├── orbital/
+│   └── ...
+├── session_20260124_150000/   # 当前会话
+│   ├── log/pytest.log
+│   ├── orbital/
+│   ├── window/
+│   ├── test_trace_single_actor/
+│   └── ...
+```
 
 ---
 

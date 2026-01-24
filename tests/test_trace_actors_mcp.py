@@ -24,9 +24,6 @@ logger = logging.getLogger(__name__)
 # Test project fixture path
 FIXTURE_PROJECT = Path(__file__).parent / "fixtures" / "ThirdPersonTemplate"
 
-# Test output directory (for trace data and screenshots)
-TEST_OUTPUT_DIR = Path(__file__).parent / "test_output"
-
 
 def parse_tool_result(result: ToolCallResult) -> dict[str, Any]:
     """Parse tool result text content as JSON."""
@@ -60,10 +57,10 @@ class TestTraceActorsWithEditor:
     """
 
     @pytest.mark.asyncio
-    async def test_trace_single_actor(self, running_editor: ToolCaller, test_level_path: str):
+    async def test_trace_single_actor(self, running_editor: ToolCaller, test_level_path: str, test_output_dir: Path):
         """Test tracing a single actor (player character)."""
         # Use test output directory
-        output_dir = TEST_OUTPUT_DIR / "test_trace_single_actor"
+        output_dir = test_output_dir / "test_trace_single_actor"
         if output_dir.exists():
             shutil.rmtree(output_dir)
 
@@ -144,10 +141,10 @@ class TestTraceActorsWithEditor:
             pass
 
     @pytest.mark.asyncio
-    async def test_trace_actor_not_found(self, running_editor: ToolCaller, test_level_path: str):
+    async def test_trace_actor_not_found(self, running_editor: ToolCaller, test_level_path: str, test_output_dir: Path):
         """Test tracing with non-existent actor name."""
         # Use test output directory
-        output_dir = TEST_OUTPUT_DIR / "test_trace_actor_not_found"
+        output_dir = test_output_dir / "test_trace_actor_not_found"
         if output_dir.exists():
             shutil.rmtree(output_dir)
 
@@ -179,10 +176,10 @@ class TestTraceActorsWithEditor:
             pass
 
     @pytest.mark.asyncio
-    async def test_trace_multiple_actors(self, running_editor: ToolCaller, test_level_path: str):
+    async def test_trace_multiple_actors(self, running_editor: ToolCaller, test_level_path: str, test_output_dir: Path):
         """Test tracing multiple actors."""
         # Use test output directory
-        output_dir = TEST_OUTPUT_DIR / "test_trace_multiple_actors"
+        output_dir = test_output_dir / "test_trace_multiple_actors"
         if output_dir.exists():
             shutil.rmtree(output_dir)
 
@@ -223,10 +220,10 @@ class TestTraceActorsWithEditor:
             pass
 
     @pytest.mark.asyncio
-    async def test_trace_with_screenshots(self, running_editor: ToolCaller, test_level_path: str):
+    async def test_trace_with_screenshots(self, running_editor: ToolCaller, test_level_path: str, test_output_dir: Path):
         """Test tracing with screenshot capture enabled."""
         # Use test output directory
-        output_dir = TEST_OUTPUT_DIR / "test_trace_with_screenshots"
+        output_dir = test_output_dir / "test_trace_with_screenshots"
         if output_dir.exists():
             shutil.rmtree(output_dir)
 
@@ -319,10 +316,10 @@ class TestTraceActorsWithEditor:
             pass
 
     @pytest.mark.asyncio
-    async def test_trace_with_screenshots_single_angle(self, running_editor: ToolCaller, test_level_path: str):
+    async def test_trace_with_screenshots_single_angle(self, running_editor: ToolCaller, test_level_path: str, test_output_dir: Path):
         """Test tracing with single-angle screenshot capture."""
         # Use test output directory
-        output_dir = TEST_OUTPUT_DIR / "test_trace_with_screenshots_single_angle"
+        output_dir = test_output_dir / "test_trace_with_screenshots_single_angle"
         if output_dir.exists():
             shutil.rmtree(output_dir)
 
