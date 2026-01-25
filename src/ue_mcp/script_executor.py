@@ -101,7 +101,7 @@ def execute_script_from_path(
 
     # Step 1: Inject parameters via environment variables
     injection_code = build_env_injection_code(str(script_path), params)
-    inject_result = execution._execute(injection_code, timeout=5.0)
+    inject_result = execution.execute_code(injection_code, timeout=5.0)
 
     if not inject_result.get("success"):
         return {

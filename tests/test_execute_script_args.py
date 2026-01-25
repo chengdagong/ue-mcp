@@ -268,8 +268,8 @@ class TestBuildEnvInjectionCode:
         result = build_env_injection_code("/path/to/script.py", {})
         assert "import os" in result
         assert f"os.environ[{repr(ENV_VAR_CALL)}]" in result
-        # Should have empty JSON object in payload
-        assert ":{}" in result  # The payload ends with :{}
+        # Should have empty JSON object in payload (escaped for f-string: {} -> {{}})
+        assert ":{{}}" in result  # The payload ends with :{{}} (escaped empty JSON)
 
     def test_complex_types(self):
         """Test that complex types (lists, dicts) are JSON encoded."""
@@ -286,9 +286,11 @@ class TestBuildEnvInjectionCode:
         # The format is: os.environ['UE_MCP_CALL'] = f'<checksum>:{time.time()}:<json>'
         import re
         # The payload format in the f-string: '{checksum}:{time.time()}:{json_params}'
+        # Note: JSON braces are escaped for f-string ({{ and }})
         match = re.search(r"= f'([a-f0-9]{8}):\{time\.time\(\)\}:(.+)'", result)
         assert match is not None, f"Could not find payload pattern in: {result}"
-        json_str = match.group(2)
+        # Unescape f-string braces before parsing as JSON
+        json_str = match.group(2).replace("{{", "{").replace("}}", "}")
         parsed = json.loads(json_str)
 
         assert parsed["actors"] == ["Actor1", "Actor2"]
@@ -334,7 +336,8 @@ class TestBuildEnvInjectionCode:
             "/path/to/script.py",
             {"a": None, "b": None}
         )
-        assert ":{}" in result  # Empty JSON at end of payload
+        # Empty JSON {} is escaped to {{}} for f-string
+        assert ":{{}}" in result  # Empty JSON at end of payload (escaped)
 
     def test_includes_mcp_mode(self):
         """Test that injection code sets MCP mode flag."""

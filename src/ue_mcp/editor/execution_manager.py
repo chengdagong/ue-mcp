@@ -58,7 +58,7 @@ class ExecutionManager:
         """
         self._ctx = context
 
-    def execute(self, code: str, timeout: float = 30.0) -> dict[str, Any]:
+    def execute_code(self, code: str, timeout: float = 30.0) -> dict[str, Any]:
         """
         Execute Python code in the editor without additional checks.
 
@@ -74,9 +74,9 @@ class ExecutionManager:
         Returns:
             Execution result dictionary
         """
-        return self._execute(code, timeout)
+        return self._execute_code(code, timeout)
 
-    def _execute(self, code: str, timeout: float = 30.0) -> dict[str, Any]:
+    def _execute_code(self, code: str, timeout: float = 30.0) -> dict[str, Any]:
         """
         Execute Python code in the managed editor (internal use only).
 
@@ -209,7 +209,7 @@ class ExecutionManager:
             Path to Python interpreter, or None if failed
         """
         try:
-            result = self._execute(
+            result = self._execute_code(
                 "import unreal; print(unreal.get_interpreter_executable_path())", timeout=5.0
             )
             if result.get("success") and result.get("output"):
@@ -327,7 +327,7 @@ else:
 
             logger.debug("Inspector code prepared, executing in editor...")
             # Execute inspector in editor
-            inspector_result = self._execute(inspector_code, timeout=10.0)
+            inspector_result = self._execute_code(inspector_code, timeout=10.0)
 
             logger.debug(f"Inspector execution result: success={inspector_result.get('success')}")
 
@@ -417,7 +417,7 @@ else:
             # Step 3: Try executing imports, install missing modules and retry
             attempts = 0
             while attempts <= max_install_attempts:
-                result = self._execute(import_code, timeout=10.0)
+                result = self._execute_code(import_code, timeout=10.0)
 
                 if result.get("success"):
                     # All imports succeeded
@@ -460,7 +460,7 @@ else:
                 attempts += 1
 
         # Step 4: Execute the full code
-        result = self._execute(code, timeout=timeout)
+        result = self._execute_code(code, timeout=timeout)
 
         # Add installation info
         if installed_packages:
