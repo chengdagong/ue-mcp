@@ -37,7 +37,7 @@ import time
 import editor_capture
 
 
-from ue_mcp_capture.utils import ensure_level_loaded, output_result
+from ue_mcp_capture.utils import bootstrap_from_env, ensure_level_loaded, output_result
 
 # Default parameter values for CLI mode (kept as reference)
 # DEFAULTS = {
@@ -129,6 +129,9 @@ def capture_mode_batch(params):
 
 
 def main():
+    # Bootstrap from environment variables (must be before argparse)
+    bootstrap_from_env()
+
     parser = argparse.ArgumentParser(
         description="Window capture script for UE Editor",
         formatter_class=argparse.RawDescriptionHelpFormatter

@@ -23,17 +23,10 @@ for mod_name in modules_to_remove:
 
 import asset_diagnostic
 
-# Flag to track if running in MCP mode (vs CLI mode)
-_mcp_mode = None
-
-
 def _is_mcp_mode() -> bool:
     """Check if running in MCP mode (vs CLI mode)."""
-    global _mcp_mode
-    if _mcp_mode is None:
-        import os
-        _mcp_mode = os.environ.get('UE_MCP_MODE') == '1'
-    return _mcp_mode
+    from ue_mcp_capture.utils import _is_mcp_mode as _utils_is_mcp_mode
+    return _utils_is_mcp_mode()
 
 
 def output_result(data: dict) -> None:
@@ -90,6 +83,10 @@ def serialize_result(result) -> dict:
 
 
 def main():
+    # Bootstrap from environment variables (must be before argparse)
+    from ue_mcp_capture.utils import bootstrap_from_env
+    bootstrap_from_env()
+
     parser = argparse.ArgumentParser(
         description="Run diagnostics on a UE5 asset"
     )

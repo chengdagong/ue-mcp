@@ -353,7 +353,7 @@ class TestAssetQueryParsing:
 
     def test_parse_valid_asset_query_result(self):
         """Test parsing a valid asset query result."""
-        from ue_mcp.server import _parse_json_result
+        from ue_mcp.tools._helpers import parse_json_result as _parse_json_result
 
         exec_result = {
             "success": True,
@@ -370,7 +370,7 @@ class TestAssetQueryParsing:
 
     def test_parse_failed_execution(self):
         """Test parsing a failed execution result."""
-        from ue_mcp.server import _parse_json_result
+        from ue_mcp.tools._helpers import parse_json_result as _parse_json_result
 
         exec_result = {
             "success": False,
@@ -383,7 +383,7 @@ class TestAssetQueryParsing:
 
     def test_parse_empty_output(self):
         """Test parsing result with empty output."""
-        from ue_mcp.server import _parse_json_result
+        from ue_mcp.tools._helpers import parse_json_result as _parse_json_result
 
         exec_result = {
             "success": True,
@@ -396,7 +396,7 @@ class TestAssetQueryParsing:
 
     def test_parse_no_json_in_output(self):
         """Test parsing result with no JSON in output."""
-        from ue_mcp.server import _parse_json_result
+        from ue_mcp.tools._helpers import parse_json_result as _parse_json_result
 
         exec_result = {
             "success": True,

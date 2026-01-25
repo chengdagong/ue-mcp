@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     """Register code and script execution tools."""
 
-    from ._helpers import build_script_args_injection
+    from ._helpers import build_env_injection_code
 
     @mcp.tool(name="editor_execute_code")
     def execute_code(
@@ -72,9 +72,12 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         """
         Execute a Python script file in the managed Unreal Editor.
 
-        The script is read from the file system and executed in the editor's Python
-        environment with access to the 'unreal' module and all editor APIs.
-        Missing modules will be automatically installed.
+        The script is executed directly from disk using EXECUTE_FILE mode,
+        enabling true hot-reload (modifications take effect without restart).
+        Parameters are passed via environment variables.
+
+        Scripts must call bootstrap_from_env() at the start of main() to
+        read parameters from env vars and set up sys.argv for argparse.
 
         Args:
             script_path: Path to the Python script file to execute
@@ -88,7 +91,6 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - result: Return value (if any)
             - output: Console output from the script
             - error: Error message (if failed)
-            - auto_installed: List of packages that were auto-installed (if any)
 
         Example:
             execute_script("/path/to/my_script.py")
@@ -112,20 +114,29 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
                 "error": f"Path is not a file: {script_path}",
             }
 
-        try:
-            code = path.read_text(encoding="utf-8")
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Failed to read script file: {e}",
-            }
-
-        # Inject arguments before script content
-        injection_code = build_script_args_injection(script_path, args, kwargs)
-        full_code = injection_code + code
+        # Build params from args/kwargs
+        # For args: pass as special __args__ key for raw argv handling
+        # For kwargs: pass directly as key-value pairs
+        params: dict[str, Any] = {}
+        if args:
+            params["__args__"] = args
+        if kwargs:
+            params.update(kwargs)
 
         manager = state.get_editor_manager()
-        return manager.execute_with_checks(full_code, timeout=timeout)
+
+        # Step 1: Inject parameters via environment variables
+        injection_code = build_env_injection_code(str(path), params)
+        inject_result = manager.execute(injection_code, timeout=5.0)
+
+        if not inject_result.get("success"):
+            return {
+                "success": False,
+                "error": f"Failed to inject parameters: {inject_result.get('error')}",
+            }
+
+        # Step 2: Execute script file directly (true hot-reload)
+        return manager.execute_script_file(str(path), timeout=timeout)
 
     @mcp.tool(name="editor_pip_install")
     def pip_install_packages(

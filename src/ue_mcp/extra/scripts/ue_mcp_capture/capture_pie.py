@@ -19,7 +19,7 @@ Usage (CLI):
         --target-height=90        Target height offset (default: 90)
         --task-id=<id>            Task ID for completion file (optional)
 
-MCP mode (sys.argv):
+MCP mode (environment variables):
     task_id: str - Unique task identifier for completion file
     output_dir: str - Output directory
     level: str - Level path to load
@@ -33,7 +33,7 @@ MCP mode (sys.argv):
 """
 import argparse
 import editor_capture
-from ue_mcp_capture.utils import ensure_level_loaded, output_result
+from ue_mcp_capture.utils import bootstrap_from_env, ensure_level_loaded, output_result
 
 # Default parameter values for CLI mode (kept as reference)
 # DEFAULTS = {
@@ -53,6 +53,9 @@ from ue_mcp_capture.utils import ensure_level_loaded, output_result
 
 
 def main():
+    # Bootstrap from environment variables (must be before argparse)
+    bootstrap_from_env()
+
     parser = argparse.ArgumentParser(
         description="PIE (Play-In-Editor) capture script for UE Editor",
         formatter_class=argparse.RawDescriptionHelpFormatter

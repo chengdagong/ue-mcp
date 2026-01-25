@@ -2,9 +2,16 @@
 Unit tests for execute_script argument passing feature.
 """
 
+import json
 import pytest
 
-from ue_mcp.tools._helpers import build_script_args_injection as _build_script_args_injection
+from ue_mcp.tools._helpers import (
+    build_script_args_injection as _build_script_args_injection,
+    build_env_injection_code,
+    compute_script_checksum,
+    ENV_VAR_MODE,
+    ENV_VAR_CALL,
+)
 
 
 class TestBuildScriptArgsInjection:
@@ -205,3 +212,162 @@ print(f"Actors: {actors}")
         with open(script_path, encoding="utf-8") as f:
             content = f.read()
         assert "__SCRIPT_ARGS__" in content
+
+
+class TestComputeScriptChecksum:
+    """Tests for compute_script_checksum helper function."""
+
+    def test_checksum_is_8_chars(self):
+        """Checksum should be 8 hex characters."""
+        result = compute_script_checksum("/path/to/script.py")
+        assert len(result) == 8
+        assert all(c in "0123456789abcdef" for c in result)
+
+    def test_same_path_same_checksum(self):
+        """Same path should produce same checksum."""
+        path = "/path/to/script.py"
+        assert compute_script_checksum(path) == compute_script_checksum(path)
+
+    def test_different_paths_different_checksums(self):
+        """Different paths should produce different checksums."""
+        checksum1 = compute_script_checksum("/path/to/script1.py")
+        checksum2 = compute_script_checksum("/path/to/script2.py")
+        assert checksum1 != checksum2
+
+    def test_path_with_special_chars(self):
+        """Checksum should work with special characters in path."""
+        result = compute_script_checksum("/path/with spaces/script's file.py")
+        assert len(result) == 8
+
+
+class TestBuildEnvInjectionCode:
+    """Tests for build_env_injection_code helper function for environment variable parameter passing."""
+
+    def test_basic_params(self):
+        """Test basic parameter injection via env vars."""
+        result = build_env_injection_code("/path/to/script.py", {"key": "value"})
+        assert "import os" in result
+        assert f"os.environ[{repr(ENV_VAR_MODE)}]" in result
+        assert f"os.environ[{repr(ENV_VAR_CALL)}]" in result
+        # Params should be JSON encoded in the payload
+        assert '"key": "value"' in result or '"key":"value"' in result
+
+    def test_filters_none_values(self):
+        """Test that None values are filtered out."""
+        result = build_env_injection_code(
+            "/path/to/script.py",
+            {"keep": "value", "remove": None, "also_remove": None}
+        )
+        # The result contains the payload with JSON params
+        assert '"keep"' in result
+        assert '"remove"' not in result
+        assert '"also_remove"' not in result
+
+    def test_empty_params(self):
+        """Test with empty params dict."""
+        result = build_env_injection_code("/path/to/script.py", {})
+        assert "import os" in result
+        assert f"os.environ[{repr(ENV_VAR_CALL)}]" in result
+        # Should have empty JSON object in payload
+        assert ":{}" in result  # The payload ends with :{}
+
+    def test_complex_types(self):
+        """Test that complex types (lists, dicts) are JSON encoded."""
+        params = {
+            "actors": ["Actor1", "Actor2"],
+            "settings": {"nested": {"deep": True}},
+            "count": 42,
+            "ratio": 3.14,
+            "enabled": False,
+        }
+        result = build_env_injection_code("/path/to/script.py", params)
+
+        # Extract the payload from the result
+        # The format is: os.environ['UE_MCP_CALL'] = f'<checksum>:{time.time()}:<json>'
+        import re
+        # The payload format in the f-string: '{checksum}:{time.time()}:{json_params}'
+        match = re.search(r"= f'([a-f0-9]{8}):\{time\.time\(\)\}:(.+)'", result)
+        assert match is not None, f"Could not find payload pattern in: {result}"
+        json_str = match.group(2)
+        parsed = json.loads(json_str)
+
+        assert parsed["actors"] == ["Actor1", "Actor2"]
+        assert parsed["settings"] == {"nested": {"deep": True}}
+        assert parsed["count"] == 42
+        assert parsed["ratio"] == 3.14
+        assert parsed["enabled"] is False
+
+    def test_special_characters_in_path(self):
+        """Test that special characters in path are handled."""
+        result = build_env_injection_code(
+            "/path/with spaces/script's file.py",
+            {"key": "value"}
+        )
+        # Payload should contain checksum of the path
+        checksum = compute_script_checksum("/path/with spaces/script's file.py")
+        assert checksum in result
+
+    def test_special_characters_in_values(self):
+        """Test that special characters in param values are handled."""
+        result = build_env_injection_code(
+            "/path/to/script.py",
+            {"message": "Hello 'world' with \"quotes\" and\nnewlines"}
+        )
+        # Should be valid Python code
+        assert "import os" in result
+        # JSON encoding handles these characters properly
+        assert "Hello" in result
+
+    def test_boolean_values(self):
+        """Test that boolean values are preserved in JSON."""
+        result = build_env_injection_code(
+            "/path/to/script.py",
+            {"enabled": True, "disabled": False}
+        )
+        # JSON uses lowercase true/false
+        assert "true" in result
+        assert "false" in result
+
+    def test_all_none_values_filtered(self):
+        """Test that params with all None values result in empty JSON."""
+        result = build_env_injection_code(
+            "/path/to/script.py",
+            {"a": None, "b": None}
+        )
+        assert ":{}" in result  # Empty JSON at end of payload
+
+    def test_includes_mcp_mode(self):
+        """Test that injection code sets MCP mode flag."""
+        result = build_env_injection_code("/path/to/script.py", {"key": "value"})
+        assert f"os.environ[{repr(ENV_VAR_MODE)}] = '1'" in result
+
+    def test_payload_includes_checksum_and_timestamp(self):
+        """Test that payload includes checksum and timestamp."""
+        result = build_env_injection_code("/path/to/script.py", {"key": "value"})
+        assert "import time" in result
+        assert f"os.environ[{repr(ENV_VAR_CALL)}]" in result
+        # Payload should include checksum and time.time()
+        checksum = compute_script_checksum("/path/to/script.py")
+        assert checksum in result
+        assert "time.time()" in result
+
+    def test_payload_format(self):
+        """Test that payload has correct format: <checksum>:{time.time()}:<json_params>."""
+        result = build_env_injection_code("/path/to/script.py", {"key": "value"})
+        checksum = compute_script_checksum("/path/to/script.py")
+        # The line should be: os.environ['UE_MCP_CALL'] = f'<checksum>:{time.time()}:<json>'
+        # Check that format string has checksum, time.time(), and JSON params
+        assert f"f'{checksum}:{{time.time()}}:" in result
+        assert '{"key": "value"}' in result or '{"key":"value"}' in result
+
+    def test_only_two_env_vars(self):
+        """Test that only two env vars are set (MODE and PAYLOAD)."""
+        result = build_env_injection_code("/path/to/script.py", {"key": "value"})
+        lines = result.strip().split("\n")
+
+        env_var_lines = [line for line in lines if "os.environ[" in line]
+        assert len(env_var_lines) == 2, f"Expected 2 env var lines, got: {env_var_lines}"
+
+        # Verify they are MODE and PAYLOAD
+        assert any("UE_MCP_MODE" in line for line in env_var_lines)
+        assert any("UE_MCP_CALL" in line for line in env_var_lines)

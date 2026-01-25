@@ -4,13 +4,13 @@ Level loading script.
 Loads a level in the editor using LevelEditorSubsystem.
 
 Usage:
-    # Via MCP (parameters auto-injected):
+    # Via MCP (parameters auto-injected via environment variables):
     MCP tool calls this script automatically
 
     # Via UE Python console:
     import sys
     sys.argv = ['level_load.py', '--level-path', '/Game/Maps/MyLevel']
-    # exec(open(r'D:\\path\\to\\level_load.py').read())
+    exec(open(r'D:\\path\\to\\level_load.py').read())
 
 Parameters:
     level_path: Path to the level to load (e.g., /Game/Maps/MyLevel)
@@ -37,6 +37,10 @@ def level_exists(level_path: str) -> bool:
 
 def main():
     """Main entry point."""
+    # Bootstrap from environment variables (must be before argparse)
+    from ue_mcp_capture.utils import bootstrap_from_env
+    bootstrap_from_env()
+
     parser = argparse.ArgumentParser(description="Load a level in the editor.")
     parser.add_argument(
         "--level-path",

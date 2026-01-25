@@ -9,7 +9,7 @@ and query Python APIs. It supports multiple modes:
 - member_info: Get specific member details
 - search: Fuzzy search across all names
 
-Parameters (via sys.argv):
+Parameters (via sys.argv or environment variables):
     mode: Query mode
     query: Search query or pattern
     include_inherited: Include inherited members (for class_info)
@@ -23,6 +23,10 @@ import json
 import re
 
 import unreal
+
+# Bootstrap from environment variables (must be before argparse.parse_args())
+from ue_mcp_capture.utils import bootstrap_from_env
+bootstrap_from_env()
 
 
 def parse_args():

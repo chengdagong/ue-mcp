@@ -13,7 +13,7 @@ Usage (CLI):
         --resolution-width=800   Screenshot width (default: 800)
         --resolution-height=600  Screenshot height (default: 600)
 
-MCP mode (sys.argv):
+MCP mode (environment variables):
     level: str - Level path to load
     target_x, target_y, target_z: float - Target location
     distance: float - Camera distance
@@ -28,7 +28,7 @@ import unreal
 import editor_capture
 
 
-from ue_mcp_capture.utils import ensure_level_loaded, output_result
+from ue_mcp_capture.utils import bootstrap_from_env, ensure_level_loaded, output_result
 
 # Default parameter values for CLI mode (kept as reference)
 # DEFAULTS = {
@@ -44,6 +44,9 @@ from ue_mcp_capture.utils import ensure_level_loaded, output_result
 
 
 def main():
+    # Bootstrap from environment variables (must be before argparse)
+    bootstrap_from_env()
+
     parser = argparse.ArgumentParser(
         description="Orbital capture script for UE Editor",
         formatter_class=argparse.RawDescriptionHelpFormatter

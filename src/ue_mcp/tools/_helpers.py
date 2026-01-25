@@ -6,6 +6,14 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
+# Environment variable names for script parameter passing
+ENV_VAR_MODE = "UE_MCP_MODE"  # "1" when running via MCP (vs CLI)
+ENV_VAR_CALL = "UE_MCP_CALL"  # "<checksum>:<timestamp>:<json_params>" script call info
+
+# Maximum allowed age for injected parameters (in seconds)
+# If parameters are older than this, the script should reject them
+INJECT_TIME_MAX_AGE = 0.2
+
 if TYPE_CHECKING:
     from fastmcp import Context
 
@@ -108,6 +116,62 @@ def build_script_args_injection(
         lines.append("__SCRIPT_ARGS__ = builtins.__SCRIPT_ARGS__")
 
     return "\n".join(lines) + "\n\n"
+
+
+def compute_script_checksum(script_path: str) -> str:
+    """Compute a short checksum of the script path for token validation.
+
+    Uses a simple hash to create a short identifier that scripts can verify
+    to ensure parameters were intended for them.
+
+    Args:
+        script_path: Absolute path to the script file
+
+    Returns:
+        8-character hex checksum
+    """
+    import hashlib
+    return hashlib.md5(script_path.encode()).hexdigest()[:8]
+
+
+def build_env_injection_code(script_path: str, params: dict[str, Any]) -> str:
+    """Build code to inject parameters via environment variables.
+
+    This sets the following env vars:
+    - UE_MCP_MODE: "1" to indicate MCP mode (vs CLI mode)
+    - UE_MCP_CALL: "<checksum>:<timestamp>:<json_params>" script call info
+
+    The call info combines:
+    - checksum: 8-char MD5 hash of script path, ensuring params are for this script
+    - timestamp: injection time, ensuring params are fresh (< INJECT_TIME_MAX_AGE)
+    - json_params: JSON-encoded parameters
+
+    Args:
+        script_path: Absolute path to the script file
+        params: Parameter dictionary (None values are filtered out)
+
+    Returns:
+        Python code string to execute before EXECUTE_FILE
+    """
+    # Filter out None values
+    clean_params = {k: v for k, v in params.items() if v is not None}
+
+    # Compute checksum for the script path
+    checksum = compute_script_checksum(str(script_path))
+
+    # JSON-encode parameters (will be part of the payload)
+    params_json = json.dumps(clean_params)
+
+    lines = [
+        "import os",
+        "import time",
+        # Set MCP mode flag
+        f"os.environ[{repr(ENV_VAR_MODE)}] = '1'",
+        # Set call info: "<checksum>:<timestamp>:<json_params>"
+        f"os.environ[{repr(ENV_VAR_CALL)}] = f'{checksum}:{{time.time()}}:{params_json}'",
+    ]
+
+    return "\n".join(lines)
 
 
 async def run_pie_task(

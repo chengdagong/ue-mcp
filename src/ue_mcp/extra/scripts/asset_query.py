@@ -71,6 +71,10 @@ def query_assets_by_type(asset_type_path, base_path="/Game", limit=100):
 
 def main():
     """Main entry point."""
+    # Bootstrap from environment variables (must be before argparse)
+    from ue_mcp_capture.utils import bootstrap_from_env
+    bootstrap_from_env()
+
     parser = argparse.ArgumentParser(
         description="Query project assets by type."
     )

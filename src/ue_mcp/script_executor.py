@@ -1,9 +1,17 @@
 """
 Script execution module for UE-MCP.
 Handles searching, loading, and parameter injection for standalone Python scripts.
+
+Uses true EXECUTE_FILE mode with environment variable parameter passing:
+1. Inject parameters via environment variables (EXECUTE_STATEMENT)
+2. Execute script file directly (EXECUTE_FILE)
+
+Scripts read parameters via bootstrap_from_env() which converts env vars to sys.argv.
 """
 from pathlib import Path
 from typing import Any
+
+from .tools._helpers import build_env_injection_code
 
 
 def get_scripts_dir() -> Path:
@@ -28,9 +36,10 @@ def execute_script(
     timeout: float = 120.0
 ) -> dict[str, Any]:
     """
-    Execute a capture script in the UE editor using two-step EXECUTE_FILE mode.
+    Execute a capture script in the UE editor using true EXECUTE_FILE mode.
 
-    This enables true hot-reload: the script file is executed directly from disk.
+    This enables true hot-reload: the script file is executed directly from disk
+    by UE5, so modifications take effect immediately without restarting.
 
     Args:
         manager: EditorManager instance
@@ -58,13 +67,17 @@ def execute_script_from_path(
     timeout: float = 120.0
 ) -> dict[str, Any]:
     """
-    Execute a script from a specific path in the UE editor using two-step EXECUTE_FILE mode.
+    Execute a script from a specific path in the UE editor using true EXECUTE_FILE mode.
 
-    This enables true hot-reload: the script file is executed directly from disk,
-    so modifications take effect immediately without restarting the editor or MCP server.
+    This enables true hot-reload: the script file is executed directly from disk
+    by UE5, so modifications take effect immediately without restarting.
 
-    Step 1: Inject parameters into sys.argv and set MCP mode marker
-    Step 2: Execute script file directly (EXECUTE_FILE mode)
+    Execution flow:
+    1. Inject parameters via environment variables (EXECUTE_STATEMENT)
+    2. Execute script file directly (EXECUTE_FILE) - UE5 reads file from disk
+
+    Scripts must call bootstrap_from_env() at the start of main() to read
+    parameters from env vars and set up sys.argv for argparse.
 
     Args:
         manager: EditorManager instance
@@ -83,48 +96,16 @@ def execute_script_from_path(
     if not script_path.exists():
         raise FileNotFoundError(f"Script not found: {script_path}")
 
-    # Read script content
-    try:
-        script_content = script_path.read_text(encoding="utf-8")
-    except Exception as e:
+    # Step 1: Inject parameters via environment variables
+    injection_code = build_env_injection_code(str(script_path), params)
+    inject_result = manager.execute(injection_code, timeout=5.0)
+
+    if not inject_result.get("success"):
         return {
             "success": False,
-            "error": f"Failed to read script file: {e}",
+            "error": f"Failed to inject parameters: {inject_result.get('error')}",
         }
 
-    # Convert params dict to CLI args for sys.argv compatibility
-    import json as json_module
-    args = []
-    for key, value in params.items():
-        # Skip None values - don't pass them as arguments
-        if value is None:
-            continue
-
-        # Handle boolean flags
-        if isinstance(value, bool):
-            if value:
-                # Only pass the flag if True
-                args.append(f"--{key.replace('_', '-')}")
-            # If False, don't pass anything (argparse will use default)
-        else:
-            # Regular arguments with values
-            args.append(f"--{key.replace('_', '-')}")
-            # Use JSON encoding for lists/dicts to preserve structure
-            if isinstance(value, (list, dict)):
-                args.append(json_module.dumps(value))
-            else:
-                args.append(str(value))
-
-    # Build parameter injection code
-    injection_code = f"""import sys
-import os
-sys.argv = {repr([str(script_path)] + args)}
-os.environ['UE_MCP_MODE'] = '1'
-
-"""
-
-    # Concatenate injection with script content
-    full_code = injection_code + script_content
-
-    # Execute full code with checks (enables hot-reload via file content reading)
-    return manager.execute_with_checks(full_code, timeout=timeout)
+    # Step 2: Execute script file directly (true hot-reload)
+    # UE5 reads the file from disk, so any modifications take effect immediately
+    return manager.execute_script_file(str(script_path), timeout=timeout)

@@ -4,13 +4,13 @@ Asset opening script with optional tab switching.
 Opens a UE5 asset in its appropriate editor and optionally switches to a specific tab.
 
 Usage:
-    # Via MCP (parameters auto-injected):
+    # Via MCP (parameters auto-injected via environment variables):
     MCP tool calls this script automatically
 
     # Via UE Python console:
     import sys
     sys.argv = ['asset_open.py', '--asset-path', '/Game/BP_Test', '--tab-id', 'Inspector']
-    # exec(open(r'C:\\path\\to\\asset_open.py').read())
+    exec(open(r'C:\\path\\to\\asset_open.py').read())
 
 Parameters:
     asset_path: Path to the asset to open (required)
@@ -39,6 +39,10 @@ import unreal
 
 def main():
     """Main entry point."""
+    # Bootstrap from environment variables (must be before argparse)
+    from ue_mcp_capture.utils import bootstrap_from_env
+    bootstrap_from_env()
+
     parser = argparse.ArgumentParser(
         description="Open a UE5 asset in its appropriate editor and optionally switch to a specific tab."
     )

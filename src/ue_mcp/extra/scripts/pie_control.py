@@ -4,13 +4,13 @@ PIE (Play-In-Editor) control script.
 Provides unified control for starting and stopping PIE sessions.
 
 Usage:
-    # Via MCP (parameters auto-injected):
+    # Via MCP (parameters auto-injected via environment variables):
     MCP tool calls this script automatically
 
     # Via UE Python console:
     import sys
     sys.argv = ['pie_control.py', '--command', 'start']
-    # exec(open(r'C:\\path\\to\\pie_control.py').read())
+    exec(open(r'C:\\path\\to\\pie_control.py').read())
 
 Parameters:
     command: "start" or "stop"
@@ -29,6 +29,10 @@ import editor_capture.pie_capture as pie_capture
 
 def main():
     """Main entry point."""
+    # Bootstrap from environment variables (must be before argparse)
+    from ue_mcp_capture.utils import bootstrap_from_env
+    bootstrap_from_env()
+
     parser = argparse.ArgumentParser(
         description="Control PIE (Play-In-Editor) sessions - start or stop."
     )

@@ -54,7 +54,7 @@ MCP mode (sys.argv):
 import argparse
 import json
 import editor_capture
-from ue_mcp_capture.utils import ensure_level_loaded, output_result
+from ue_mcp_capture.utils import bootstrap_from_env, ensure_level_loaded, output_result
 
 # Default parameter values (for reference)
 # DEFAULTS = {
@@ -75,6 +75,9 @@ from ue_mcp_capture.utils import ensure_level_loaded, output_result
 
 def parse_args():
     """Parse command-line arguments."""
+    # Bootstrap from environment variables (must be before argparse)
+    bootstrap_from_env()
+
     parser = argparse.ArgumentParser(
         description="PIE actor tracing script for UE Editor",
         formatter_class=argparse.RawDescriptionHelpFormatter,
