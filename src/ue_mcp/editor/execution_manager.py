@@ -221,6 +221,20 @@ class ExecutionManager:
             # Wait for latent commands to complete if script contains them
             # This handles async scripts using @unreal.AutomationScheduler.add_latent_command
             if has_latent_commands and result.get("success", False):
+                # Clean up TeeWriter before latent checks to prevent check output
+                # from being captured in the temp file
+                if output_file:
+                    cleanup_code = (
+                        "import sys, builtins\n"
+                        "if hasattr(builtins, '__ue_mcp_orig_stdout__'):\n"
+                        "    sys.stdout = builtins.__ue_mcp_orig_stdout__\n"
+                        "if hasattr(builtins, '__ue_mcp_orig_stderr__'):\n"
+                        "    sys.stderr = builtins.__ue_mcp_orig_stderr__\n"
+                        "if hasattr(builtins, '__ue_mcp_output_file__'):\n"
+                        "    builtins.__ue_mcp_output_file__.close()"
+                    )
+                    self._execute_code(cleanup_code, timeout=5.0)
+
                 latent_result = self._wait_for_latent_commands(latent_timeout)
                 if latent_result.get("timed_out"):
                     result["latent_warning"] = (
