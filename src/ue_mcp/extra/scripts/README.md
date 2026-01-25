@@ -73,7 +73,6 @@ result = editor_asset_open(asset_path="/Game/BP_Test")
 
 | Script | MCP Tools | Purpose |
 |--------|-----------|---------|
-| `capture_orbital.py` | `editor_capture_orbital` | Multi-angle screenshots around target |
 | `capture_pie.py` | `editor_capture_pie` | Screenshot capture during PIE |
 | `capture_window.py` | `editor_capture_window` | Windows API editor window capture |
 | `trace_actors_pie.py` | `editor_trace_actors_in_pie` | Actor transform tracing in PIE |

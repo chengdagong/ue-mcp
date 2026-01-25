@@ -36,9 +36,9 @@ UE-MCP 服务器提供以下工具：
 ### 截图捕获
 | 工具 | 描述 |
 |------|------|
-| `editor_capture_orbital` | 使用 SceneCapture2D 围绕目标位置捕获多角度截图 |
 | `editor_capture_pie` | 在 PIE 会话期间自动捕获截图 |
 | `editor_capture_window` | 使用 Windows API 捕获编辑器窗口截图（仅 Windows） |
+| `editor_level_screenshot` | 从自定义相机位置捕获关卡截图 |
 
 ### 资产操作
 | 工具 | 描述 |
@@ -97,7 +97,6 @@ result = editor_asset_open(asset_path="/Game/BP_Test")
 | `pie_control.py` | `editor_start_pie`, `editor_stop_pie` | `python pie_control.py --command=start` |
 | `level_load.py` | `editor_load_level` | `python level_load.py --level-path=/Game/Maps/MyLevel` |
 | `api_search.py` | `python_api_search` | `python api_search.py --mode=list_classes --query=*Actor*` |
-| `ue_mcp_capture/capture_orbital.py` | `editor_capture_orbital` | `python capture_orbital.py --level=/Game/Maps/Test --target-x=0 ...` |
 | `ue_mcp_capture/capture_pie.py` | `editor_capture_pie` | `python capture_pie.py --output-dir=./screenshots --level=/Game/Maps/Test` |
 | `ue_mcp_capture/capture_window.py` | `editor_capture_window` | `python capture_window.py --level=/Game/Maps/Test --output-file=./screen.png` |
 | `ue_mcp_capture/trace_actors_pie.py` | `editor_trace_actors_in_pie` | `python trace_actors_pie.py --output-dir=./trace --level=/Game/Maps/Test` |

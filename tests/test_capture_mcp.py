@@ -44,51 +44,9 @@ class TestCaptureTools:
         tools = await tool_caller.list_tools()
 
         # Check capture tools are present
-        assert "editor_capture_orbital" in tools
         assert "editor_capture_pie" in tools
         assert "editor_capture_window" in tools
         assert "editor_level_screenshot" in tools
-
-    @pytest.mark.asyncio
-    async def test_capture_orbital_with_editor(
-        self, running_editor: ToolCaller, test_output_dir: Path, test_level_path: str
-    ):
-        """Test capture.orbital with editor running."""
-        # Editor is already running via running_editor fixture
-        # Create test-specific output directory
-        orbital_dir = test_output_dir / "orbital"
-        orbital_dir.mkdir(exist_ok=True)
-
-        result = await running_editor.call(
-            "editor_capture_orbital",
-            {
-                "level": test_level_path,
-                "target_x": 0,
-                "target_y": 0,
-                "target_z": 100,
-                "distance": 500,
-                "preset": "orthographic",
-                "output_dir": str(orbital_dir),
-                "resolution_width": 640,
-                "resolution_height": 480,
-            },
-            timeout=120,
-        )
-
-        data = parse_tool_result(result)
-        assert data.get("success"), f"Capture orbital failed: {data}"
-        assert "files" in data or "total_captures" in data
-
-        # Verify that screenshot files were created
-        screenshot_files = list(orbital_dir.glob("**/*.png"))
-        assert len(screenshot_files) > 0, f"No screenshot files were created in {orbital_dir}"
-
-        # Verify file sizes
-        for img_file in screenshot_files:
-            file_size = img_file.stat().st_size
-            assert file_size > 1024, (
-                f"Screenshot {img_file.name} is empty or too small (size: {file_size} bytes)"
-            )
 
     @pytest.mark.asyncio
     async def test_capture_pie_with_editor(self, initialized_tool_caller: ToolCaller):
@@ -257,28 +215,6 @@ class TestCaptureTools:
 @pytest.mark.integration
 class TestCaptureToolValidation:
     """Test input validation for capture tools."""
-
-    @pytest.mark.asyncio
-    async def test_capture_orbital_missing_level(self, tool_caller: ToolCaller):
-        """Test capture.orbital with missing level parameter."""
-        # Missing required 'level' parameter should cause error
-        try:
-            result = await tool_caller.call(
-                "editor_capture_orbital",
-                {
-                    # "level" is missing
-                    "target_x": 0,
-                    "target_y": 0,
-                    "target_z": 100,
-                },
-                timeout=120,
-            )
-            data = parse_tool_result(result)
-            # If we get here, check for error in result
-            assert "error" in data or "raw_text" in data or data.get("success") is False
-        except Exception as e:
-            # Expected - missing required parameter
-            assert "level" in str(e).lower() or "required" in str(e).lower()
 
     @pytest.mark.asyncio
     async def test_capture_window_mode_validation(self, initialized_tool_caller: ToolCaller):

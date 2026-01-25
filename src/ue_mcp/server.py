@@ -110,7 +110,6 @@ Available tools:
 - editor_start_pie: Start a Play-In-Editor (PIE) session
 - editor_stop_pie: Stop the current Play-In-Editor (PIE) session
 - editor_load_level: Load a level in the editor
-- editor_capture_orbital: Capture multi-angle screenshots around a target location
 - editor_capture_pie: Capture screenshots during Play-In-Editor session
 - editor_trace_actors_in_pie: Trace actor transforms during PIE session
 - editor_pie_execute_in_tick: Execute code at specific ticks during PIE

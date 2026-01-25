@@ -294,7 +294,6 @@ def test_output_dir(test_session_dir: Path) -> Path:
         tests/test_output/
             └── session_YYYYMMDD_HHMMSS/   <- Current session
                 ├── log/                    - Pytest log file
-                ├── orbital/                - Orbital capture screenshots
                 ├── pie/                    - PIE capture screenshots
                 ├── window/                 - Window capture screenshots
                 ├── test_trace_*/           - Actor trace outputs
@@ -533,7 +532,7 @@ def test_level_path(ensure_test_level) -> str:
     Usage:
         async def test_something(running_editor, test_level_path):
             result = await running_editor.call(
-                "editor_capture_orbital",
+                "editor_level_screenshot",
                 {"level": test_level_path, ...}
             )
 

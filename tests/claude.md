@@ -75,15 +75,15 @@ View with: cat D:\Code\ue-mcp\tests\test_output\log\pytest-20260123_205757.log
 ### 1. test_capture_mcp.py
 **截图捕获工具集成测试**
 
-测试 UE-MCP 提供的三种截图捕获工具：
-- `editor_capture_orbital`: 围绕目标位置的多角度截图捕获（使用 SceneCapture2D）
+测试 UE-MCP 提供的截图捕获工具：
 - `editor_capture_pie`: PIE 会话期间的截图捕获（支持多角度和指定 Actor）
 - `editor_capture_window`: Windows API 窗口截图捕获（仅 Windows）
+- `editor_level_screenshot`: 从自定义相机位置捕获关卡截图
 
 **测试内容**:
 - 验证工具正确列出
-- 测试 orbital 捕获的多角度截图生成
 - 测试 window 捕获的窗口截图
+- 测试 level_screenshot 的多相机截图
 - 测试各种捕获参数验证（level、output_dir、asset_path 等）
 - 验证截图文件正确生成且大小合理
 
@@ -368,11 +368,11 @@ output_dir/
 tests/test_output/
 ├── session_20260124_143000/   # 较早的会话
 │   ├── log/pytest.log
-│   ├── orbital/
+│   ├── level_screenshot/
 │   └── ...
 ├── session_20260124_150000/   # 当前会话
 │   ├── log/pytest.log
-│   ├── orbital/
+│   ├── level_screenshot/
 │   ├── window/
 │   ├── test_trace_single_actor/
 │   └── ...
