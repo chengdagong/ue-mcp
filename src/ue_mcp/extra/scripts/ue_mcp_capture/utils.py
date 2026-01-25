@@ -26,8 +26,9 @@ ENV_VAR_MODE = "UE_MCP_MODE"  # "1" when running via MCP (vs CLI)
 ENV_VAR_CALL = "UE_MCP_CALL"  # "<checksum>:<timestamp>:<json_params>" script call info
 
 # Maximum allowed age for injected parameters (in seconds)
-# Must match value in _helpers.py
-INJECT_TIME_MAX_AGE = 0.2
+# Increased to 5s to account for UE5's Python execution lag between
+# parameter injection (EXECUTE_STATEMENT) and script file execution (EXECUTE_FILE)
+INJECT_TIME_MAX_AGE = 5.0
 
 # Flag to track if running in MCP mode (vs CLI mode)
 _mcp_mode = None

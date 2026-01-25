@@ -12,7 +12,7 @@ ENV_VAR_CALL = "UE_MCP_CALL"  # "<checksum>:<timestamp>:<json_params>" script ca
 
 # Maximum allowed age for injected parameters (in seconds)
 # If parameters are older than this, the script should reject them
-INJECT_TIME_MAX_AGE = 0.2
+INJECT_TIME_MAX_AGE = 5
 
 if TYPE_CHECKING:
     from fastmcp import Context
@@ -161,6 +161,9 @@ def build_env_injection_code(script_path: str, params: dict[str, Any]) -> str:
 
     # JSON-encode parameters (will be part of the payload)
     params_json = json.dumps(clean_params)
+    # Escape braces for f-string embedding (JSON contains { and } that must not be
+    # interpreted as format expressions when the generated code is executed)
+    escaped_params_json = params_json.replace("{", "{{").replace("}", "}}")
 
     lines = [
         "import os",
@@ -168,7 +171,7 @@ def build_env_injection_code(script_path: str, params: dict[str, Any]) -> str:
         # Set MCP mode flag
         f"os.environ[{repr(ENV_VAR_MODE)}] = '1'",
         # Set call info: "<checksum>:<timestamp>:<json_params>"
-        f"os.environ[{repr(ENV_VAR_CALL)}] = f'{checksum}:{{time.time()}}:{params_json}'",
+        f"os.environ[{repr(ENV_VAR_CALL)}] = f'{checksum}:{{time.time()}}:{escaped_params_json}'",
     ]
 
     return "\n".join(lines)
