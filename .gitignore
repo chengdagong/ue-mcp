@@ -15,8 +15,6 @@ build/
 venv/
 ENV/
 
-#skills
-.claude/skills
 
 # Claude Code local settings (machine-specific)
 **/.claude/settings.local.json
@@ -79,3 +77,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# Necessary Skills to be tracked
+.claude/skills/*
+!.claude/skills/ue-mcp-mastery
