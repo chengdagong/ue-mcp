@@ -157,19 +157,29 @@ class ExecutionManager:
 
         return result
 
-    def execute_script_file(self, script_path: str, timeout: float = 120.0) -> dict[str, Any]:
+    def execute_script_file(
+        self, script_path: str, timeout: float = 120.0, output_file: str | None = None,
+        wait_for_latent: bool = True, latent_timeout: float = 60.0
+    ) -> dict[str, Any]:
         """
         Execute a Python script file using EXECUTE_FILE mode.
 
         This enables true hot-reload as the file is executed directly from disk.
         Parameters should be injected before calling this method using _execute().
 
+        After script execution, if the script uses latent commands (async execution),
+        waits for them to complete before reading output. The script is pre-scanned
+        to detect latent command patterns - if none are found, waiting is skipped.
+
         Args:
             script_path: Absolute path to the Python script file
             timeout: Execution timeout in seconds
+            output_file: Optional path to temp file containing captured stdout/stderr
+            wait_for_latent: Whether to wait for latent commands to complete (default: True)
+            latent_timeout: Max time to wait for latent commands in seconds (default: 60)
 
         Returns:
-            Execution result dictionary
+            Execution result dictionary with captured output
         """
         if self._ctx.editor is None:
             return {
@@ -183,23 +193,171 @@ class ExecutionManager:
                 "error": f"Editor is not ready (status: {self._ctx.editor.status})",
             }
 
-        # Execute file directly (no string reading, no concatenation)
-        result = self._ctx.editor.remote_client.execute(
-            script_path,
-            exec_type=self._ctx.editor.remote_client.ExecTypes.EXECUTE_FILE,
-            timeout=timeout,
-        )
+        # Pre-scan script to detect if it contains latent commands
+        # Skip waiting if no latent patterns are found
+        has_latent_commands = False
+        if wait_for_latent:
+            has_latent_commands = self._script_has_latent_commands(script_path)
+            if not has_latent_commands:
+                logger.debug(f"No latent commands detected in {script_path}, skipping wait")
 
-        # Check for crash
-        if result.get("crashed", False):
-            self._ctx.editor.status = "stopped"
-            return {
-                "success": False,
-                "error": "Editor connection lost (may have crashed)",
-                "details": result,
-            }
+        try:
+            # Execute file directly (no string reading, no concatenation)
+            result = self._ctx.editor.remote_client.execute(
+                script_path,
+                exec_type=self._ctx.editor.remote_client.ExecTypes.EXECUTE_FILE,
+                timeout=timeout,
+            )
 
-        return result
+            # Check for crash
+            if result.get("crashed", False):
+                self._ctx.editor.status = "stopped"
+                return {
+                    "success": False,
+                    "error": "Editor connection lost (may have crashed)",
+                    "details": result,
+                }
+
+            # Wait for latent commands to complete if script contains them
+            # This handles async scripts using @unreal.AutomationScheduler.add_latent_command
+            if has_latent_commands and result.get("success", False):
+                latent_result = self._wait_for_latent_commands(latent_timeout)
+                if latent_result.get("timed_out"):
+                    result["latent_warning"] = (
+                        f"Latent commands did not complete within {latent_timeout}s. "
+                        "Output may be incomplete."
+                    )
+
+            # Read captured stdout/stderr from temp file if provided
+            if output_file:
+                captured_output = self._read_captured_output_file(output_file)
+                if captured_output:
+                    # Convert to the same format as EXECUTE_STATEMENT output
+                    output_lines = []
+                    for line in captured_output.splitlines():
+                        output_lines.append({"type": "info", "output": line})
+                    result["output"] = output_lines
+
+            return result
+        finally:
+            # Always clean up temp file
+            if output_file:
+                try:
+                    Path(output_file).unlink(missing_ok=True)
+                except Exception as e:
+                    logger.debug(f"Failed to clean up temp output file: {e}")
+
+    def _wait_for_latent_commands(self, timeout: float = 60.0, poll_interval: float = 0.5) -> dict[str, Any]:
+        """Wait for latent commands to complete.
+
+        Uses unreal.PyAutomationTest.get_is_running_py_latent_command() to check
+        if any latent commands are still running.
+
+        Args:
+            timeout: Maximum time to wait in seconds
+            poll_interval: Time between checks in seconds
+
+        Returns:
+            Dict with:
+            - completed: Whether latent commands finished
+            - timed_out: Whether we timed out waiting
+            - elapsed: Time spent waiting
+        """
+        import time
+
+        start_time = time.time()
+        check_code = "import unreal; print(unreal.PyAutomationTest.get_is_running_py_latent_command())"
+
+        while True:
+            elapsed = time.time() - start_time
+            if elapsed >= timeout:
+                return {"completed": False, "timed_out": True, "elapsed": elapsed}
+
+            # Check if latent commands are still running
+            check_result = self._execute_code(check_code, timeout=5.0)
+
+            if not check_result.get("success"):
+                # If check fails, assume no latent commands (or API not available)
+                logger.debug(f"Latent command check failed: {check_result.get('error')}")
+                return {"completed": True, "timed_out": False, "elapsed": elapsed}
+
+            # Parse the result - look for "True" or "False" in output
+            output = check_result.get("output", [])
+            output_str = ""
+            for line in output:
+                if isinstance(line, dict):
+                    output_str += str(line.get("output", ""))
+                else:
+                    output_str += str(line)
+
+            # If not running latent commands, we're done
+            if "False" in output_str:
+                logger.debug(f"Latent commands completed after {elapsed:.2f}s")
+                return {"completed": True, "timed_out": False, "elapsed": elapsed}
+
+            # Still running, wait and check again
+            time.sleep(poll_interval)
+
+    def _script_has_latent_commands(self, script_path: str) -> bool:
+        """Check if a script file contains latent command definitions.
+
+        Scans the script content for patterns that indicate async execution:
+        - @unreal.AutomationScheduler.add_latent_command decorator
+        - AutomationScheduler.add_latent_command calls
+        - add_latent_command function references
+
+        Args:
+            script_path: Path to the script file to scan
+
+        Returns:
+            True if latent command patterns are found, False otherwise
+        """
+        import re
+
+        # Patterns that indicate latent commands
+        latent_patterns = [
+            r"@unreal\.AutomationScheduler\.add_latent_command",
+            r"AutomationScheduler\.add_latent_command",
+            r"add_latent_command\s*\(",
+            r"@.*add_latent_command",
+        ]
+
+        try:
+            path = Path(script_path)
+            if not path.exists():
+                return False
+
+            content = path.read_text(encoding="utf-8")
+
+            for pattern in latent_patterns:
+                if re.search(pattern, content):
+                    logger.debug(f"Found latent command pattern '{pattern}' in {script_path}")
+                    return True
+
+            return False
+        except Exception as e:
+            logger.warning(f"Failed to scan script for latent commands: {e}")
+            # If we can't read the file, assume it might have latent commands
+            return True
+
+    def _read_captured_output_file(self, output_file: str) -> str | None:
+        """Read captured output from temp file.
+
+        Args:
+            output_file: Path to the temp file containing captured output
+
+        Returns:
+            File contents as string, or None if file doesn't exist or is empty
+        """
+        try:
+            path = Path(output_file)
+            if path.exists():
+                content = path.read_text(encoding="utf-8")
+                if content.strip():
+                    return content
+        except Exception as e:
+            logger.warning(f"Failed to read captured output file: {e}")
+        return None
 
     def _get_python_path(self) -> Optional[Path]:
         """

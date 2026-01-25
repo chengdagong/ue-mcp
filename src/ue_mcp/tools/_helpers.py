@@ -134,7 +134,7 @@ def compute_script_checksum(script_path: str) -> str:
     return hashlib.md5(script_path.encode()).hexdigest()[:8]
 
 
-def build_env_injection_code(script_path: str, params: dict[str, Any]) -> str:
+def build_env_injection_code(script_path: str, params: dict[str, Any], output_file: str | None = None) -> str:
     """Build code to inject parameters via environment variables.
 
     This sets the following env vars:
@@ -146,9 +146,12 @@ def build_env_injection_code(script_path: str, params: dict[str, Any]) -> str:
     - timestamp: injection time, ensuring params are fresh (< INJECT_TIME_MAX_AGE)
     - json_params: JSON-encoded parameters
 
+    If output_file is provided, sets up stdout/stderr capture to that file using TeeWriter.
+
     Args:
         script_path: Absolute path to the script file
         params: Parameter dictionary (None values are filtered out)
+        output_file: Optional path to file for capturing stdout/stderr output
 
     Returns:
         Python code string to execute before EXECUTE_FILE
@@ -161,18 +164,62 @@ def build_env_injection_code(script_path: str, params: dict[str, Any]) -> str:
 
     # JSON-encode parameters (will be part of the payload)
     params_json = json.dumps(clean_params)
-    # Escape braces for f-string embedding (JSON contains { and } that must not be
-    # interpreted as format expressions when the generated code is executed)
-    escaped_params_json = params_json.replace("{", "{{").replace("}", "}}")
+    # Escape for f-string embedding:
+    # 1. Backslashes must be doubled (\ -> \\) because f-string literals interpret escapes
+    # 2. Braces must be doubled ({ -> {{, } -> }}) to avoid f-string format expressions
+    escaped_params_json = (
+        params_json
+        .replace("\\", "\\\\")  # Must come first!
+        .replace("{", "{{")
+        .replace("}", "}}")
+    )
 
     lines = [
         "import os",
+        "import sys",
         "import time",
         # Set MCP mode flag
         f"os.environ[{repr(ENV_VAR_MODE)}] = '1'",
         # Set call info: "<checksum>:<timestamp>:<json_params>"
         f"os.environ[{repr(ENV_VAR_CALL)}] = f'{checksum}:{{time.time()}}:{escaped_params_json}'",
     ]
+
+    # Add output capture setup if output_file is provided
+    if output_file:
+        # Escape backslashes for Windows paths (don't use raw string prefix)
+        escaped_output_file = output_file.replace("\\", "\\\\")
+        lines.extend([
+            "import builtins",
+            "import atexit",
+            # Store original streams
+            "builtins.__ue_mcp_orig_stdout__ = sys.stdout",
+            "builtins.__ue_mcp_orig_stderr__ = sys.stderr",
+            # Open output file for writing
+            f"builtins.__ue_mcp_output_file__ = open('{escaped_output_file}', 'w', encoding='utf-8')",
+            # Create a TeeWriter that writes to both the file and original stream
+            "class _UeMcpTeeWriter:",
+            "    def __init__(self, file, original):",
+            "        self.file = file",
+            "        self.original = original",
+            "    def write(self, data):",
+            "        self.file.write(data)",
+            "        self.file.flush()",
+            "        self.original.write(data)",
+            "    def flush(self):",
+            "        self.file.flush()",
+            "        self.original.flush()",
+            "sys.stdout = _UeMcpTeeWriter(builtins.__ue_mcp_output_file__, builtins.__ue_mcp_orig_stdout__)",
+            "sys.stderr = _UeMcpTeeWriter(builtins.__ue_mcp_output_file__, builtins.__ue_mcp_orig_stderr__)",
+            # Register cleanup function to restore streams and close file
+            "def _ue_mcp_cleanup():",
+            "    if hasattr(builtins, '__ue_mcp_orig_stdout__'):",
+            "        sys.stdout = builtins.__ue_mcp_orig_stdout__",
+            "    if hasattr(builtins, '__ue_mcp_orig_stderr__'):",
+            "        sys.stderr = builtins.__ue_mcp_orig_stderr__",
+            "    if hasattr(builtins, '__ue_mcp_output_file__'):",
+            "        builtins.__ue_mcp_output_file__.close()",
+            "atexit.register(_ue_mcp_cleanup)",
+        ])
 
     return "\n".join(lines)
 

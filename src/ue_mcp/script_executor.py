@@ -8,6 +8,8 @@ Uses true EXECUTE_FILE mode with environment variable parameter passing:
 
 Scripts read parameters via bootstrap_from_env() which converts env vars to sys.argv.
 """
+import tempfile
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -67,7 +69,9 @@ def execute_script_from_path(
     execution: "ExecutionManager",
     script_path: Path | str,
     params: dict[str, Any],
-    timeout: float = 120.0
+    timeout: float = 120.0,
+    wait_for_latent: bool = True,
+    latent_timeout: float = 60.0,
 ) -> dict[str, Any]:
     """
     Execute a script from a specific path in the UE editor using true EXECUTE_FILE mode.
@@ -76,8 +80,11 @@ def execute_script_from_path(
     by UE5, so modifications take effect immediately without restarting.
 
     Execution flow:
-    1. Inject parameters via environment variables (EXECUTE_STATEMENT)
-    2. Execute script file directly (EXECUTE_FILE) - UE5 reads file from disk
+    1. Create temporary file for stdout/stderr capture
+    2. Inject parameters via environment variables (EXECUTE_STATEMENT)
+    3. Execute script file directly (EXECUTE_FILE) - UE5 reads file from disk
+    4. Wait for latent commands (async execution) to complete
+    5. Read captured output from temporary file
 
     Scripts must call bootstrap_from_env() at the start of main() to read
     parameters from env vars and set up sys.argv for argparse.
@@ -87,6 +94,8 @@ def execute_script_from_path(
         script_path: Full path to the script file
         params: Parameters to pass to the script
         timeout: Execution timeout in seconds
+        wait_for_latent: Whether to wait for latent commands to complete (default: True)
+        latent_timeout: Max time to wait for latent commands in seconds (default: 60)
 
     Returns:
         Execution result from the script
@@ -99,8 +108,13 @@ def execute_script_from_path(
     if not script_path.exists():
         raise FileNotFoundError(f"Script not found: {script_path}")
 
-    # Step 1: Inject parameters via environment variables
-    injection_code = build_env_injection_code(str(script_path), params)
+    # Step 1: Create temporary file for output capture
+    # Use a unique filename in system temp directory
+    temp_dir = Path(tempfile.gettempdir())
+    output_file = temp_dir / f"ue_mcp_output_{uuid.uuid4().hex[:8]}.txt"
+
+    # Step 2: Inject parameters via environment variables with output capture
+    injection_code = build_env_injection_code(str(script_path), params, str(output_file))
     inject_result = execution.execute_code(injection_code, timeout=5.0)
 
     if not inject_result.get("success"):
@@ -109,6 +123,13 @@ def execute_script_from_path(
             "error": f"Failed to inject parameters: {inject_result.get('error')}",
         }
 
-    # Step 2: Execute script file directly (true hot-reload)
+    # Step 3: Execute script file directly (true hot-reload)
     # UE5 reads the file from disk, so any modifications take effect immediately
-    return execution.execute_script_file(str(script_path), timeout=timeout)
+    # Waits for latent commands to complete before reading output
+    return execution.execute_script_file(
+        str(script_path),
+        timeout=timeout,
+        output_file=str(output_file),
+        wait_for_latent=wait_for_latent,
+        latent_timeout=latent_timeout,
+    )

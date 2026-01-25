@@ -1,5 +1,6 @@
 """Code and script execution tools."""
 
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
@@ -68,6 +69,20 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
                 description="Dictionary of keyword arguments accessible via __SCRIPT_ARGS__ global variable",
             ),
         ] = None,
+        wait_for_latent: Annotated[
+            bool,
+            Field(
+                default=True,
+                description="Whether to wait for latent commands (async execution) to complete before returning",
+            ),
+        ] = True,
+        latent_timeout: Annotated[
+            float,
+            Field(
+                default=60.0,
+                description="Maximum time in seconds to wait for latent commands to complete",
+            ),
+        ] = 60.0,
     ) -> dict[str, Any]:
         """
         Execute a Python script file in the managed Unreal Editor.
@@ -75,6 +90,9 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         The script is executed directly from disk using EXECUTE_FILE mode,
         enabling true hot-reload (modifications take effect without restart).
         Parameters are passed via environment variables.
+
+        For scripts using @unreal.AutomationScheduler.add_latent_command (async execution),
+        the tool will wait for all latent commands to complete before returning output.
 
         Scripts must call bootstrap_from_env() at the start of main() to
         read parameters from env vars and set up sys.argv for argparse.
@@ -84,6 +102,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             timeout: Execution timeout in seconds (default: 30)
             args: List of command-line arguments to pass to the script via sys.argv[1:]
             kwargs: Dictionary of keyword arguments accessible via __SCRIPT_ARGS__ global variable
+            wait_for_latent: Whether to wait for async latent commands to complete (default: True)
+            latent_timeout: Max time to wait for latent commands in seconds (default: 60)
 
         Returns:
             Execution result containing:
@@ -91,6 +111,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - result: Return value (if any)
             - output: Console output from the script
             - error: Error message (if failed)
+            - latent_warning: Warning if latent commands did not complete in time
 
         Example:
             execute_script("/path/to/my_script.py")
@@ -125,18 +146,40 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         execution = state.get_execution_subsystem()
 
+        # Generate temp file for capturing stdout/stderr output
+        # EXECUTE_FILE mode doesn't return print() output in the protocol response,
+        # so we redirect stdout/stderr to a temp file and read it after execution
+        temp_output_file = tempfile.NamedTemporaryFile(
+            mode="w", delete=False, suffix="_ue_mcp_output.txt", encoding="utf-8"
+        )
+        temp_output_path = temp_output_file.name
+        temp_output_file.close()
+
         # Step 1: Inject parameters via environment variables
-        injection_code = build_env_injection_code(str(path), params)
+        # Also sets up TeeWriter to capture stdout/stderr to temp file
+        injection_code = build_env_injection_code(str(path), params, output_file=temp_output_path)
         inject_result = execution.execute_code(injection_code, timeout=5.0)
 
         if not inject_result.get("success"):
+            # Clean up temp file on failure
+            try:
+                Path(temp_output_path).unlink(missing_ok=True)
+            except Exception:
+                pass
             return {
                 "success": False,
                 "error": f"Failed to inject parameters: {inject_result.get('error')}",
             }
 
         # Step 2: Execute script file directly (true hot-reload)
-        return execution.execute_script_file(str(path), timeout=timeout)
+        # Wait for latent commands (async scripts) to complete before reading output
+        return execution.execute_script_file(
+            str(path),
+            timeout=timeout,
+            output_file=temp_output_path,
+            wait_for_latent=wait_for_latent,
+            latent_timeout=latent_timeout,
+        )
 
     @mcp.tool(name="editor_pip_install")
     def pip_install_packages(

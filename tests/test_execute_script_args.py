@@ -3,6 +3,9 @@ Unit tests for execute_script argument passing feature.
 """
 
 import json
+import tempfile
+from pathlib import Path
+
 import pytest
 
 from ue_mcp.tools._helpers import (
@@ -374,3 +377,128 @@ class TestBuildEnvInjectionCode:
         # Verify they are MODE and PAYLOAD
         assert any("UE_MCP_MODE" in line for line in env_var_lines)
         assert any("UE_MCP_CALL" in line for line in env_var_lines)
+
+    def test_no_output_capture_without_output_file(self):
+        """Test that injection code does NOT set up output capture without output_file."""
+        result = build_env_injection_code("/path/to/script.py", {"key": "value"})
+        # Should NOT set up capture without output_file
+        assert "__ue_mcp_orig_stdout__" not in result
+        assert "__ue_mcp_output_file__" not in result
+        assert "_UeMcpTeeWriter" not in result
+
+    def test_includes_output_capture_with_output_file(self):
+        """Test that injection code sets up file-based stdout/stderr capture with output_file."""
+        result = build_env_injection_code("/path/to/script.py", {"key": "value"}, output_file="/tmp/output.txt")
+        # Should set up file-based capture
+        assert "builtins.__ue_mcp_orig_stdout__" in result
+        assert "builtins.__ue_mcp_orig_stderr__" in result
+        assert "builtins.__ue_mcp_output_file__" in result
+        assert "class _UeMcpTeeWriter:" in result
+        # Should redirect stdout/stderr to TeeWriter
+        assert "sys.stdout = _UeMcpTeeWriter" in result
+        assert "sys.stderr = _UeMcpTeeWriter" in result
+        # Should register atexit cleanup
+        assert "atexit.register(_ue_mcp_cleanup)" in result
+
+    def test_output_file_path_escaped_for_windows(self):
+        """Test that Windows paths are properly escaped in output_file."""
+        result = build_env_injection_code(
+            "/path/to/script.py",
+            {"key": "value"},
+            output_file="C:\\Users\\test\\output.txt"
+        )
+        # Backslashes should be escaped for regular string (not raw string)
+        # The generated code should be: open('C:\\Users\\test\\output.txt', ...)
+        assert "C:\\\\Users\\\\test\\\\output.txt" in result
+        # Should NOT use raw string prefix (r'...')
+        assert "open(r'" not in result
+        assert "open('" in result
+
+
+class TestFileBasedOutputCapture:
+    """Tests for the file-based output capture mechanism."""
+
+    def test_tee_writer_writes_to_file_and_original(self, tmp_path):
+        """Test that TeeWriter writes to both file and original stream."""
+        import io
+
+        # Create output file
+        output_file = tmp_path / "output.txt"
+
+        # Create original stream mock
+        original = io.StringIO()
+
+        # Open file and create TeeWriter
+        with open(output_file, 'w', encoding='utf-8') as f:
+            # Create TeeWriter class (same as in injection code)
+            class _UeMcpTeeWriter:
+                def __init__(self, file, original):
+                    self.file = file
+                    self.original = original
+                def write(self, data):
+                    self.file.write(data)
+                    self.file.flush()
+                    self.original.write(data)
+                def flush(self):
+                    self.file.flush()
+                    self.original.flush()
+
+            tee = _UeMcpTeeWriter(f, original)
+            tee.write("Hello from TeeWriter\n")
+            tee.write("Second line\n")
+            tee.flush()
+
+        # Verify both destinations received the output
+        assert original.getvalue() == "Hello from TeeWriter\nSecond line\n"
+        assert output_file.read_text() == "Hello from TeeWriter\nSecond line\n"
+
+    def test_capture_flow_with_temp_file(self, tmp_path):
+        """Test the complete capture flow using temp file."""
+        import io
+        import sys as real_sys
+
+        output_file = tmp_path / "capture_output.txt"
+
+        # Generate injection code with output_file
+        injection_code = build_env_injection_code(
+            "/test/script.py",
+            {},
+            output_file=str(output_file)
+        )
+
+        # Save original stdout/stderr
+        original_stdout = real_sys.stdout
+        original_stderr = real_sys.stderr
+
+        # Create mock streams to capture what goes to "original"
+        mock_stdout = io.StringIO()
+        mock_stderr = io.StringIO()
+
+        try:
+            # Replace real sys.stdout/stderr with mocks before exec
+            real_sys.stdout = mock_stdout
+            real_sys.stderr = mock_stderr
+
+            # Execute injection code (sets up capture)
+            # This will capture our mocks as "original" and create TeeWriter
+            exec(injection_code)
+
+            # Now sys.stdout is a TeeWriter that writes to both file and mock_stdout
+            real_sys.stdout.write("Test stdout output\n")
+            real_sys.stderr.write("Test stderr output\n")
+            real_sys.stdout.flush()
+            real_sys.stderr.flush()
+
+            # Verify the file was written
+            assert output_file.exists()
+            file_content = output_file.read_text()
+            assert "Test stdout output" in file_content
+            assert "Test stderr output" in file_content
+
+            # Verify original streams also received output
+            assert "Test stdout output" in mock_stdout.getvalue()
+            assert "Test stderr output" in mock_stderr.getvalue()
+        finally:
+            # Restore original streams
+            real_sys.stdout = original_stdout
+            real_sys.stderr = original_stderr
