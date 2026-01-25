@@ -253,11 +253,8 @@ class ExecutionManager:
             if output_file:
                 captured_output = self._read_captured_output_file(output_file)
                 if captured_output:
-                    # Convert to the same format as EXECUTE_STATEMENT output
-                    output_lines = []
-                    for line in captured_output.splitlines():
-                        output_lines.append({"type": "info", "output": line})
-                    result["output"] = output_lines
+                    # Return as plain text with log level prefixes
+                    result["output"] = self._format_log_output(captured_output)
 
             return result
         finally:
@@ -383,6 +380,41 @@ class ExecutionManager:
         except Exception as e:
             logger.warning(f"Failed to read captured output file: {e}")
         return None
+
+    def _format_log_output(self, output: str) -> str:
+        """Format output with log level prefixes.
+
+        Adds [INFO] prefix to lines that don't already have a log level prefix.
+        Recognized prefixes: [INFO], [WARNING], [ERROR], [DEBUG], [CRITICAL]
+
+        Args:
+            output: Raw output string
+
+        Returns:
+            Formatted output with log level prefixes on each line
+        """
+        import re
+
+        # Pattern to match existing log level prefixes
+        log_prefix_pattern = re.compile(r"^\[(INFO|WARNING|ERROR|DEBUG|CRITICAL)\]")
+
+        lines = output.splitlines()
+        formatted_lines = []
+
+        for line in lines:
+            # Skip empty lines (keep them as-is)
+            if not line.strip():
+                formatted_lines.append(line)
+                continue
+
+            # Check if line already has a log level prefix
+            if log_prefix_pattern.match(line):
+                formatted_lines.append(line)
+            else:
+                # Add default [INFO] prefix
+                formatted_lines.append(f"[INFO] {line}")
+
+        return "\n".join(formatted_lines)
 
     def _get_python_path(self) -> Optional[Path]:
         """
