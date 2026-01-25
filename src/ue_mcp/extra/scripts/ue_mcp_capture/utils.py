@@ -213,8 +213,14 @@ def bootstrap_from_env(script_path: str | None = None) -> tuple[bool, dict]:
                 if value:
                     sys.argv.append(cli_key)
                 # False: don't add anything (argparse will use default)
-            elif isinstance(value, (list, dict)):
-                # Complex types: JSON encode
+            elif isinstance(value, list):
+                # List types: add each element as a separate argument
+                # This is compatible with argparse nargs="*" or nargs="+"
+                sys.argv.append(cli_key)
+                for item in value:
+                    sys.argv.append(str(item))
+            elif isinstance(value, dict):
+                # Dict types: JSON encode
                 sys.argv.append(cli_key)
                 sys.argv.append(json.dumps(value))
             else:

@@ -216,6 +216,40 @@ class TestCaptureTools:
                 f"Screenshot {img_file.name} is empty or too small (size: {file_size} bytes)"
             )
 
+    @pytest.mark.asyncio
+    async def test_level_screenshot_with_level_parameter(
+        self, running_editor: ToolCaller, test_output_dir: Path, test_level_path: str
+    ):
+        """Test editor_level_screenshot with level parameter to load a specific level."""
+        # Create test-specific output directory
+        screenshot_dir = test_output_dir / "level_screenshot_with_level"
+        screenshot_dir.mkdir(exist_ok=True)
+
+        result = await running_editor.call(
+            "editor_level_screenshot",
+            {
+                "level": test_level_path,
+                "cameras": ["front@500,0,500"],
+                "target": "0,0,0",
+                "output_dir": str(screenshot_dir),
+            },
+            timeout=120,
+        )
+
+        data = parse_tool_result(result)
+        print(f"\n=== Level Screenshot With Level Parameter Debug ===")
+        print(f"Level path: {test_level_path}")
+        print(f"Output dir: {screenshot_dir}")
+        print(f"Return data: {data}")
+        print(f"===================================================\n")
+
+        assert data.get("success"), f"Level screenshot with level parameter failed: {data}"
+        assert data.get("screenshot_count") >= 1, "Expected at least 1 screenshot"
+
+        # Verify that screenshot files were created
+        screenshot_files = list(screenshot_dir.glob("**/*.png"))
+        assert len(screenshot_files) >= 1, f"No screenshot files were created in {screenshot_dir}"
+
 
 @pytest.mark.integration
 class TestCaptureToolValidation:

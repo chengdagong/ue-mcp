@@ -576,6 +576,13 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
                 description="Output directory for screenshots. If not provided, uses project's Saved/Screenshots.",
             ),
         ],
+        level: Annotated[
+            Optional[str],
+            Field(
+                default=None,
+                description="Level path to load before taking screenshots (e.g., /Game/Maps/MyLevel). If not provided, uses the currently open level.",
+            ),
+        ],
     ) -> dict[str, Any]:
         """
         Capture screenshots from custom camera positions looking at a target point.
@@ -597,6 +604,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
                         Default is '1280x720'.
             output_dir: Directory to save screenshots. If not provided, screenshots
                         are saved to the project's Saved/Screenshots folder.
+            level: Level path to load before taking screenshots (e.g., /Game/Maps/MyLevel).
+                   If not provided, uses the currently open level.
 
         Returns:
             Result containing:
@@ -622,6 +631,13 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
                 resolution="1920x1080",
                 output_dir="D:/screenshots"
             )
+
+            # Load a specific level and take screenshots
+            editor_level_screenshot(
+                level="/Game/Maps/TestLevel",
+                cameras=["front@500,0,500", "back@-500,0,500"],
+                target="0,0,100"
+            )
         """
         execution = state.get_execution_subsystem()
 
@@ -636,6 +652,9 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         if output_dir:
             params["out_dir"] = output_dir
+
+        if level:
+            params["level"] = level
 
         # Execute the take_screenshots.py script
         script_path = Path(__file__).parent.parent / "extra" / "scripts" / "take_screenshots.py"

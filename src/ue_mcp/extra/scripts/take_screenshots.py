@@ -5,6 +5,7 @@ Creates temporary CameraActors at specified positions, takes screenshots,
 then cleans up the cameras.
 
 Parameters:
+    level: Level path to load (e.g., /Game/Maps/MyLevel) (optional)
     cameras: List of camera specs in format "name@x,y,z" (optional)
     target: Target point as "x,y,z" (default: "0,0,0")
     resolution: Screenshot resolution as "WIDTHxHEIGHT" (default: "1280x720")
@@ -12,12 +13,13 @@ Parameters:
 
 Usage (CLI):
     python take_screenshots.py
+    python take_screenshots.py --level /Game/Maps/MyLevel
     python take_screenshots.py --cameras front@500,0,500 back@-500,0,500
     python take_screenshots.py --target 100,0,50 --resolution 1920x1080
     python take_screenshots.py --out-dir D:/screenshots
 
 Usage (MCP):
-    editor_level_screenshot(cameras=["front@500,0,500", "back@-500,0,500"])
+    editor_level_screenshot(level="/Game/Maps/MyLevel", cameras=["front@500,0,500"])
 """
 
 import argparse
@@ -36,6 +38,7 @@ DEFAULT_CAMERA = ("Camera", unreal.Vector(800, 0, 800))
 
 # 运行时配置（由 parse_args 填充）
 config = {
+    "level": None,
     "target": unreal.Vector(0, 0, 0),
     "camera_configs": [],
     "resolution_width": 1280,
@@ -104,6 +107,14 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
 
+    # 关卡路径
+    parser.add_argument(
+        "--level",
+        type=str,
+        default=None,
+        help="Level path to load (e.g., /Game/Maps/MyLevel)"
+    )
+
     # 摄像机配置
     parser.add_argument(
         "--cameras",
@@ -137,6 +148,11 @@ def parse_args():
     )
 
     args = parser.parse_args()
+
+    # 设置关卡路径
+    if args.level:
+        config["level"] = args.level
+        print(f"Level: {args.level}")
 
     # 解析目标点
     try:
@@ -189,6 +205,20 @@ def parse_args():
 
 if __name__ == "__main__":
     parse_args()
+
+    @unreal.AutomationScheduler.add_latent_command
+    def load_level():
+        """加载指定关卡（如果有）"""
+        level_path = config["level"]
+        if level_path:
+            level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+            success = level_subsystem.load_level(level_path)
+            if success:
+                print(f"Loaded level: {level_path}")
+            else:
+                print(f"Failed to load level: {level_path}")
+        else:
+            print("No level specified, using current level")
 
     @unreal.AutomationScheduler.add_latent_command
     def create_cameras():
