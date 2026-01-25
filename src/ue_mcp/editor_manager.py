@@ -222,7 +222,7 @@ class EditorManager:
     # Execution Methods (delegated to ExecutionManager)
     # =========================================================================
 
-    def execute(self, code: str, timeout: float = 30.0) -> dict[str, Any]:
+    def execute_code(self, code: str, timeout: float = 30.0) -> dict[str, Any]:
         """
         Execute Python code in the editor without additional checks.
 
@@ -237,7 +237,7 @@ class EditorManager:
         Returns:
             Execution result dictionary
         """
-        return self._execution_manager._execute(code=code, timeout=timeout)
+        return self._execution_manager._execute_code(code=code, timeout=timeout)
 
     def execute_with_checks(
         self,

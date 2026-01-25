@@ -127,7 +127,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         # Step 1: Inject parameters via environment variables
         injection_code = build_env_injection_code(str(path), params)
-        inject_result = manager.execute(injection_code, timeout=5.0)
+        inject_result = manager.execute_code(injection_code, timeout=5.0)
 
         if not inject_result.get("success"):
             return {
@@ -158,7 +158,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         Install Python packages in UE5's embedded Python environment.
 
         This tool uses UE5's bundled Python interpreter to install packages via pip.
-        Installed packages will be available for use in editor.execute() calls.
+        Installed packages will be available for use in editor.execute_code() calls.
 
         Args:
             packages: List of package names to install (e.g., ["Pillow", "numpy"])
