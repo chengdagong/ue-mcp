@@ -197,6 +197,7 @@ class LaunchManager:
                     f"-ABSLOG={log_file_path}",
                     ini_override,
                     "-AutoDeclinePackageRecovery",  # Skip package recovery dialogs on startup
+                    "-NoLiveCoding",  # Disable Live Coding to allow builds while editor is running
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
