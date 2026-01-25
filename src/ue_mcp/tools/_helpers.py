@@ -17,7 +17,7 @@ INJECT_TIME_MAX_AGE = 5
 if TYPE_CHECKING:
     from fastmcp import Context
 
-    from ..editor_manager import EditorManager
+    from ..editor.execution_manager import ExecutionManager
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +57,11 @@ def parse_json_result(exec_result: dict[str, Any]) -> dict[str, Any]:
     return {"success": False, "error": "No valid JSON found in output"}
 
 
-def query_project_assets(manager: "EditorManager") -> dict[str, Any]:
+def query_project_assets(execution: "ExecutionManager") -> dict[str, Any]:
     """Query Blueprint and World (Level) assets in the project.
 
     Args:
-        manager: EditorManager instance (must be connected)
+        execution: ExecutionManager instance (must be connected)
 
     Returns:
         Dict with assets info or error
@@ -76,7 +76,7 @@ def query_project_assets(manager: "EditorManager") -> dict[str, Any]:
 
         # Query Blueprint and World assets
         exec_result = execute_script_from_path(
-            manager,
+            execution,
             script_path,
             {"types": "Blueprint,World", "base_path": "/Game", "limit": 100},
             timeout=30.0,
@@ -179,7 +179,8 @@ def build_env_injection_code(script_path: str, params: dict[str, Any]) -> str:
 
 async def run_pie_task(
     ctx: "Context",
-    manager: "EditorManager",
+    execution: "ExecutionManager",
+    project_root: Path,
     script_name: str,
     params: dict[str, Any],
     duration_seconds: float,
@@ -199,7 +200,8 @@ async def run_pie_task(
 
     Args:
         ctx: MCP Context for logging
-        manager: EditorManager instance
+        execution: ExecutionManager instance
+        project_root: Path to the project root directory
         script_name: Name of the script to execute
         params: Script parameters (task_id will be added automatically)
         duration_seconds: Duration for the task
@@ -222,7 +224,7 @@ async def run_pie_task(
 
     # Start task (returns immediately, runs via tick callbacks)
     result = execute_script(
-        manager,
+        execution,
         script_name,
         params=params_with_id,
         timeout=30.0,  # Short timeout since script returns immediately
@@ -246,7 +248,7 @@ async def run_pie_task(
         await ctx.log(f"{task_description} completed", level="info")
 
     task_result = await watch_pie_capture_complete(
-        project_root=manager.project_root,
+        project_root=project_root,
         task_id=task_id,
         callback=on_complete,
         timeout=watch_timeout,

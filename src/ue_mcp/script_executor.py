@@ -9,9 +9,12 @@ Uses true EXECUTE_FILE mode with environment variable parameter passing:
 Scripts read parameters via bootstrap_from_env() which converts env vars to sys.argv.
 """
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .tools._helpers import build_env_injection_code
+
+if TYPE_CHECKING:
+    from .editor.execution_manager import ExecutionManager
 
 
 def get_scripts_dir() -> Path:
@@ -30,7 +33,7 @@ def get_extra_scripts_dir() -> Path:
 
 
 def execute_script(
-    manager,
+    execution: "ExecutionManager",
     script_name: str,
     params: dict[str, Any],
     timeout: float = 120.0
@@ -42,7 +45,7 @@ def execute_script(
     by UE5, so modifications take effect immediately without restarting.
 
     Args:
-        manager: EditorManager instance
+        execution: ExecutionManager instance
         script_name: Name of the script (without .py)
         params: Parameters to pass to the script
         timeout: Execution timeout in seconds
@@ -57,11 +60,11 @@ def execute_script(
     script_path = scripts_dir / f"{script_name}.py"
 
     # Use the unified execute_script_from_path function
-    return execute_script_from_path(manager, script_path, params, timeout)
+    return execute_script_from_path(execution, script_path, params, timeout)
 
 
 def execute_script_from_path(
-    manager,
+    execution: "ExecutionManager",
     script_path: Path | str,
     params: dict[str, Any],
     timeout: float = 120.0
@@ -80,7 +83,7 @@ def execute_script_from_path(
     parameters from env vars and set up sys.argv for argparse.
 
     Args:
-        manager: EditorManager instance
+        execution: ExecutionManager instance
         script_path: Full path to the script file
         params: Parameters to pass to the script
         timeout: Execution timeout in seconds
@@ -98,7 +101,7 @@ def execute_script_from_path(
 
     # Step 1: Inject parameters via environment variables
     injection_code = build_env_injection_code(str(script_path), params)
-    inject_result = manager.execute(injection_code, timeout=5.0)
+    inject_result = execution._execute(injection_code, timeout=5.0)
 
     if not inject_result.get("success"):
         return {
@@ -108,4 +111,4 @@ def execute_script_from_path(
 
     # Step 2: Execute script file directly (true hot-reload)
     # UE5 reads the file from disk, so any modifications take effect immediately
-    return manager.execute_script_file(str(script_path), timeout=timeout)
+    return execution.execute_script_file(str(script_path), timeout=timeout)

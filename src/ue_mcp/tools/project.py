@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     """Register project management tools."""
 
-    from ..editor_manager import EditorManager
+    from ..editor.subsystems import EditorSubsystems
     from ..utils import find_uproject_file
 
     @mcp.tool(name="project_set_path")
@@ -44,11 +44,11 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         """
         # Check if already called
         if state.project_path_set:
-            manager = state.editor_manager
+            subsystems = state.subsystems
             return {
                 "success": False,
                 "error": "project.set_path can only be called once per server lifetime. Project path already set.",
-                "current_project": manager.project_name if manager else None,
+                "current_project": subsystems.project_name if subsystems else None,
             }
 
         # Validate path
@@ -70,15 +70,15 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
                 "error": f"No .uproject file found in: {project_path}",
             }
 
-        # Initialize EditorManager
+        # Initialize EditorSubsystems
         logger.info(f"Setting project path: {uproject_path}")
-        state.editor_manager = EditorManager(uproject_path)
+        state.subsystems = EditorSubsystems.create(uproject_path)
         state.project_path_set = True
 
         return {
             "success": True,
-            "project_name": state.editor_manager.project_name,
-            "project_path": str(state.editor_manager.project_root),
+            "project_name": state.subsystems.project_name,
+            "project_path": str(state.subsystems.project_root),
             "uproject_file": str(uproject_path),
         }
 
@@ -175,7 +175,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             # Start build in background (returns immediately)
             build_project(target="Game", configuration="Shipping", wait=False)
         """
-        manager = state.get_editor_manager()
+        build = state.get_build_subsystem()
 
         async def notify(level: str, message: str) -> None:
             await ctx.log(message, level=level)
@@ -185,7 +185,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         if wait:
             # Synchronous build - wait for completion
-            return await manager.build(
+            return await build.build(
                 notify=notify,
                 progress=progress_callback,
                 target=target,
@@ -197,7 +197,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             )
         else:
             # Asynchronous build - return immediately
-            return await manager.build_async(
+            return await build.build_async(
                 notify=notify,
                 progress=progress_callback,
                 target=target,

@@ -336,7 +336,7 @@ def is_import_error(result: dict[str, Any]) -> bool:
     Check if an execution result contains an import/module error.
 
     Args:
-        result: Execution result dictionary from EditorManager.execute()
+        result: Execution result dictionary from ExecutionManager.execute()
 
     Returns:
         True if the result indicates a missing module error
@@ -370,7 +370,7 @@ def get_missing_module_from_result(result: dict[str, Any]) -> Optional[str]:
     Extract missing module name from an execution result.
 
     Args:
-        result: Execution result dictionary from EditorManager.execute()
+        result: Execution result dictionary from ExecutionManager.execute()
 
     Returns:
         Module name if found, None otherwise

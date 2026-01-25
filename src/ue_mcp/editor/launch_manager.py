@@ -96,15 +96,12 @@ class LaunchManager:
         Returns:
             Either an error dict, or a tuple of (process, config_result)
         """
-        from .status_manager import StatusManager
-
         # Check if already running
         if self._ctx.editor is not None and self._ctx.editor.process.poll() is None:
-            status_mgr = StatusManager(self._ctx)
             return {
                 "success": False,
                 "error": "Editor is already running",
-                "status": status_mgr.get_status(),
+                "status": self._ctx.get_status(),
             }
 
         # Check if C++ project needs build - auto-build if necessary
@@ -322,10 +319,6 @@ class LaunchManager:
 
         process, config_result = prep_result
 
-        # Import StatusManager for get_status
-        from .status_manager import StatusManager
-        status_mgr = StatusManager(self._ctx)
-
         # Start background task to wait for connection
         self._ctx.create_background_task(
             self._wait_for_connection_async(
@@ -342,7 +335,7 @@ class LaunchManager:
             "success": True,
             "message": "Editor process started, waiting for connection in background",
             "config_result": config_result,
-            "status": status_mgr.get_status(),
+            "status": self._ctx.get_status(),
         }
 
     async def _background_connect_loop(
@@ -459,10 +452,6 @@ class LaunchManager:
             # Use asyncio.sleep to allow other tasks to run
             await asyncio.sleep(0.5)
 
-        # Import StatusManager for get_status
-        from .status_manager import StatusManager
-        status_mgr = StatusManager(self._ctx)
-
         if not connected:
             logger.warning("Timeout waiting for editor connection, continuing in background...")
             if self._ctx.editor:
@@ -489,7 +478,7 @@ class LaunchManager:
             return {
                 "success": False,
                 "error": "Timeout waiting for editor to enable remote execution. Background connection continues.",
-                "status": status_mgr.get_status(),
+                "status": self._ctx.get_status(),
                 "background_connecting": True,
             }
 
@@ -515,5 +504,5 @@ class LaunchManager:
         return {
             "success": True,
             "message": "Editor launched and connected",
-            "status": status_mgr.get_status(),
+            "status": self._ctx.get_status(),
         }

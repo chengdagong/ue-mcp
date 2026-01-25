@@ -63,7 +63,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         Returns:
             Launch result with status information.
         """
-        manager = state.get_editor_manager()
+        lifecycle = state.get_editor_lifecycle_subsystem()
+        execution = state.get_execution_subsystem()
 
         # Create notification callback using ctx.log
         async def notify(level: str, message: str) -> None:
@@ -80,13 +81,13 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
                 logger.info(f"Including bundled site-packages: {bundled_path_str}")
 
         if wait:
-            result = await manager.launch(
+            result = await lifecycle.launch(
                 notify=notify,
                 additional_paths=all_paths if all_paths else None,
                 wait_timeout=wait_timeout,
             )
         else:
-            result = await manager.launch_async(
+            result = await lifecycle.launch_async(
                 notify=notify,
                 additional_paths=all_paths if all_paths else None,
                 wait_timeout=wait_timeout,
@@ -94,7 +95,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         # Query project assets if launch was successful
         if result.get("success"):
-            assets_result = query_project_assets(manager)
+            assets_result = query_project_assets(execution)
             if assets_result.get("success"):
                 result["project_assets"] = assets_result.get("assets", {})
             else:
@@ -120,8 +121,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - connected: Whether remote execution is connected (if running)
             - log_file_path: Path to the editor log file (if launched)
         """
-        manager = state.get_editor_manager()
-        return manager.get_status()
+        context = state.get_context()
+        return context.get_status()
 
     @mcp.tool(name="editor_read_log")
     def read_editor_log(
@@ -151,8 +152,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - file_size: Size of the log file in bytes
             - error: Error message (if failed)
         """
-        manager = state.get_editor_manager()
-        return manager.read_log(tail_lines=tail_lines)
+        context = state.get_context()
+        return context.read_log(tail_lines=tail_lines)
 
     @mcp.tool(name="editor_stop")
     def stop_editor() -> dict[str, Any]:
@@ -167,8 +168,9 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         Returns:
             Stop result with success status
         """
-        manager = state.get_editor_manager()
-        return manager.stop()
+        context = state.get_context()
+        health_monitor = state.get_health_monitor()
+        return context.stop(health_monitor=health_monitor)
 
     @mcp.tool(name="editor_configure")
     def configure_project(
@@ -202,9 +204,9 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         Returns:
             Configuration check result with status and details for each check
         """
-        manager = state.get_editor_manager()
+        context = state.get_context()
         return run_config_check(
-            manager.project_root,
+            context.project_root,
             auto_fix=auto_fix,
             additional_paths=additional_paths if additional_paths else None,
             include_bundled_packages=True,

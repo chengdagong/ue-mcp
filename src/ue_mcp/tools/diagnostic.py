@@ -64,14 +64,14 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - tab_error: Error message if tab switching failed (if applicable)
             - error: Error message (if failed)
         """
-        manager = state.get_editor_manager()
+        execution = state.get_execution_subsystem()
 
         script_path = (
             Path(__file__).parent.parent / "extra" / "scripts" / "asset_open.py"
         )
 
         result = execute_script_from_path(
-            manager,
+            execution,
             script_path,
             params={"asset_path": asset_path, "tab_id": tab_id},
             timeout=30.0,
@@ -110,13 +110,13 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - summary: Optional summary message
             - metadata: Additional asset metadata
         """
-        manager = state.get_editor_manager()
+        execution = state.get_execution_subsystem()
 
         scripts_dir = get_diagnostic_scripts_dir()
         script_path = scripts_dir / "diagnostic_runner.py"
 
         result = execute_script_from_path(
-            manager,
+            execution,
             script_path,
             params={"asset_path": asset_path},
             timeout=120.0,
@@ -174,7 +174,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - screenshot_path: (For Blueprint/Level) Path to viewport screenshot
             - screenshot_error: (For Blueprint/Level) Error message if screenshot failed
         """
-        manager = state.get_editor_manager()
+        execution = state.get_execution_subsystem()
 
         scripts_dir = get_diagnostic_scripts_dir()
         script_path = scripts_dir / "inspect_runner.py"
@@ -184,7 +184,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             params["component_name"] = component_name
 
         result = execute_script_from_path(
-            manager,
+            execution,
             script_path,
             params=params,
             timeout=120.0,

@@ -87,10 +87,10 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - files: Dictionary mapping view types to lists of file paths
             - output: Console output from capture
         """
-        manager = state.get_editor_manager()
+        execution = state.get_execution_subsystem()
 
         result = execute_script(
-            manager,
+            execution,
             "capture_orbital",
             params={
                 "level": level,
@@ -179,7 +179,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - duration: Actual capture duration
             - available_actors: (on error) List of actors in level with label, name, type
         """
-        manager = state.get_editor_manager()
+        execution = state.get_execution_subsystem()
+        context = state.get_context()
 
         def process_capture_result(capture_result: dict[str, Any]) -> dict[str, Any]:
             """Process capture result and extract relevant fields."""
@@ -202,7 +203,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         return await run_pie_task(
             ctx=ctx,
-            manager=manager,
+            execution=execution,
+            project_root=context.project_root,
             script_name="capture_pie",
             params={
                 "output_dir": output_dir,
@@ -317,7 +319,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - actor_count: Number of actors successfully tracked
             - actors_not_found: List of actor names that weren't found
         """
-        manager = state.get_editor_manager()
+        execution = state.get_execution_subsystem()
+        context = state.get_context()
 
         def process_trace_result(trace_result: dict[str, Any]) -> dict[str, Any]:
             """Process trace result and extract relevant fields."""
@@ -333,7 +336,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         return await run_pie_task(
             ctx=ctx,
-            manager=manager,
+            execution=execution,
+            project_root=context.project_root,
             script_name="trace_actors_pie",
             params={
                 "output_dir": output_dir,
@@ -394,7 +398,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - executions: List of execution results (snippet_index, tick, success, output)
             - errors: List of any errors encountered
         """
-        manager = state.get_editor_manager()
+        execution = state.get_execution_subsystem()
+        context = state.get_context()
 
         def process_executor_result(exec_result: dict[str, Any]) -> dict[str, Any]:
             """Process executor result and extract relevant fields."""
@@ -412,7 +417,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         return await run_pie_task(
             ctx=ctx,
-            manager=manager,
+            execution=execution,
+            project_root=context.project_root,
             script_name="execute_in_tick",
             params={
                 "level": level,
@@ -491,7 +497,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - success: Whether capture succeeded
             - file/files: Path(s) to captured screenshot(s)
         """
-        manager = state.get_editor_manager()
+        execution = state.get_execution_subsystem()
 
         params: dict[str, Any] = {
             "level": level,
@@ -532,7 +538,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             params["output_dir"] = output_dir
 
         result = execute_script(
-            manager,
+            execution,
             "capture_window",
             params=params,
             timeout=120.0,

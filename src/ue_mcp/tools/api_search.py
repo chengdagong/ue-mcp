@@ -119,7 +119,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             # Search for spawn-related APIs
             python_api_search(mode="search", query="spawn")
         """
-        manager = state.get_editor_manager()
+        execution = state.get_execution_subsystem()
 
         # Validate mode
         valid_modes = [
@@ -152,7 +152,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             "limit": limit,
         }
 
-        result = execute_script_from_path(manager, script_path, params, timeout=30.0)
+        result = execute_script_from_path(execution, script_path, params, timeout=30.0)
 
         # Parse result
         return parse_json_result(result)

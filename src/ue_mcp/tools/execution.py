@@ -43,8 +43,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         Example:
             execute_code("import unreal; print(unreal.EditorAssetLibrary.list_assets('/Game/'))")
         """
-        manager = state.get_editor_manager()
-        return manager.execute_with_checks(code, timeout=timeout)
+        execution = state.get_execution_subsystem()
+        return execution.execute_with_checks(code, timeout=timeout)
 
     @mcp.tool(name="editor_execute_script")
     def execute_script(
@@ -123,11 +123,11 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         if kwargs:
             params.update(kwargs)
 
-        manager = state.get_editor_manager()
+        execution = state.get_execution_subsystem()
 
         # Step 1: Inject parameters via environment variables
         injection_code = build_env_injection_code(str(path), params)
-        inject_result = manager.execute(injection_code, timeout=5.0)
+        inject_result = execution._execute(injection_code, timeout=5.0)
 
         if not inject_result.get("success"):
             return {
@@ -136,7 +136,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             }
 
         # Step 2: Execute script file directly (true hot-reload)
-        return manager.execute_script_file(str(path), timeout=timeout)
+        return execution.execute_script_file(str(path), timeout=timeout)
 
     @mcp.tool(name="editor_pip_install")
     def pip_install_packages(
@@ -174,5 +174,5 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         Example:
             pip_install_packages(["Pillow", "numpy"])
         """
-        manager = state.get_editor_manager()
-        return manager.pip_install_packages(packages, upgrade=upgrade)
+        execution = state.get_execution_subsystem()
+        return execution.pip_install_packages(packages, upgrade=upgrade)

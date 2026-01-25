@@ -143,7 +143,7 @@ def create_snapshot(manager, paths: list[str], project_dir: str) -> dict[str, An
     Create an asset snapshot by executing the snapshot script in UE5.
 
     Args:
-        manager: EditorManager instance
+        manager: ExecutionManager instance
         paths: List of directory paths to scan
         project_dir: Project directory path for filesystem path conversion
 
@@ -322,7 +322,7 @@ def gather_change_details(manager, changes: dict[str, Any]) -> dict[str, Any]:
     For other assets: runs lightweight inspect
 
     Args:
-        manager: EditorManager instance
+        manager: ExecutionManager instance
         changes: Changes dictionary from compare_snapshots
 
     Returns:

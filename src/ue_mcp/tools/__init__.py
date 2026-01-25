@@ -27,7 +27,7 @@ def register_all_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
     Args:
         mcp: The FastMCP server instance
-        state: The server state for accessing EditorManager and other state
+        state: The server state for accessing subsystems and other state
     """
     from . import api_search, capture, diagnostic, editor, execution, pie, project
 

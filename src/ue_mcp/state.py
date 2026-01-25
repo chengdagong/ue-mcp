@@ -5,7 +5,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from .editor_manager import EditorManager
+    from .editor.build_manager import BuildManager
+    from .editor.context import EditorContext
+    from .editor.execution_manager import ExecutionManager
+    from .editor.health_monitor import HealthMonitor
+    from .editor.launch_manager import LaunchManager
+    from .editor.project_analyzer import ProjectAnalyzer
+    from .editor.subsystems import EditorSubsystems
 
 logger = logging.getLogger(__name__)
 
@@ -14,25 +20,27 @@ class ServerState:
     """Centralized state for the MCP server.
 
     This class manages all global state for the UE-MCP server, including:
-    - EditorManager instance
+    - EditorSubsystems instance (replaces EditorManager)
     - Client name (detected from MCP client)
     - Project path initialization status
+
+    Tools access subsystems directly via get_*_subsystem() methods.
     """
 
     def __init__(self) -> None:
-        self._editor_manager: Optional["EditorManager"] = None
+        self._subsystems: Optional["EditorSubsystems"] = None
         self._client_name: Optional[str] = None
         self._project_path_set: bool = False
 
     @property
-    def editor_manager(self) -> Optional["EditorManager"]:
-        """Get the EditorManager instance (may be None)."""
-        return self._editor_manager
+    def subsystems(self) -> Optional["EditorSubsystems"]:
+        """Get the EditorSubsystems instance (may be None)."""
+        return self._subsystems
 
-    @editor_manager.setter
-    def editor_manager(self, value: Optional["EditorManager"]) -> None:
-        """Set the EditorManager instance."""
-        self._editor_manager = value
+    @subsystems.setter
+    def subsystems(self, value: Optional["EditorSubsystems"]) -> None:
+        """Set the EditorSubsystems instance."""
+        self._subsystems = value
 
     @property
     def client_name(self) -> Optional[str]:
@@ -54,32 +62,99 @@ class ServerState:
         """Set the project path initialization status."""
         self._project_path_set = value
 
-    def get_editor_manager(self) -> "EditorManager":
-        """Get the EditorManager, raising RuntimeError if not initialized.
-
-        Returns:
-            EditorManager instance
-
-        Raises:
-            RuntimeError: If EditorManager has not been initialized
-        """
-        if self._editor_manager is None:
+    def _require_subsystems(self) -> "EditorSubsystems":
+        """Get subsystems, raising RuntimeError if not initialized."""
+        if self._subsystems is None:
             raise RuntimeError(
-                "EditorManager not initialized. "
+                "EditorSubsystems not initialized. "
                 "Please call the 'project_set_path' tool first to set the UE5 project directory."
             )
-        return self._editor_manager
+        return self._subsystems
 
-    def initialize_from_cwd(self) -> Optional["EditorManager"]:
-        """Try to initialize EditorManager from current working directory.
+    # =========================================================================
+    # Subsystem Accessors (direct access pattern)
+    # =========================================================================
 
-        Searches for a .uproject file in the current directory and initializes
-        the EditorManager if found.
+    def get_context(self) -> "EditorContext":
+        """Get the EditorContext for status queries.
 
         Returns:
-            EditorManager instance if successful, None otherwise
+            EditorContext instance
+
+        Raises:
+            RuntimeError: If subsystems have not been initialized
         """
-        from .editor_manager import EditorManager
+        return self._require_subsystems().context
+
+    def get_execution_subsystem(self) -> "ExecutionManager":
+        """Get the ExecutionManager for code execution.
+
+        Returns:
+            ExecutionManager instance
+
+        Raises:
+            RuntimeError: If subsystems have not been initialized
+        """
+        return self._require_subsystems().execution
+
+    def get_editor_lifecycle_subsystem(self) -> "LaunchManager":
+        """Get the LaunchManager for editor lifecycle operations.
+
+        Returns:
+            LaunchManager instance
+
+        Raises:
+            RuntimeError: If subsystems have not been initialized
+        """
+        return self._require_subsystems().lifecycle
+
+    def get_build_subsystem(self) -> "BuildManager":
+        """Get the BuildManager for project building.
+
+        Returns:
+            BuildManager instance
+
+        Raises:
+            RuntimeError: If subsystems have not been initialized
+        """
+        return self._require_subsystems().build
+
+    def get_project_analyzer(self) -> "ProjectAnalyzer":
+        """Get the ProjectAnalyzer for project analysis.
+
+        Returns:
+            ProjectAnalyzer instance
+
+        Raises:
+            RuntimeError: If subsystems have not been initialized
+        """
+        return self._require_subsystems().project_analyzer
+
+    def get_health_monitor(self) -> "HealthMonitor":
+        """Get the HealthMonitor for editor health tracking.
+
+        Returns:
+            HealthMonitor instance
+
+        Raises:
+            RuntimeError: If subsystems have not been initialized
+        """
+        return self._require_subsystems().health_monitor
+
+    # =========================================================================
+    # Initialization and Cleanup
+    # =========================================================================
+
+    def initialize_from_cwd(self) -> Optional["EditorSubsystems"]:
+        """Try to initialize EditorSubsystems from current working directory.
+
+        Searches for a .uproject file in the current directory and initializes
+        the subsystems if found.
+
+        Returns:
+            EditorSubsystems instance if successful, None otherwise
+        """
+        from .editor.subsystems import EditorSubsystems
         from .utils import find_uproject_file
 
         logger.info("Initializing UE-MCP server...")
@@ -94,20 +169,35 @@ class ServerState:
             return None
 
         logger.info(f"Detected project: {uproject_path}")
-        self._editor_manager = EditorManager(uproject_path)
-        return self._editor_manager
+        self._subsystems = EditorSubsystems.create(uproject_path)
+        return self._subsystems
+
+    def initialize_from_path(self, project_path: Path) -> "EditorSubsystems":
+        """Initialize EditorSubsystems from a specific project path.
+
+        Args:
+            project_path: Path to the .uproject file
+
+        Returns:
+            EditorSubsystems instance
+        """
+        from .editor.subsystems import EditorSubsystems
+
+        logger.info(f"Initializing from path: {project_path}")
+        self._subsystems = EditorSubsystems.create(project_path)
+        return self._subsystems
 
     def cleanup(self) -> None:
         """Clean up resources.
 
-        Called during server shutdown to properly clean up the EditorManager.
+        Called during server shutdown to properly clean up the subsystems.
         """
-        if self._editor_manager is not None:
+        if self._subsystems is not None:
             try:
-                self._editor_manager._cleanup()
-                logger.info("EditorManager cleanup completed")
+                self._subsystems.cleanup()
+                logger.info("EditorSubsystems cleanup completed")
             except Exception as e:
-                logger.error(f"Error during EditorManager cleanup: {e}")
+                logger.error(f"Error during EditorSubsystems cleanup: {e}")
 
 
 # Global singleton instance

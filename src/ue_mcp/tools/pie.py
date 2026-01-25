@@ -32,14 +32,14 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - message: Status message
             - error: Error message (if failed)
         """
-        manager = state.get_editor_manager()
+        execution = state.get_execution_subsystem()
 
         script_path = (
             Path(__file__).parent.parent / "extra" / "scripts" / "pie_control.py"
         )
 
         result = execute_script_from_path(
-            manager,
+            execution,
             script_path,
             params={"command": "start"},
             timeout=10.0,
@@ -61,14 +61,14 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - message: Status message
             - error: Error message (if failed)
         """
-        manager = state.get_editor_manager()
+        execution = state.get_execution_subsystem()
 
         script_path = (
             Path(__file__).parent.parent / "extra" / "scripts" / "pie_control.py"
         )
 
         result = execute_script_from_path(
-            manager,
+            execution,
             script_path,
             params={"command": "stop"},
             timeout=10.0,
@@ -100,14 +100,14 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - level_path: The level path that was loaded
             - error: Error message (if failed)
         """
-        manager = state.get_editor_manager()
+        execution = state.get_execution_subsystem()
 
         script_path = (
             Path(__file__).parent.parent / "extra" / "scripts" / "level_load.py"
         )
 
         result = execute_script_from_path(
-            manager,
+            execution,
             script_path,
             params={"level_path": level_path},
             timeout=30.0,
