@@ -544,3 +544,83 @@ print("Hello")
         result = inspect_code(code)
         deprecated_issues = [i for i in result.issues if i.checker == "DeprecatedAPIChecker"]
         assert len(deprecated_issues) == 0
+
+
+class TestDecoratorHandling:
+    """Tests for decorator handling in UnrealAPIChecker."""
+
+    def test_skips_decorator_validation(self):
+        """Decorators should not be validated as API calls."""
+        # Even if @unreal.ufunction doesn't exist via hasattr(),
+        # decorators should be skipped to avoid false positives
+        code = """
+import unreal
+
+@unreal.ufunction(meta=dict(Category="Test"))
+def test_func():
+    pass
+"""
+        result = inspect_code(code)
+        # Should not report decorator as invalid API
+        unreal_errors = [
+            i for i in result.issues
+            if i.checker == "UnrealAPIChecker" and "ufunction" in i.message
+        ]
+        assert len(unreal_errors) == 0
+
+    def test_skips_chained_decorator_validation(self):
+        """Chained decorators like @unreal.AutomationScheduler.add_latent_command should be skipped."""
+        code = """
+import unreal
+
+@unreal.AutomationScheduler.add_latent_command
+def test_latent():
+    yield
+"""
+        result = inspect_code(code)
+        # Should not report chained decorator as invalid API
+        unreal_errors = [
+            i for i in result.issues
+            if i.checker == "UnrealAPIChecker" and "add_latent_command" in i.message
+        ]
+        assert len(unreal_errors) == 0
+
+    def test_skips_class_decorator_validation(self):
+        """Class decorators should also be skipped."""
+        code = """
+import unreal
+
+@unreal.uclass()
+class MyClass:
+    pass
+"""
+        result = inspect_code(code)
+        # Should not report class decorator as invalid API
+        unreal_errors = [
+            i for i in result.issues
+            if i.checker == "UnrealAPIChecker" and "uclass" in i.message
+        ]
+        assert len(unreal_errors) == 0
+
+    def test_still_validates_non_decorator_code(self, unreal_available=None):
+        """Non-decorator code should still be validated."""
+        try:
+            import unreal
+        except ImportError:
+            pytest.skip("unreal module not available")
+
+        code = """
+import unreal
+
+@unreal.ufunction()
+def test_func():
+    # This should still be validated
+    unreal.NonExistentAPI()
+"""
+        result = inspect_code(code)
+        # The decorator should be skipped, but the function body should be checked
+        unreal_errors = [
+            i for i in result.issues
+            if i.checker == "UnrealAPIChecker" and "NonExistentAPI" in i.message
+        ]
+        assert len(unreal_errors) >= 1

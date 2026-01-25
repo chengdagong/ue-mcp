@@ -479,6 +479,18 @@ class UnrealAPIChecker(BaseChecker):
         unreal_aliases: Set[str] = set()
         direct_imports: Dict[str, str] = {}  # alias -> original_name
 
+        # Collect decorator nodes - these should be skipped during validation
+        # because decorators may reference APIs that aren't accessible via hasattr()
+        # (e.g., @unreal.ufunction, @unreal.AutomationScheduler.add_latent_command)
+        decorator_nodes: Set[int] = set()  # Store node ids
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                for decorator in node.decorator_list:
+                    # Collect all Attribute nodes within decorators
+                    for subnode in ast.walk(decorator):
+                        if isinstance(subnode, ast.Attribute):
+                            decorator_nodes.add(id(subnode))
+
         # First pass: collect import information
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -509,6 +521,10 @@ class UnrealAPIChecker(BaseChecker):
         # Second pass: find unreal API attribute accesses and validate them
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute):
+                # Skip decorator nodes - they may reference APIs not accessible via hasattr()
+                if id(node) in decorator_nodes:
+                    continue
+
                 # Extract the API path if this is an unreal API call
                 api_path = self._extract_api_path(node, unreal_aliases)
                 if api_path:
