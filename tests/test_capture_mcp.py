@@ -218,9 +218,12 @@ class TestCaptureTools:
 
     @pytest.mark.asyncio
     async def test_level_screenshot_with_level_parameter(
-        self, running_editor: ToolCaller, test_output_dir: Path, test_level_path: str
+        self, running_editor: ToolCaller, test_output_dir: Path
     ):
         """Test editor_level_screenshot with level parameter to load a specific level."""
+        # Use existing level that we know exists in the test project
+        level_path = "/Game/BlueSkyLevel"
+
         # Create test-specific output directory
         screenshot_dir = test_output_dir / "level_screenshot_with_level"
         screenshot_dir.mkdir(exist_ok=True)
@@ -228,7 +231,7 @@ class TestCaptureTools:
         result = await running_editor.call(
             "editor_level_screenshot",
             {
-                "level": test_level_path,
+                "level": level_path,
                 "cameras": ["front@500,0,500"],
                 "target": "0,0,0",
                 "output_dir": str(screenshot_dir),
@@ -238,7 +241,7 @@ class TestCaptureTools:
 
         data = parse_tool_result(result)
         print(f"\n=== Level Screenshot With Level Parameter Debug ===")
-        print(f"Level path: {test_level_path}")
+        print(f"Level path: {level_path}")
         print(f"Output dir: {screenshot_dir}")
         print(f"Return data: {data}")
         print(f"===================================================\n")

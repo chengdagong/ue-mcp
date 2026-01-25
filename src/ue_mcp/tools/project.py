@@ -19,15 +19,13 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     """Register project management tools."""
 
     from ..editor.subsystems import EditorSubsystems
-    from ..utils import find_uproject_file
+    from ..core.utils import find_uproject_file
 
     @mcp.tool(name="project_set_path")
     def set_project_path(
         project_path: Annotated[
             str,
-            Field(
-                description="Absolute path to the directory containing the .uproject file"
-            ),
+            Field(description="Absolute path to the directory containing the .uproject file"),
         ],
     ) -> dict[str, Any]:
         """

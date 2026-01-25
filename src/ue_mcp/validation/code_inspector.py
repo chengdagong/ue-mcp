@@ -400,9 +400,7 @@ class DeprecatedAPIChecker(BaseChecker):
 
         return issues
 
-    def _is_deprecated_call(
-        self, node: ast.Attribute, unreal_aliases: Set[str]
-    ) -> Optional[tuple]:
+    def _is_deprecated_call(self, node: ast.Attribute, unreal_aliases: Set[str]) -> Optional[tuple]:
         """
         Check if an Attribute node is a deprecated API call.
 
@@ -529,16 +527,12 @@ class UnrealAPIChecker(BaseChecker):
                 api_path = self._extract_api_path(node, unreal_aliases)
                 if api_path:
                     # Validate the API path
-                    valid, invalid_attr, _ = self._validate_api_path(
-                        api_path, unreal
-                    )
+                    valid, invalid_attr, _ = self._validate_api_path(api_path, unreal)
                     if not valid:
                         # Build the full path string for error message
                         full_path = "unreal." + ".".join(api_path)
                         # Find where it breaks
-                        valid_path = "unreal." + ".".join(
-                            api_path[: api_path.index(invalid_attr)]
-                        )
+                        valid_path = "unreal." + ".".join(api_path[: api_path.index(invalid_attr)])
 
                         issues.append(
                             InspectionIssue(
@@ -590,9 +584,7 @@ class UnrealAPIChecker(BaseChecker):
 
         return None
 
-    def _validate_api_path(
-        self, path: List[str], unreal_module
-    ) -> tuple[bool, Optional[str], Any]:
+    def _validate_api_path(self, path: List[str], unreal_module) -> tuple[bool, Optional[str], Any]:
         """
         Validate that an API path exists in the unreal module.
 

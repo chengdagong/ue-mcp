@@ -1,6 +1,7 @@
 """Editor management tools."""
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Optional
 
 from fastmcp import Context
@@ -18,8 +19,9 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     """Register editor management tools."""
 
     from ..autoconfig import get_bundled_site_packages, run_config_check
+    from ..script_executor import execute_script_from_path
 
-    from ._helpers import query_project_assets
+    from ._helpers import parse_json_result, query_project_assets
 
     @mcp.tool(name="editor_launch")
     async def launch_editor(
@@ -100,9 +102,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
                 result["project_assets"] = assets_result.get("assets", {})
             else:
                 # Include error info but don't fail the launch
-                result["project_assets_error"] = assets_result.get(
-                    "error", "Unknown error"
-                )
+                result["project_assets_error"] = assets_result.get("error", "Unknown error")
 
         return result
 
@@ -211,3 +211,38 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             additional_paths=additional_paths if additional_paths else None,
             include_bundled_packages=True,
         )
+
+    @mcp.tool(name="editor_load_level")
+    def load_level(
+        level_path: Annotated[
+            str,
+            Field(description="Path to the level to load (e.g., /Game/Maps/MyLevel)"),
+        ],
+    ) -> dict[str, Any]:
+        """
+        Load a level in the editor.
+
+        This uses LevelEditorSubsystem.load_level() to open a level in the editor.
+
+        Args:
+            level_path: Path to the level to load (must start with /Game/)
+
+        Returns:
+            Result containing:
+            - success: Whether level was loaded successfully
+            - message: Status message
+            - level_path: The level path that was loaded
+            - error: Error message (if failed)
+        """
+        execution = state.get_execution_subsystem()
+
+        script_path = Path(__file__).parent.parent / "extra" / "scripts" / "level_load.py"
+
+        result = execute_script_from_path(
+            execution,
+            script_path,
+            params={"level_path": level_path},
+            timeout=30.0,
+        )
+
+        return parse_json_result(result)

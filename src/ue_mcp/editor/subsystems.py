@@ -55,7 +55,7 @@ class EditorSubsystems:
         Returns:
             Initialized EditorSubsystems instance
         """
-        from ..utils import get_project_name
+        from ..core.utils import get_project_name
 
         # Create shared context
         resolved_path = project_path.resolve()

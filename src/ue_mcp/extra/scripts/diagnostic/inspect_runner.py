@@ -14,6 +14,7 @@ MCP mode (sys.argv):
     asset_path: str - Asset path to inspect (e.g., /Game/Meshes/MyMesh)
     component_name: str (optional) - Name of a specific component to inspect (for Blueprints)
 """
+
 import argparse
 import json
 import os
@@ -24,35 +25,10 @@ import time
 import unreal
 import asset_diagnostic
 
-
 from asset_diagnostic import detect_asset_type, load_asset, get_asset_references, AssetType
 
-def _is_mcp_mode() -> bool:
-    """Check if running in MCP mode (vs CLI mode)."""
-    from ue_mcp_capture.utils import _is_mcp_mode as _utils_is_mcp_mode
-    return _utils_is_mcp_mode()
-
-
-def output_result(data: dict) -> None:
-    """
-    Output result as pure JSON (last line of output).
-
-    The MCP server will parse the last valid JSON object from the output.
-    This enables clean output without special markers.
-
-    In MCP mode: Outputs compact JSON for parsing
-    In CLI mode: Outputs formatted JSON for readability
-    """
-    if _is_mcp_mode():
-        # MCP mode: compact JSON (will be parsed as last line)
-        print(json.dumps(data))
-    else:
-        # CLI mode: human-readable formatted output
-        print("\n" + "=" * 60)
-        print("INSPECTION RESULT")
-        print("=" * 60)
-        print(json.dumps(data, indent=2))
-        print("=" * 60)
+# Import shared utilities from ue_mcp_capture (avoid code duplication)
+from ue_mcp_capture.utils import output_result
 
 
 def serialize_value(value, depth=0, max_depth=3):
@@ -104,12 +80,7 @@ def serialize_value(value, depth=0, max_depth=3):
         }
 
     # UE5 Color (FColor has r,g,b,a as integers)
-    if (
-        hasattr(value, "r")
-        and hasattr(value, "g")
-        and hasattr(value, "b")
-        and hasattr(value, "a")
-    ):
+    if hasattr(value, "r") and hasattr(value, "g") and hasattr(value, "b") and hasattr(value, "a"):
         return {
             "r": int(value.r),
             "g": int(value.g),
@@ -432,8 +403,7 @@ def get_screenshot_output_path(asset_path: str) -> str:
     # Build path: {tempdir}/ue-mcp/screenshots/{project_name}_{asset_name}_{timestamp}/
     temp_dir = tempfile.gettempdir()
     screenshot_dir = os.path.join(
-        temp_dir, "ue-mcp", "screenshots",
-        f"{project_name}_{asset_name}_{timestamp}"
+        temp_dir, "ue-mcp", "screenshots", f"{project_name}_{asset_name}_{timestamp}"
     )
     os.makedirs(screenshot_dir, exist_ok=True)
 
@@ -498,7 +468,9 @@ def _capture_blueprint_screenshot(blueprint, output_path: str) -> dict:
             unreal.ExSlateTabLibrary.switch_to_viewport_mode(blueprint)
             time.sleep(0.5)
         except AttributeError:
-            unreal.log_warning("[WARNING] ExSlateTabLibrary not available, skipping viewport switch")
+            unreal.log_warning(
+                "[WARNING] ExSlateTabLibrary not available, skipping viewport switch"
+            )
 
         # Capture the window
         return _do_capture(output_path)
@@ -550,27 +522,29 @@ def capture_asset_screenshot(asset, asset_path: str, asset_type) -> dict:
     elif asset_type == AssetType.LEVEL:
         return _capture_level_screenshot(asset_path, output_path)
     else:
-        return {"success": False, "error": f"Screenshot not supported for asset type: {asset_type.value}"}
+        return {
+            "success": False,
+            "error": f"Screenshot not supported for asset type: {asset_type.value}",
+        }
 
 
 def main():
     """Main entry point for asset inspection."""
     # Bootstrap from environment variables (must be before argparse)
     from ue_mcp_capture.utils import bootstrap_from_env
+
     bootstrap_from_env()
 
     parser = argparse.ArgumentParser(
         description="Inspect a UE5 asset and return all its properties"
     )
     parser.add_argument(
-        "--asset-path",
-        required=True,
-        help="Asset path to inspect (e.g., /Game/Meshes/MyMesh)"
+        "--asset-path", required=True, help="Asset path to inspect (e.g., /Game/Meshes/MyMesh)"
     )
     parser.add_argument(
         "--component-name",
         default=None,
-        help="Name of a specific component to inspect (for Blueprints only)"
+        help="Name of a specific component to inspect (for Blueprints only)",
     )
     args = parser.parse_args()
 
@@ -584,10 +558,12 @@ def main():
     asset = load_asset(asset_path)
 
     if asset is None:
-        output_result({
-            "success": False,
-            "error": f"Failed to load asset: {asset_path}",
-        })
+        output_result(
+            {
+                "success": False,
+                "error": f"Failed to load asset: {asset_path}",
+            }
+        )
         return
 
     # Get asset class name

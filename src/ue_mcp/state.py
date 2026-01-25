@@ -155,7 +155,7 @@ class ServerState:
             EditorSubsystems instance if successful, None otherwise
         """
         from .editor.subsystems import EditorSubsystems
-        from .utils import find_uproject_file
+        from .core.utils import find_uproject_file
 
         logger.info("Initializing UE-MCP server...")
         logger.info(f"Working directory: {Path.cwd()}")
@@ -163,8 +163,7 @@ class ServerState:
         uproject_path = find_uproject_file()
         if uproject_path is None:
             logger.error(
-                "No .uproject file found. "
-                "Please run this server from a UE5 project directory."
+                "No .uproject file found. Please run this server from a UE5 project directory."
             )
             return None
 

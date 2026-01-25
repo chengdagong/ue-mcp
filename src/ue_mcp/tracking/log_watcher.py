@@ -4,6 +4,7 @@ File-based completion watcher for UE-MCP.
 Monitors for {task_id}_completed files in Saved/Logs directory.
 Used for async notification when PIE capture completes.
 """
+
 import asyncio
 import json
 import logging

@@ -6,7 +6,7 @@ import socket
 
 import pytest
 
-from ue_mcp.port_allocator import (
+from ue_mcp.core.port_allocator import (
     PORT_RANGE_END,
     PORT_RANGE_START,
     _is_port_available,

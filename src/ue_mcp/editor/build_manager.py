@@ -15,7 +15,7 @@ import subprocess
 import time
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..utils import find_ue5_build_batch_file
+from ..core.utils import find_ue5_build_batch_file
 from .types import NotifyCallback, ProgressCallback
 
 if TYPE_CHECKING:
@@ -78,7 +78,9 @@ class BuildManager:
         """
         # Check if C++ project
         if not self._project_analyzer.is_cpp_project():
-            logger.info(f"Project {self._ctx.project_name} is a Blueprint-only project. Skipping build.")
+            logger.info(
+                f"Project {self._ctx.project_name} is a Blueprint-only project. Skipping build."
+            )
             return {
                 "success": True,
                 "message": f"Project '{self._ctx.project_name}' is a Blueprint-only project (no Source directory or C++ plugins). No C++ compilation required.",
@@ -163,7 +165,9 @@ class BuildManager:
         """
         # Check if C++ project
         if not self._project_analyzer.is_cpp_project():
-            logger.info(f"Project {self._ctx.project_name} is a Blueprint-only project. Skipping build.")
+            logger.info(
+                f"Project {self._ctx.project_name} is a Blueprint-only project. Skipping build."
+            )
             return {
                 "success": True,
                 "message": f"Project '{self._ctx.project_name}' is a Blueprint-only project (no Source directory or C++ plugins). No C++ compilation required.",

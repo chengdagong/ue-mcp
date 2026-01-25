@@ -3,11 +3,14 @@ Asset change tracking module for UE-MCP.
 
 Detects asset changes (created, deleted, modified) before and after code execution.
 """
+
 import json
 import logging
 import re
 from pathlib import Path
 from typing import Any
+
+from ..core.constants import MARKER_CURRENT_LEVEL_PATH, MARKER_SNAPSHOT_RESULT
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +60,7 @@ def extract_game_paths(code: str) -> list[str]:
 
 def get_snapshot_script_path() -> Path:
     """Get the path to the asset_snapshot.py script."""
-    return Path(__file__).parent / "extra" / "scripts" / "diagnostic" / "asset_snapshot.py"
+    return Path(__file__).parent.parent / "extra" / "scripts" / "diagnostic" / "asset_snapshot.py"
 
 
 def get_current_level_path(manager) -> str | None:
@@ -76,7 +79,7 @@ def get_current_level_path(manager) -> str | None:
         or None if no level is loaded or query failed
     """
     # Python code to get current level path in UE5
-    code = '''
+    code = """
 import unreal
 
 try:
@@ -99,7 +102,7 @@ try:
         print("CURRENT_LEVEL_PATH:NONE")
 except Exception as e:
     print("CURRENT_LEVEL_PATH:NONE")
-'''
+"""
 
     # Use _execute directly to avoid recursion
     result = manager.execute_code(code, timeout=10.0)
@@ -121,8 +124,8 @@ except Exception as e:
         output_str = str(output)
 
     # Extract the path
-    if "CURRENT_LEVEL_PATH:" in output_str:
-        path = output_str.split("CURRENT_LEVEL_PATH:", 1)[1].strip()
+    if MARKER_CURRENT_LEVEL_PATH in output_str:
+        path = output_str.split(MARKER_CURRENT_LEVEL_PATH, 1)[1].strip()
         # Handle potential trailing content (newlines, etc.)
         path = path.split("\n")[0].strip()
         if path and path != "NONE":
@@ -173,6 +176,7 @@ def create_snapshot(manager, paths: list[str], project_dir: str) -> dict[str, An
 
     # Build CLI args
     import json as json_module
+
     args = []
     for key, value in params.items():
         args.append(f"--{key.replace('_', '-')}")
@@ -213,8 +217,8 @@ os.environ['UE_MCP_MODE'] = '1'
         output_str = str(output)
 
     # Find JSON in output (marked with SNAPSHOT_RESULT:)
-    if "SNAPSHOT_RESULT:" in output_str:
-        json_str = output_str.split("SNAPSHOT_RESULT:", 1)[1].strip()
+    if MARKER_SNAPSHOT_RESULT in output_str:
+        json_str = output_str.split(MARKER_SNAPSHOT_RESULT, 1)[1].strip()
         # Handle potential trailing content
         try:
             # Find the end of JSON (closing brace at same nesting level)
@@ -300,10 +304,12 @@ def compare_snapshots(before: dict[str, Any], after: dict[str, Any]) -> dict[str
                     is_modified = True
 
         if is_modified:
-            modified.append({
-                "path": path,
-                "asset_type": after_assets[path].get("asset_type", "Unknown"),
-            })
+            modified.append(
+                {
+                    "path": path,
+                    "asset_type": after_assets[path].get("asset_type", "Unknown"),
+                }
+            )
 
     return {
         "detected": bool(created or deleted or modified),
@@ -328,7 +334,7 @@ def gather_change_details(manager, changes: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Updated changes dictionary with details populated
     """
-    from .script_executor import get_diagnostic_scripts_dir
+    from ..script_executor import get_diagnostic_scripts_dir
 
     diagnostic_script = get_diagnostic_scripts_dir() / "diagnostic_runner.py"
     inspect_script = get_diagnostic_scripts_dir() / "inspect_runner.py"
@@ -346,6 +352,7 @@ def gather_change_details(manager, changes: dict[str, Any]) -> dict[str, Any]:
 
         # Build CLI args
         import json as json_module
+
         args = []
         for key, value in params.items():
             args.append(f"--{key.replace('_', '-')}")
@@ -404,9 +411,7 @@ os.environ['UE_MCP_MODE'] = '1'
                     }
             else:
                 # Run lightweight inspect for other assets
-                result = run_script(inspect_script, {
-                    "asset_path": asset_path
-                })
+                result = run_script(inspect_script, {"asset_path": asset_path})
                 if result:
                     change["details"] = {
                         "properties": result.get("properties", {}),
@@ -444,7 +449,7 @@ def gather_actor_change_details(manager, actor_changes: dict[str, Any]) -> dict[
 
     # Use diagnose_current_level() which works for both persistent and temp levels
     # This diagnoses the currently loaded level in memory, not by asset path
-    diagnostic_code = '''
+    diagnostic_code = """
 import json
 import sys
 
@@ -486,7 +491,7 @@ else:
         }
     result_dict["success"] = True
     print(json.dumps(result_dict))
-'''
+"""
 
     # Execute diagnostic
     logger.debug(f"Running diagnostic for level with actor changes: {level_path}")

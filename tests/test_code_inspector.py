@@ -4,7 +4,7 @@ Unit tests for code_inspector module.
 
 import pytest
 
-from ue_mcp.code_inspector import (
+from ue_mcp.validation.code_inspector import (
     BaseChecker,
     BlockingCallChecker,
     CodeInspector,
@@ -248,6 +248,7 @@ class TestUnrealAPIChecker:
         """Check if unreal module is available."""
         try:
             import unreal
+
             return True
         except ImportError:
             return False
@@ -563,8 +564,7 @@ def test_func():
         result = inspect_code(code)
         # Should not report decorator as invalid API
         unreal_errors = [
-            i for i in result.issues
-            if i.checker == "UnrealAPIChecker" and "ufunction" in i.message
+            i for i in result.issues if i.checker == "UnrealAPIChecker" and "ufunction" in i.message
         ]
         assert len(unreal_errors) == 0
 
@@ -580,7 +580,8 @@ def test_latent():
         result = inspect_code(code)
         # Should not report chained decorator as invalid API
         unreal_errors = [
-            i for i in result.issues
+            i
+            for i in result.issues
             if i.checker == "UnrealAPIChecker" and "add_latent_command" in i.message
         ]
         assert len(unreal_errors) == 0
@@ -597,8 +598,7 @@ class MyClass:
         result = inspect_code(code)
         # Should not report class decorator as invalid API
         unreal_errors = [
-            i for i in result.issues
-            if i.checker == "UnrealAPIChecker" and "uclass" in i.message
+            i for i in result.issues if i.checker == "UnrealAPIChecker" and "uclass" in i.message
         ]
         assert len(unreal_errors) == 0
 
@@ -620,7 +620,8 @@ def test_func():
         result = inspect_code(code)
         # The decorator should be skipped, but the function body should be checked
         unreal_errors = [
-            i for i in result.issues
+            i
+            for i in result.issues
             if i.checker == "UnrealAPIChecker" and "NonExistentAPI" in i.message
         ]
         assert len(unreal_errors) >= 1

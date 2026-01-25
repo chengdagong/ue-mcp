@@ -6,13 +6,8 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
-# Environment variable names for script parameter passing
-ENV_VAR_MODE = "UE_MCP_MODE"  # "1" when running via MCP (vs CLI)
-ENV_VAR_CALL = "UE_MCP_CALL"  # "<checksum>:<timestamp>:<json_params>" script call info
-
-# Maximum allowed age for injected parameters (in seconds)
-# If parameters are older than this, the script should reject them
-INJECT_TIME_MAX_AGE = 5
+# Import shared constants from core module
+from ..core.constants import ENV_VAR_CALL, ENV_VAR_MODE, INJECT_TIME_MAX_AGE
 
 if TYPE_CHECKING:
     from fastmcp import Context
@@ -131,10 +126,13 @@ def compute_script_checksum(script_path: str) -> str:
         8-character hex checksum
     """
     import hashlib
+
     return hashlib.md5(script_path.encode()).hexdigest()[:8]
 
 
-def build_env_injection_code(script_path: str, params: dict[str, Any], output_file: str | None = None) -> str:
+def build_env_injection_code(
+    script_path: str, params: dict[str, Any], output_file: str | None = None
+) -> str:
     """Build code to inject parameters via environment variables.
 
     This sets the following env vars:
@@ -168,8 +166,7 @@ def build_env_injection_code(script_path: str, params: dict[str, Any], output_fi
     # 1. Backslashes must be doubled (\ -> \\) because f-string literals interpret escapes
     # 2. Braces must be doubled ({ -> {{, } -> }}) to avoid f-string format expressions
     escaped_params_json = (
-        params_json
-        .replace("\\", "\\\\")  # Must come first!
+        params_json.replace("\\", "\\\\")  # Must come first!
         .replace("{", "{{")
         .replace("}", "}}")
     )
@@ -188,38 +185,40 @@ def build_env_injection_code(script_path: str, params: dict[str, Any], output_fi
     if output_file:
         # Escape backslashes for Windows paths (don't use raw string prefix)
         escaped_output_file = output_file.replace("\\", "\\\\")
-        lines.extend([
-            "import builtins",
-            "import atexit",
-            # Store original streams
-            "builtins.__ue_mcp_orig_stdout__ = sys.stdout",
-            "builtins.__ue_mcp_orig_stderr__ = sys.stderr",
-            # Open output file for writing
-            f"builtins.__ue_mcp_output_file__ = open('{escaped_output_file}', 'w', encoding='utf-8')",
-            # Create a TeeWriter that writes to both the file and original stream
-            "class _UeMcpTeeWriter:",
-            "    def __init__(self, file, original):",
-            "        self.file = file",
-            "        self.original = original",
-            "    def write(self, data):",
-            "        self.file.write(data)",
-            "        self.file.flush()",
-            "        self.original.write(data)",
-            "    def flush(self):",
-            "        self.file.flush()",
-            "        self.original.flush()",
-            "sys.stdout = _UeMcpTeeWriter(builtins.__ue_mcp_output_file__, builtins.__ue_mcp_orig_stdout__)",
-            "sys.stderr = _UeMcpTeeWriter(builtins.__ue_mcp_output_file__, builtins.__ue_mcp_orig_stderr__)",
-            # Register cleanup function to restore streams and close file
-            "def _ue_mcp_cleanup():",
-            "    if hasattr(builtins, '__ue_mcp_orig_stdout__'):",
-            "        sys.stdout = builtins.__ue_mcp_orig_stdout__",
-            "    if hasattr(builtins, '__ue_mcp_orig_stderr__'):",
-            "        sys.stderr = builtins.__ue_mcp_orig_stderr__",
-            "    if hasattr(builtins, '__ue_mcp_output_file__'):",
-            "        builtins.__ue_mcp_output_file__.close()",
-            "atexit.register(_ue_mcp_cleanup)",
-        ])
+        lines.extend(
+            [
+                "import builtins",
+                "import atexit",
+                # Store original streams
+                "builtins.__ue_mcp_orig_stdout__ = sys.stdout",
+                "builtins.__ue_mcp_orig_stderr__ = sys.stderr",
+                # Open output file for writing
+                f"builtins.__ue_mcp_output_file__ = open('{escaped_output_file}', 'w', encoding='utf-8')",
+                # Create a TeeWriter that writes to both the file and original stream
+                "class _UeMcpTeeWriter:",
+                "    def __init__(self, file, original):",
+                "        self.file = file",
+                "        self.original = original",
+                "    def write(self, data):",
+                "        self.file.write(data)",
+                "        self.file.flush()",
+                "        self.original.write(data)",
+                "    def flush(self):",
+                "        self.file.flush()",
+                "        self.original.flush()",
+                "sys.stdout = _UeMcpTeeWriter(builtins.__ue_mcp_output_file__, builtins.__ue_mcp_orig_stdout__)",
+                "sys.stderr = _UeMcpTeeWriter(builtins.__ue_mcp_output_file__, builtins.__ue_mcp_orig_stderr__)",
+                # Register cleanup function to restore streams and close file
+                "def _ue_mcp_cleanup():",
+                "    if hasattr(builtins, '__ue_mcp_orig_stdout__'):",
+                "        sys.stdout = builtins.__ue_mcp_orig_stdout__",
+                "    if hasattr(builtins, '__ue_mcp_orig_stderr__'):",
+                "        sys.stderr = builtins.__ue_mcp_orig_stderr__",
+                "    if hasattr(builtins, '__ue_mcp_output_file__'):",
+                "        builtins.__ue_mcp_output_file__.close()",
+                "atexit.register(_ue_mcp_cleanup)",
+            ]
+        )
 
     return "\n".join(lines)
 
@@ -260,7 +259,7 @@ async def run_pie_task(
     Returns:
         Result dict from the PIE task execution
     """
-    from ..log_watcher import watch_pie_capture_complete
+    from ..tracking.log_watcher import watch_pie_capture_complete
     from ..script_executor import execute_script
 
     # Generate unique task_id for this task

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..autoconfig import run_config_check
 from ..remote_client import RemoteExecutionClient
-from ..utils import find_ue5_editor_for_project
+from ..core.utils import find_ue5_editor_for_project
 from .types import EditorInstance, NotifyCallback
 
 if TYPE_CHECKING:
@@ -141,7 +141,9 @@ class LaunchManager:
                 needs_build, reason = self._project_analyzer.needs_build()
                 if needs_build:
                     logger.info(f"Plugin installed, build needed: {reason}. Starting auto-build...")
-                    await notify("info", f"Plugin installed, build needed: {reason}. Starting auto-build...")
+                    await notify(
+                        "info", f"Plugin installed, build needed: {reason}. Starting auto-build..."
+                    )
 
                     build_result = await self._build_manager.build(notify=notify)
                     if not build_result.get("success"):
@@ -160,7 +162,7 @@ class LaunchManager:
             }
 
         # Allocate dynamic multicast port for this editor instance
-        from ..port_allocator import find_available_port
+        from ..core.port_allocator import find_available_port
 
         allocated_port = find_available_port()
         logger.info(f"Allocated multicast port: {allocated_port}")

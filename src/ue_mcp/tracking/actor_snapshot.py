@@ -3,16 +3,19 @@ Actor-based level change tracking for UE-MCP.
 
 Works with OFPA mode by tracking actors directly instead of file timestamps.
 """
+
 import json
 import logging
 from typing import Any
+
+from ..core.constants import MARKER_ACTOR_SNAPSHOT_RESULT
 
 logger = logging.getLogger(__name__)
 
 
 def create_level_actor_snapshot(manager) -> dict[str, Any] | None:
     """Create a snapshot of all actors in the currently loaded level."""
-    code = '''import json
+    code = """import json
 import unreal
 
 try:
@@ -46,7 +49,7 @@ try:
         del all_actors, world, level
 except Exception as e:
     print("ACTOR_SNAPSHOT_RESULT:" + json.dumps({"error": str(e)}))
-'''
+"""
 
     result = manager.execute_code(code, timeout=30.0)
     if not result.get("success"):
@@ -62,13 +65,14 @@ except Exception as e:
                 output_str += str(line)
     else:
         output_str = str(output)
-    if "ACTOR_SNAPSHOT_RESULT:" in output_str:
-        json_str = output_str.split("ACTOR_SNAPSHOT_RESULT:", 1)[1].strip()
+    if MARKER_ACTOR_SNAPSHOT_RESULT in output_str:
+        json_str = output_str.split(MARKER_ACTOR_SNAPSHOT_RESULT, 1)[1].strip()
         try:
             brace_count = 0
             end_idx = 0
             for i, char in enumerate(json_str):
-                if char == "{": brace_count += 1
+                if char == "{":
+                    brace_count += 1
                 elif char == "}":
                     brace_count -= 1
                     if brace_count == 0:
@@ -95,10 +99,24 @@ def compare_level_actor_snapshots(before: dict[str, Any], after: dict[str, Any])
     after_paths = set(after_actors.keys())
 
     created_paths = after_paths - before_paths
-    created = [{"path": p, "label": after_actors[p].get("label", ""), "class": after_actors[p].get("class", "Unknown")} for p in created_paths]
+    created = [
+        {
+            "path": p,
+            "label": after_actors[p].get("label", ""),
+            "class": after_actors[p].get("class", "Unknown"),
+        }
+        for p in created_paths
+    ]
 
     deleted_paths = before_paths - after_paths
-    deleted = [{"path": p, "label": before_actors[p].get("label", ""), "class": before_actors[p].get("class", "Unknown")} for p in deleted_paths]
+    deleted = [
+        {
+            "path": p,
+            "label": before_actors[p].get("label", ""),
+            "class": before_actors[p].get("class", "Unknown"),
+        }
+        for p in deleted_paths
+    ]
 
     modified = []
     for path in before_paths & after_paths:
@@ -118,9 +136,22 @@ def compare_level_actor_snapshots(before: dict[str, Any], after: dict[str, Any])
         if not _vectors_equal(before_scale, after_scale):
             changes.append({"property": "scale", "before": before_scale, "after": after_scale})
         if changes:
-            modified.append({"path": path, "label": after_data.get("label", ""), "class": after_data.get("class", "Unknown"), "changes": changes})
+            modified.append(
+                {
+                    "path": path,
+                    "label": after_data.get("label", ""),
+                    "class": after_data.get("class", "Unknown"),
+                    "changes": changes,
+                }
+            )
 
-    return {"detected": bool(created or deleted or modified), "level_path": after.get("level_path", ""), "created": created, "deleted": deleted, "modified": modified}
+    return {
+        "detected": bool(created or deleted or modified),
+        "level_path": after.get("level_path", ""),
+        "created": created,
+        "deleted": deleted,
+        "modified": modified,
+    }
 
 
 def _vectors_equal(v1: list, v2: list, tolerance: float = 0.001) -> bool:

@@ -10,6 +10,7 @@ Usage (CLI):
 MCP mode (sys.argv):
     asset_path: str - Asset path to diagnose (e.g., /Game/Maps/TestLevel)
 """
+
 import argparse
 import json
 import sys
@@ -23,32 +24,8 @@ for mod_name in modules_to_remove:
 
 import asset_diagnostic
 
-def _is_mcp_mode() -> bool:
-    """Check if running in MCP mode (vs CLI mode)."""
-    from ue_mcp_capture.utils import _is_mcp_mode as _utils_is_mcp_mode
-    return _utils_is_mcp_mode()
-
-
-def output_result(data: dict) -> None:
-    """
-    Output result as pure JSON (last line of output).
-
-    The MCP server will parse the last valid JSON object from the output.
-    This enables clean output without special markers.
-
-    In MCP mode: Outputs compact JSON for parsing
-    In CLI mode: Outputs formatted JSON for readability
-    """
-    if _is_mcp_mode():
-        # MCP mode: compact JSON (will be parsed as last line)
-        print(json.dumps(data))
-    else:
-        # CLI mode: human-readable formatted output
-        print("\n" + "=" * 60)
-        print("DIAGNOSTIC RESULT")
-        print("=" * 60)
-        print(json.dumps(data, indent=2))
-        print("=" * 60)
+# Import shared utilities from ue_mcp_capture (avoid code duplication)
+from ue_mcp_capture.utils import output_result
 
 
 def serialize_result(result) -> dict:
@@ -60,18 +37,24 @@ def serialize_result(result) -> dict:
     # Fallback manual serialization for older cached modules
     issues = []
     for issue in result.issues:
-        issues.append({
-            "severity": issue.severity.value if hasattr(issue.severity, "value") else str(issue.severity),
-            "category": issue.category,
-            "message": issue.message,
-            "actor": issue.actor,
-            "details": issue.details,
-            "suggestion": issue.suggestion,
-        })
+        issues.append(
+            {
+                "severity": issue.severity.value
+                if hasattr(issue.severity, "value")
+                else str(issue.severity),
+                "category": issue.category,
+                "message": issue.message,
+                "actor": issue.actor,
+                "details": issue.details,
+                "suggestion": issue.suggestion,
+            }
+        )
 
     return {
         "asset_path": result.asset_path,
-        "asset_type": result.asset_type.value if hasattr(result.asset_type, "value") else str(result.asset_type),
+        "asset_type": result.asset_type.value
+        if hasattr(result.asset_type, "value")
+        else str(result.asset_type),
         "asset_name": result.asset_name,
         "errors": result.error_count if hasattr(result, "error_count") else 0,
         "warnings": result.warning_count if hasattr(result, "warning_count") else 0,
@@ -85,15 +68,12 @@ def serialize_result(result) -> dict:
 def main():
     # Bootstrap from environment variables (must be before argparse)
     from ue_mcp_capture.utils import bootstrap_from_env
+
     bootstrap_from_env()
 
-    parser = argparse.ArgumentParser(
-        description="Run diagnostics on a UE5 asset"
-    )
+    parser = argparse.ArgumentParser(description="Run diagnostics on a UE5 asset")
     parser.add_argument(
-        "--asset-path",
-        required=True,
-        help="Asset path to diagnose (e.g., /Game/Maps/TestLevel)"
+        "--asset-path", required=True, help="Asset path to diagnose (e.g., /Game/Maps/TestLevel)"
     )
     args = parser.parse_args()
 
@@ -103,10 +83,9 @@ def main():
     result = asset_diagnostic.diagnose(asset_path, verbose=True)
 
     if result is None:
-        output_result({
-            "success": False,
-            "error": f"No diagnostic available for asset: {asset_path}"
-        })
+        output_result(
+            {"success": False, "error": f"No diagnostic available for asset: {asset_path}"}
+        )
         return
 
     # Serialize result with fallback for older cached modules

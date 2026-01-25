@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
-from .utils import find_ue5_python, find_ue5_python_for_editor
+from .utils import find_ue5_python
 
 logger = logging.getLogger(__name__)
 

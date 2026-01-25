@@ -11,7 +11,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..asset_tracker import (
+from ..tracking.asset_tracker import (
     compare_snapshots,
     create_snapshot,
     extract_game_paths,
@@ -19,12 +19,12 @@ from ..asset_tracker import (
     gather_change_details,
     get_current_level_path,
 )
-from ..actor_snapshot import (
+from ..tracking.actor_snapshot import (
     compare_level_actor_snapshots,
     create_level_actor_snapshot,
 )
-from ..code_inspector import inspect_code
-from ..pip_install import (
+from ..validation.code_inspector import inspect_code
+from ..core.pip_install import (
     extract_bundled_module_imports,
     extract_import_statements,
     generate_module_unload_code,
@@ -101,7 +101,10 @@ class ExecutionManager:
                 "error": f"Editor is not ready (status: {self._ctx.editor.status})",
             }
 
-        if self._ctx.editor.remote_client is None or not self._ctx.editor.remote_client.is_connected():
+        if (
+            self._ctx.editor.remote_client is None
+            or not self._ctx.editor.remote_client.is_connected()
+        ):
             # Try to reconnect using stored node_id and PID
             logger.info("Remote client disconnected, attempting to reconnect...")
 
@@ -158,8 +161,12 @@ class ExecutionManager:
         return result
 
     def execute_script_file(
-        self, script_path: str, timeout: float = 120.0, output_file: str | None = None,
-        wait_for_latent: bool = True, latent_timeout: float = 60.0
+        self,
+        script_path: str,
+        timeout: float = 120.0,
+        output_file: str | None = None,
+        wait_for_latent: bool = True,
+        latent_timeout: float = 60.0,
     ) -> dict[str, Any]:
         """
         Execute a Python script file using EXECUTE_FILE mode.
@@ -261,7 +268,9 @@ class ExecutionManager:
                 except Exception as e:
                     logger.debug(f"Failed to clean up temp output file: {e}")
 
-    def _wait_for_latent_commands(self, timeout: float = 60.0, poll_interval: float = 0.5) -> dict[str, Any]:
+    def _wait_for_latent_commands(
+        self, timeout: float = 60.0, poll_interval: float = 0.5
+    ) -> dict[str, Any]:
         """Wait for latent commands to complete.
 
         Uses unreal.PyAutomationTest.get_is_running_py_latent_command() to check
@@ -280,7 +289,9 @@ class ExecutionManager:
         import time
 
         start_time = time.time()
-        check_code = "import unreal; print(unreal.PyAutomationTest.get_is_running_py_latent_command())"
+        check_code = (
+            "import unreal; print(unreal.PyAutomationTest.get_is_running_py_latent_command())"
+        )
 
         while True:
             elapsed = time.time() - start_time
@@ -480,11 +491,11 @@ src_path = r"{str(src_path)}"
 if src_path not in sys.path:
     sys.path.insert(0, src_path)
 
-from ue_mcp.code_inspector import inspect_code
+from ue_mcp.validation.code_inspector import inspect_code
 
 # Inspect the user's code
 code_to_inspect = r"""
-{code.replace(chr(92), chr(92)*2).replace('"""', chr(92)+'"""')}
+{code.replace(chr(92), chr(92) * 2).replace('"""', chr(92) + '"""')}
 """
 
 result = inspect_code(code_to_inspect)
@@ -683,14 +694,10 @@ else:
                                 "This level is not saved. If you intended to modify a "
                                 "persistent level, please load it first using editor_load_level."
                             )
-                            logger.warning(
-                                f"Actor changes in temporary level: {level_path}"
-                            )
+                            logger.warning(f"Actor changes in temporary level: {level_path}")
                         # Run diagnostic for the level with actor changes
                         # This works for both persistent (/Game/) and temporary (/Temp/) levels
-                        actor_changes = gather_actor_change_details(
-                            self, actor_changes
-                        )
+                        actor_changes = gather_actor_change_details(self, actor_changes)
 
                         # Promote diagnostic summary to top level for visibility
                         # Only include brief summary to save context; full details in actor_changes

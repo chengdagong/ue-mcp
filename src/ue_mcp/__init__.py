@@ -10,7 +10,7 @@ __version__ = "0.1.0"
 from .autoconfig import get_bundled_site_packages
 from .editor.subsystems import EditorSubsystems
 from .editor.types import EditorInstance
-from .pip_install import pip_install, pip_list
+from .core.pip_install import pip_install, pip_list
 from .remote_client import RemoteExecutionClient
 
 __all__ = [
