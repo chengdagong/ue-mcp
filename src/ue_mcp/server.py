@@ -115,6 +115,7 @@ Available tools:
 - editor_trace_actors_in_pie: Trace actor transforms during PIE session
 - editor_pie_execute_in_tick: Execute code at specific ticks during PIE
 - editor_capture_window: Capture editor window screenshots (Windows only)
+- editor_level_screenshot: Capture screenshots from custom camera positions looking at a target
 - editor_asset_open: Open an asset in its editor (Blueprint Editor, Material Editor, etc.)
 - editor_asset_diagnostic: Run diagnostics on a UE5 asset to detect common issues
 - editor_asset_inspect: Inspect a UE5 asset and return all its properties

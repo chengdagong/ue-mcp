@@ -47,6 +47,7 @@ class TestCaptureTools:
         assert "editor_capture_orbital" in tools
         assert "editor_capture_pie" in tools
         assert "editor_capture_window" in tools
+        assert "editor_level_screenshot" in tools
 
     @pytest.mark.asyncio
     async def test_capture_orbital_with_editor(
@@ -144,6 +145,76 @@ class TestCaptureTools:
     async def test_capture_window_batch_mode_with_editor(self, initialized_tool_caller: ToolCaller):
         """Test capture.window batch mode with editor running."""
         pytest.skip("Batch capture test skipped - requires investigation of batch mode")
+
+    @pytest.mark.asyncio
+    async def test_level_screenshot_default(
+        self, running_editor: ToolCaller, test_output_dir: Path
+    ):
+        """Test editor_level_screenshot with default parameters."""
+        # Create test-specific output directory
+        screenshot_dir = test_output_dir / "level_screenshot"
+        screenshot_dir.mkdir(exist_ok=True)
+
+        result = await running_editor.call(
+            "editor_level_screenshot",
+            {
+                "output_dir": str(screenshot_dir),
+            },
+            timeout=120,
+        )
+
+        data = parse_tool_result(result)
+        print(f"\n=== Level Screenshot Default Debug ===")
+        print(f"Output dir: {screenshot_dir}")
+        print(f"Return data: {data}")
+        print(f"======================================\n")
+
+        assert data.get("success"), f"Level screenshot failed: {data}"
+        assert data.get("screenshot_count", 0) >= 1, "Expected at least 1 screenshot"
+
+        # Verify that screenshot files were created
+        screenshot_files = list(screenshot_dir.glob("**/*.png"))
+        assert len(screenshot_files) >= 1, f"No screenshot files were created in {screenshot_dir}"
+
+    @pytest.mark.asyncio
+    async def test_level_screenshot_custom_cameras(
+        self, running_editor: ToolCaller, test_output_dir: Path
+    ):
+        """Test editor_level_screenshot with custom camera positions."""
+        # Create test-specific output directory
+        screenshot_dir = test_output_dir / "level_screenshot_custom"
+        screenshot_dir.mkdir(exist_ok=True)
+
+        result = await running_editor.call(
+            "editor_level_screenshot",
+            {
+                "cameras": ["front@500,0,300", "back@-500,0,300"],
+                "target": "0,0,100",
+                "resolution": "640x480",
+                "output_dir": str(screenshot_dir),
+            },
+            timeout=120,
+        )
+
+        data = parse_tool_result(result)
+        print(f"\n=== Level Screenshot Custom Cameras Debug ===")
+        print(f"Output dir: {screenshot_dir}")
+        print(f"Return data: {data}")
+        print(f"==============================================\n")
+
+        assert data.get("success"), f"Level screenshot failed: {data}"
+        assert data.get("screenshot_count") == 2, f"Expected 2 screenshots, got {data.get('screenshot_count')}"
+
+        # Verify that screenshot files were created
+        screenshot_files = list(screenshot_dir.glob("**/*.png"))
+        assert len(screenshot_files) == 2, f"Expected 2 screenshot files, found {len(screenshot_files)} in {screenshot_dir}"
+
+        # Verify file sizes
+        for img_file in screenshot_files:
+            file_size = img_file.stat().st_size
+            assert file_size > 1024, (
+                f"Screenshot {img_file.name} is empty or too small (size: {file_size} bytes)"
+            )
 
 
 @pytest.mark.integration
@@ -272,3 +343,34 @@ class TestCaptureToolValidation:
         except Exception as e:
             # Expected - missing required parameter
             assert "output_dir" in str(e).lower() or "required" in str(e).lower()
+
+    @pytest.mark.asyncio
+    async def test_level_screenshot_invalid_camera_format(
+        self, running_editor: ToolCaller, test_output_dir: Path
+    ):
+        """Test editor_level_screenshot handles invalid camera format gracefully."""
+        screenshot_dir = test_output_dir / "level_screenshot_invalid"
+        screenshot_dir.mkdir(exist_ok=True)
+
+        # Invalid camera format (missing @)
+        result = await running_editor.call(
+            "editor_level_screenshot",
+            {
+                "cameras": ["invalid_camera_format"],
+                "output_dir": str(screenshot_dir),
+            },
+            timeout=120,
+        )
+
+        data = parse_tool_result(result)
+        # Should still succeed but with 0 screenshots (invalid camera skipped)
+        # or fail gracefully
+        print(f"\n=== Invalid Camera Format Debug ===")
+        print(f"Return data: {data}")
+        print(f"===================================\n")
+
+        # The script should handle invalid format and skip it
+        # Result depends on implementation: either success=False or success=True with 0 screenshots
+        if data.get("success"):
+            assert data.get("screenshot_count", 0) == 0, "Invalid camera should be skipped"
+        # If success is False, that's also acceptable behavior

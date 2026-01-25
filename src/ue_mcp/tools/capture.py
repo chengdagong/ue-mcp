@@ -1,5 +1,6 @@
 """Screenshot capture and actor tracing tools."""
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Optional
 
 from fastmcp import Context
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
 def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     """Register capture and tracing tools."""
 
-    from ..script_executor import execute_script
+    from ..script_executor import execute_script, execute_script_from_path
 
     from ._helpers import parse_json_result, run_pie_task
 
@@ -543,4 +544,109 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             params=params,
             timeout=120.0,
         )
+        return parse_json_result(result)
+
+    @mcp.tool(name="editor_level_screenshot")
+    def level_screenshot(
+        cameras: Annotated[
+            Optional[list[str]],
+            Field(
+                default=None,
+                description="List of camera specs in format 'name@x,y,z' (e.g., ['front@500,0,500', 'back@-500,0,500']). If not provided, uses default camera at (800,0,800).",
+            ),
+        ],
+        target: Annotated[
+            str,
+            Field(
+                default="0,0,0",
+                description="Target point that all cameras look at, format: 'x,y,z'",
+            ),
+        ],
+        resolution: Annotated[
+            str,
+            Field(
+                default="1280x720",
+                description="Screenshot resolution, format: 'WIDTHxHEIGHT'",
+            ),
+        ],
+        output_dir: Annotated[
+            Optional[str],
+            Field(
+                default=None,
+                description="Output directory for screenshots. If not provided, uses project's Saved/Screenshots.",
+            ),
+        ],
+    ) -> dict[str, Any]:
+        """
+        Capture screenshots from custom camera positions looking at a target point.
+
+        Creates temporary CameraActors at specified positions, takes high-resolution
+        screenshots from each camera, then automatically cleans up the cameras.
+
+        This is useful for capturing level screenshots from specific angles without
+        manually placing cameras in the editor.
+
+        Args:
+            cameras: List of camera specs in format 'name@x,y,z'. Each camera will be
+                     positioned at the specified coordinates and oriented to look at
+                     the target point. If not provided, uses a single default camera
+                     at position (800, 0, 800).
+            target: Target point that all cameras will look at, format: 'x,y,z'.
+                    Default is origin (0,0,0).
+            resolution: Screenshot resolution in format 'WIDTHxHEIGHT'.
+                        Default is '1280x720'.
+            output_dir: Directory to save screenshots. If not provided, screenshots
+                        are saved to the project's Saved/Screenshots folder.
+
+        Returns:
+            Result containing:
+            - success: Whether all screenshots were captured successfully
+            - screenshot_count: Number of screenshots taken
+            - screenshots: List of screenshot results with camera name and filename
+            - output_dir: Directory where screenshots were saved
+            - resolution: Resolution used for screenshots
+
+        Example:
+            # Single camera at default position
+            editor_level_screenshot()
+
+            # Multiple cameras around a point
+            editor_level_screenshot(
+                cameras=["front@500,0,300", "back@-500,0,300", "top@0,0,800"],
+                target="0,0,100"
+            )
+
+            # High resolution with custom output
+            editor_level_screenshot(
+                cameras=["hero@1000,500,400"],
+                resolution="1920x1080",
+                output_dir="D:/screenshots"
+            )
+        """
+        execution = state.get_execution_subsystem()
+
+        # Build parameters for the script
+        params: dict[str, Any] = {
+            "target": target,
+            "resolution": resolution,
+        }
+
+        if cameras:
+            params["cameras"] = cameras
+
+        if output_dir:
+            params["out_dir"] = output_dir
+
+        # Execute the take_screenshots.py script
+        script_path = Path(__file__).parent.parent / "extra" / "scripts" / "take_screenshots.py"
+
+        result = execute_script_from_path(
+            execution,
+            script_path,
+            params=params,
+            timeout=120.0,
+            wait_for_latent=True,
+            latent_timeout=60.0,
+        )
+
         return parse_json_result(result)
