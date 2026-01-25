@@ -132,4 +132,28 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Python|SlateTab", meta = (DevelopmentOnly))
 	static bool FocusAssetEditorWindow(UObject* Asset);
+
+	/**
+	 * Open the Output Log window
+	 * This can help ensure UI message loop processing in headless/automated scenarios
+	 *
+	 * @return True if the Output Log window was successfully opened
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Python|SlateTab", meta = (DevelopmentOnly))
+	static bool OpenOutputLog();
+
+	/**
+	 * Invoke a global tab by name using FGlobalTabmanager
+	 * Common global tab IDs:
+	 * - "OutputLog" (Output Log window)
+	 * - "ContentBrowserTab1" (Content Browser)
+	 * - "LevelEditorToolBox" (Modes panel)
+	 * - "WorldSettingsTab" (World Settings)
+	 * - "LevelEditorSelectionDetails" (Details panel)
+	 *
+	 * @param TabId The global tab identifier
+	 * @return True if the tab was successfully invoked
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Python|SlateTab", meta = (DevelopmentOnly))
+	static bool InvokeGlobalTab(FName TabId);
 };

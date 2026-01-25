@@ -241,7 +241,7 @@ print(json.dumps({"success": True, "worlds": results, "count": len(results)}))
             "editor_execute_script",
             {
                 "script_path": str(script_path),
-                "args": {"types": "Blueprint,World", "base_path": "/Game", "limit": 50},
+                "args": ["--types", "Blueprint,World", "--base-path", "/Game", "--limit", "50"],
             },
         )
 

@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 def parse_json_result(exec_result: dict[str, Any]) -> dict[str, Any]:
     """Parse JSON result from script output.
 
-    Extracts the last valid JSON object from output list.
+    Extracts the last valid JSON object from output.
+    Handles both string output (with log prefixes) and list output formats.
     This is the standard way to parse results from all standalone scripts.
 
     Args:
@@ -39,10 +40,28 @@ def parse_json_result(exec_result: dict[str, Any]) -> dict[str, Any]:
     if not output:
         return {"success": False, "error": "No output from script"}
 
+    # Convert output to list of lines
+    if isinstance(output, str):
+        # String format: "[INFO] line1\n[INFO] line2\n"
+        # Strip log level prefixes like [INFO], [WARNING], etc.
+        import re
+        lines = []
+        for line in output.splitlines():
+            # Remove log level prefix if present
+            cleaned = re.sub(r"^\[(INFO|WARNING|ERROR|DEBUG|CRITICAL)\]\s*", "", line)
+            lines.append(cleaned)
+    else:
+        # List format: [{"type": "info", "output": "line1"}, ...] or ["line1", ...]
+        lines = []
+        for item in output:
+            if isinstance(item, dict):
+                lines.append(str(item.get("output", "")))
+            else:
+                lines.append(str(item))
+
     # Find last valid JSON in output
-    for line in reversed(output):
-        line_str = str(line.get("output", "")) if isinstance(line, dict) else str(line)
-        line_str = line_str.strip()
+    for line in reversed(lines):
+        line_str = line.strip()
         if line_str.startswith("{") or line_str.startswith("["):
             try:
                 return json.loads(line_str)

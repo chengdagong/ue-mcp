@@ -885,10 +885,11 @@ for actor in actor_subsystem.get_all_level_actors():
         # Step 1: Create a new temporary level (unsaved)
         new_level_code = '''import unreal
 
-level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
-# Create a new level - this creates a /Temp/Untitled level
-level_subsystem.new_level("/Temp/TempLevelWarningTest")
-print("Created temporary level")
+# Use EditorLoadingAndSavingUtils.new_blank_map() to create an unsaved temp level
+# This creates a /Temp/Untitled_X level, unlike level_subsystem.new_level() which
+# expects a destination path to save to (e.g., /Game/Maps/MyLevel)
+world = unreal.EditorLoadingAndSavingUtils.new_blank_map(False)
+print(f"Created temporary level: {world.get_outer().get_path_name() if world else 'None'}")
 '''
         new_level_result = await mcp_client.call_tool(
             "editor_execute_code",

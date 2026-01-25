@@ -6,6 +6,7 @@
 #include "Editor.h"
 #include "BlueprintEditorTabs.h"
 #include "Framework/Docking/TabManager.h"
+#include "Framework/Application/SlateApplication.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogExSlateTab, Log, All);
 
@@ -168,5 +169,37 @@ bool UExSlateTabLibrary::FocusAssetEditorWindow(UObject* Asset)
 	}
 
 	UE_LOG(LogExSlateTab, Warning, TEXT("FocusAssetEditorWindow: No editor found for asset '%s'"), *Asset->GetName());
+	return false;
+}
+
+bool UExSlateTabLibrary::OpenOutputLog()
+{
+	return InvokeGlobalTab(FName("OutputLog"));
+}
+
+bool UExSlateTabLibrary::InvokeGlobalTab(FName TabId)
+{
+	TSharedPtr<FGlobalTabmanager> GlobalTabManager = FGlobalTabmanager::Get();
+	if (!GlobalTabManager.IsValid())
+	{
+		UE_LOG(LogExSlateTab, Warning, TEXT("InvokeGlobalTab: FGlobalTabmanager is invalid"));
+		return false;
+	}
+
+	TSharedPtr<SDockTab> Tab = GlobalTabManager->TryInvokeTab(TabId);
+	if (Tab.IsValid())
+	{
+		UE_LOG(LogExSlateTab, Log, TEXT("InvokeGlobalTab: Successfully invoked global tab '%s'"), *TabId.ToString());
+
+		// Process Slate tick to ensure UI updates
+		if (FSlateApplication::IsInitialized())
+		{
+			FSlateApplication::Get().Tick();
+		}
+
+		return true;
+	}
+
+	UE_LOG(LogExSlateTab, Warning, TEXT("InvokeGlobalTab: Failed to invoke global tab '%s'"), *TabId.ToString());
 	return false;
 }

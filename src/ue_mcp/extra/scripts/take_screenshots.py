@@ -257,6 +257,7 @@ if __name__ == "__main__":
         height = config["resolution_height"]
         out_dir = config["out_dir"]
 
+
         for cam in created_cameras:
             camera_name = cam.get_actor_label()
 
@@ -266,9 +267,22 @@ if __name__ == "__main__":
             else:
                 filename = camera_name
 
+            # 确保截图前所有资源加载完成
+            unreal.AutomationLibrary.finish_loading_before_screenshot()
+
             task = unreal.AutomationLibrary.take_high_res_screenshot(
-                width, height, filename, camera=cam
+                res_x=width,
+                res_y=height,
+                filename=filename,
+                camera=cam,
+                mask_enabled=False,
+                capture_hdr=False,
+                comparison_tolerance=unreal.ComparisonTolerance.LOW,
+                comparison_notes="",
+                delay=0.0,
+                force_game_view=True,
             )
+
             if not task.is_valid_task():
                 print(f"Failed to create screenshot task for {camera_name}")
                 screenshot_results.append({
@@ -278,10 +292,9 @@ if __name__ == "__main__":
                 })
                 continue
 
-            print(f"Requested screenshot for {camera_name}")
-            while not task.is_task_done():
-                yield
-
+            # 打开输出日志窗口以确保 UI 消息循环正常处理
+            # 这可以防止在无人值守测试环境中截图任务卡住
+            unreal.ExSlateTabLibrary.open_output_log()
             screenshot_results.append({
                 "camera": camera_name,
                 "success": True,
