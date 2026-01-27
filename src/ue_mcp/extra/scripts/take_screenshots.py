@@ -250,25 +250,25 @@ if __name__ == "__main__":
     @unreal.AutomationScheduler.add_latent_command
     def take_all_cam_screenshots():
         """对所有 camera 拍摄截图"""
-        global created_cameras, screenshot_results
+        global created_cameras, screenshot_results, config
         screenshot_results = []
 
         width = config["resolution_width"]
         height = config["resolution_height"]
         out_dir = config["out_dir"]
 
-
+        # 确保截图前所有资源加载完成
+        unreal.AutomationLibrary.finish_loading_before_screenshot()
+        
         for cam in created_cameras:
             camera_name = cam.get_actor_label()
+            unreal.log("Found camera: " + camera_name)
 
             # 构建输出文件名
             if out_dir:
                 filename = os.path.join(out_dir, camera_name)
             else:
                 filename = camera_name
-
-            # 确保截图前所有资源加载完成
-            unreal.AutomationLibrary.finish_loading_before_screenshot()
 
             task = unreal.AutomationLibrary.take_high_res_screenshot(
                 res_x=width,
@@ -292,36 +292,43 @@ if __name__ == "__main__":
                 })
                 continue
 
-            # 打开输出日志窗口以确保 UI 消息循环正常处理
-            # 这可以防止在无人值守测试环境中截图任务卡住
-            unreal.ExSlateTabLibrary.open_output_log()
+            while not task.is_task_done():
+                unreal.log(f"Waiting for capture: {camera_name}")
+                ## Open output log window to ensure tick goes on
+                unreal.ExSlateTabLibrary.open_output_log()
+                yield
+
+            unreal.ExSlateTabLibrary.close_output_log()
+
+            unreal.log(f"Done capturing: {camera_name}")
+
             screenshot_results.append({
                 "camera": camera_name,
-                "success": True,
+                "success": task.is_task_done(),
                 "filename": filename
             })
 
 
-    @unreal.AutomationScheduler.add_latent_command
-    def cleanup_cameras():
-        """删除创建的 camera actors 并输出结果"""
-        global created_cameras, screenshot_results
+        @unreal.AutomationScheduler.add_latent_command
+        def cleanup_cameras():
+            """删除创建的 camera actors 并输出结果"""
+            global created_cameras, screenshot_results
 
-        for cam in created_cameras:
-            if unreal.SystemLibrary.is_valid(cam):
-                camera_name = cam.get_actor_label()
-                cam.destroy_actor()
-                print(f"Deleted camera: {camera_name}")
+            for cam in created_cameras:
+                if unreal.SystemLibrary.is_valid(cam):
+                    camera_name = cam.get_actor_label()
+                    cam.destroy_actor()
+                    print(f"Deleted camera: {camera_name}")
 
-        created_cameras = []
-        print("All cameras cleaned up")
+            created_cameras = []
+            print("All cameras cleaned up")
 
-        # 输出 JSON 结果
-        result = {
-            "success": all(r.get("success", False) for r in screenshot_results),
-            "screenshot_count": len([r for r in screenshot_results if r.get("success")]),
-            "screenshots": screenshot_results,
-            "output_dir": config["out_dir"],
-            "resolution": f"{config['resolution_width']}x{config['resolution_height']}",
-        }
-        print(json.dumps(result))
+            # 输出 JSON 结果
+            result = {
+                "success": all(r.get("success", False) for r in screenshot_results),
+                "screenshot_count": len([r for r in screenshot_results if r.get("success")]),
+                "screenshots": screenshot_results,
+                "output_dir": config["out_dir"],
+                "resolution": f"{config['resolution_width']}x{config['resolution_height']}",
+            }
+            print(json.dumps(result))

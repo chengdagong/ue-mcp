@@ -177,6 +177,11 @@ bool UExSlateTabLibrary::OpenOutputLog()
 	return InvokeGlobalTab(FName("OutputLog"));
 }
 
+bool UExSlateTabLibrary::CloseOutputLog()
+{
+	return CloseGlobalTab(FName("OutputLog"));
+}
+
 bool UExSlateTabLibrary::InvokeGlobalTab(FName TabId)
 {
 	TSharedPtr<FGlobalTabmanager> GlobalTabManager = FGlobalTabmanager::Get();
@@ -201,5 +206,33 @@ bool UExSlateTabLibrary::InvokeGlobalTab(FName TabId)
 	}
 
 	UE_LOG(LogExSlateTab, Warning, TEXT("InvokeGlobalTab: Failed to invoke global tab '%s'"), *TabId.ToString());
+	return false;
+}
+
+bool UExSlateTabLibrary::CloseGlobalTab(FName TabId)
+{
+	TSharedPtr<FGlobalTabmanager> GlobalTabManager = FGlobalTabmanager::Get();
+	if (!GlobalTabManager.IsValid())
+	{
+		UE_LOG(LogExSlateTab, Warning, TEXT("CloseGlobalTab: FGlobalTabmanager is invalid"));
+		return false;
+	}
+
+	TSharedPtr<SDockTab> Tab = GlobalTabManager->FindExistingLiveTab(TabId);
+	if (Tab.IsValid())
+	{
+		Tab->RequestCloseTab();
+		UE_LOG(LogExSlateTab, Log, TEXT("CloseGlobalTab: Successfully requested close for global tab '%s'"), *TabId.ToString());
+
+		// Process Slate tick to ensure UI updates
+		if (FSlateApplication::IsInitialized())
+		{
+			FSlateApplication::Get().Tick();
+		}
+
+		return true;
+	}
+
+	UE_LOG(LogExSlateTab, Warning, TEXT("CloseGlobalTab: Global tab '%s' not found or not open"), *TabId.ToString());
 	return false;
 }

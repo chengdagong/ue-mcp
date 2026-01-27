@@ -143,6 +143,14 @@ public:
 	static bool OpenOutputLog();
 
 	/**
+	 * Close the Output Log window
+	 *
+	 * @return True if the Output Log window was successfully closed
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Python|SlateTab", meta = (DevelopmentOnly))
+	static bool CloseOutputLog();
+
+	/**
 	 * Invoke a global tab by name using FGlobalTabmanager
 	 * Common global tab IDs:
 	 * - "OutputLog" (Output Log window)
@@ -156,4 +164,19 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Python|SlateTab", meta = (DevelopmentOnly))
 	static bool InvokeGlobalTab(FName TabId);
+
+	/**
+	 * Close a global tab by name using FGlobalTabmanager
+	 * Common global tab IDs:
+	 * - "OutputLog" (Output Log window)
+	 * - "ContentBrowserTab1" (Content Browser)
+	 * - "LevelEditorToolBox" (Modes panel)
+	 * - "WorldSettingsTab" (World Settings)
+	 * - "LevelEditorSelectionDetails" (Details panel)
+	 *
+	 * @param TabId The global tab identifier
+	 * @return True if the tab was successfully closed
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Python|SlateTab", meta = (DevelopmentOnly))
+	static bool CloseGlobalTab(FName TabId);
 };
