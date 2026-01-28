@@ -14,17 +14,19 @@ if TYPE_CHECKING:
 def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     """Register PIE control tools."""
 
-    from ..script_executor import execute_script_from_path
+    from ..script_executor import execute_script_from_path_with_auto_launch
 
     from ._helpers import parse_json_result
 
     @mcp.tool(name="editor_start_pie")
-    def start_pie() -> dict[str, Any]:
+    async def start_pie() -> dict[str, Any]:
         """
         Start a Play-In-Editor (PIE) session.
 
         This will request the editor to begin playing the current level in PIE mode.
         If PIE is already running, it will return a warning.
+
+        If the editor is not running, it will be automatically launched.
 
         Returns:
             Result containing:
@@ -36,7 +38,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         script_path = Path(__file__).parent.parent / "extra" / "scripts" / "pie_control.py"
 
-        result = execute_script_from_path(
+        result = await execute_script_from_path_with_auto_launch(
             execution,
             script_path,
             params={"command": "start"},
@@ -46,12 +48,14 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         return parse_json_result(result)
 
     @mcp.tool(name="editor_stop_pie")
-    def stop_pie() -> dict[str, Any]:
+    async def stop_pie() -> dict[str, Any]:
         """
         Stop the current Play-In-Editor (PIE) session.
 
         This will request the editor to stop the current PIE session.
         If PIE is not running, it will return a warning.
+
+        If the editor is not running, it will be automatically launched.
 
         Returns:
             Result containing:
@@ -63,7 +67,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         script_path = Path(__file__).parent.parent / "extra" / "scripts" / "pie_control.py"
 
-        result = execute_script_from_path(
+        result = await execute_script_from_path_with_auto_launch(
             execution,
             script_path,
             params={"command": "stop"},

@@ -258,6 +258,7 @@ async def run_pie_task(
 
     This function encapsulates the shared pattern between editor_capture_pie
     and editor_trace_actors_in_pie tools:
+    - Auto-launch editor if not running
     - Generate unique task_id
     - Execute script via script_executor
     - Monitor completion via watch_pie_capture_complete
@@ -280,6 +281,16 @@ async def run_pie_task(
     """
     from ..tracking.log_watcher import watch_pie_capture_complete
     from ..script_executor import execute_script
+
+    # Create notification callback using ctx.log
+    async def notify(level: str, message: str) -> None:
+        """Send notification to client via MCP log message."""
+        await ctx.log(message, level=level)
+
+    # Ensure editor is ready (may auto-launch)
+    ensure_result = await execution._ensure_editor_ready(notify)
+    if ensure_result is not None:
+        return ensure_result
 
     # Generate unique task_id for this task
     task_id = str(uuid.uuid4())[:8]

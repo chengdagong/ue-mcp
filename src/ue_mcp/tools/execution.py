@@ -18,7 +18,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     from ._helpers import build_env_injection_code
 
     @mcp.tool(name="editor_execute_code")
-    def execute_code(
+    async def execute_code(
         code: Annotated[str, Field(description="Python code to execute")],
         timeout: Annotated[
             float, Field(default=30.0, description="Execution timeout in seconds")
@@ -29,6 +29,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         The code is executed in the editor's Python environment with access to
         the 'unreal' module and all editor APIs.
+
+        If the editor is not running, it will be automatically launched.
 
         Args:
             code: Python code to execute
@@ -45,10 +47,10 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             execute_code("import unreal; print(unreal.EditorAssetLibrary.list_assets('/Game/'))")
         """
         execution = state.get_execution_subsystem()
-        return execution.execute_with_checks(code, timeout=timeout)
+        return await execution.execute_code_with_auto_launch(code, timeout=timeout)
 
     @mcp.tool(name="editor_execute_script")
-    def execute_script(
+    async def execute_script(
         script_path: Annotated[
             str, Field(description="Path to the Python script file to execute")
         ],
@@ -96,6 +98,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         Scripts must call bootstrap_from_env() at the start of main() to
         read parameters from env vars and set up sys.argv for argparse.
+
+        If the editor is not running, it will be automatically launched.
 
         Args:
             script_path: Path to the Python script file to execute
@@ -146,6 +150,11 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         execution = state.get_execution_subsystem()
 
+        # Ensure editor is ready (may auto-launch)
+        ensure_result = await execution._ensure_editor_ready()
+        if ensure_result is not None:
+            return ensure_result
+
         # Generate temp file for capturing stdout/stderr output
         # EXECUTE_FILE mode doesn't return print() output in the protocol response,
         # so we redirect stdout/stderr to a temp file and read it after execution
@@ -182,7 +191,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         )
 
     @mcp.tool(name="editor_pip_install")
-    def pip_install_packages(
+    async def pip_install_packages(
         packages: Annotated[
             list[str],
             Field(
@@ -203,6 +212,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         This tool uses UE5's bundled Python interpreter to install packages via pip.
         Installed packages will be available for use in editor.execute_code() calls.
 
+        If the editor is not running, it will be automatically launched.
+
         Args:
             packages: List of package names to install (e.g., ["Pillow", "numpy"])
             upgrade: Whether to upgrade packages if already installed (default: False)
@@ -218,4 +229,4 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             pip_install_packages(["Pillow", "numpy"])
         """
         execution = state.get_execution_subsystem()
-        return execution.pip_install_packages(packages, upgrade=upgrade)
+        return await execution.pip_install_with_auto_launch(packages, upgrade=upgrade)

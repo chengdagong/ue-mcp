@@ -14,12 +14,15 @@ if TYPE_CHECKING:
 def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     """Register asset diagnostic and inspection tools."""
 
-    from ..script_executor import execute_script_from_path, get_diagnostic_scripts_dir
+    from ..script_executor import (
+        execute_script_from_path_with_auto_launch,
+        get_diagnostic_scripts_dir,
+    )
 
     from ._helpers import parse_json_result
 
     @mcp.tool(name="editor_asset_open")
-    def open_asset(
+    async def open_asset(
         asset_path: Annotated[
             str,
             Field(
@@ -39,6 +42,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         This tool loads the specified asset and opens its appropriate editor
         (e.g., Blueprint Editor for Blueprints, Material Editor for Materials).
+
+        If the editor is not running, it will be automatically launched.
 
         Args:
             asset_path: Path to the asset to open (e.g., /Game/Blueprints/BP_Character)
@@ -70,7 +75,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             Path(__file__).parent.parent / "extra" / "scripts" / "asset_open.py"
         )
 
-        result = execute_script_from_path(
+        result = await execute_script_from_path_with_auto_launch(
             execution,
             script_path,
             params={"asset_path": asset_path, "tab_id": tab_id},
@@ -80,7 +85,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         return parse_json_result(result)
 
     @mcp.tool(name="editor_asset_diagnostic")
-    def diagnose_asset(
+    async def diagnose_asset(
         asset_path: Annotated[
             str,
             Field(
@@ -94,6 +99,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         The tool automatically detects the asset type and runs appropriate
         diagnostics. Supported types include: Level, Blueprint, Material,
         StaticMesh, SkeletalMesh, Texture, and more.
+
+        If the editor is not running, it will be automatically launched.
 
         Args:
             asset_path: Path to the asset to diagnose (e.g., /Game/Maps/TestLevel)
@@ -115,7 +122,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         scripts_dir = get_diagnostic_scripts_dir()
         script_path = scripts_dir / "diagnostic_runner.py"
 
-        result = execute_script_from_path(
+        result = await execute_script_from_path_with_auto_launch(
             execution,
             script_path,
             params={"asset_path": asset_path},
@@ -125,7 +132,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         return parse_json_result(result)
 
     @mcp.tool(name="editor_asset_inspect")
-    def inspect_asset(
+    async def inspect_asset(
         asset_path: Annotated[
             str,
             Field(
@@ -152,6 +159,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         For Blueprint and Level assets, a viewport screenshot is automatically captured
         and saved to the system temp directory.
+
+        If the editor is not running, it will be automatically launched.
 
         Args:
             asset_path: Path to the asset (e.g., /Game/Meshes/MyStaticMesh)
@@ -183,7 +192,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         if component_name is not None:
             params["component_name"] = component_name
 
-        result = execute_script_from_path(
+        result = await execute_script_from_path_with_auto_launch(
             execution,
             script_path,
             params=params,

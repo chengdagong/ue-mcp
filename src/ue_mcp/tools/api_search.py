@@ -13,12 +13,15 @@ if TYPE_CHECKING:
 def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     """Register API search tools."""
 
-    from ..script_executor import execute_script_from_path, get_extra_scripts_dir
+    from ..script_executor import (
+        execute_script_from_path_with_auto_launch,
+        get_extra_scripts_dir,
+    )
 
     from ._helpers import parse_json_result
 
     @mcp.tool(name="python_api_search")
-    def python_api_search(
+    async def python_api_search(
         mode: Annotated[
             str,
             Field(
@@ -56,6 +59,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         This tool introspects the live 'unreal' module in the running editor,
         providing accurate API information for the current UE5 version.
+
+        If the editor is not running, it will be automatically launched.
 
         Args:
             mode: Query mode - one of:
@@ -152,7 +157,9 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             "limit": limit,
         }
 
-        result = execute_script_from_path(execution, script_path, params, timeout=30.0)
+        result = await execute_script_from_path_with_auto_launch(
+            execution, script_path, params, timeout=30.0
+        )
 
         # Parse result
         return parse_json_result(result)

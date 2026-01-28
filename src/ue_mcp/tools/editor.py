@@ -19,7 +19,10 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     """Register editor management tools."""
 
     from ..autoconfig import get_bundled_site_packages, run_config_check
-    from ..script_executor import execute_script_from_path
+    from ..script_executor import (
+        execute_script_from_path,
+        execute_script_from_path_with_auto_launch,
+    )
 
     from ._helpers import parse_json_result, query_project_assets
 
@@ -213,7 +216,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         )
 
     @mcp.tool(name="editor_load_level")
-    def load_level(
+    async def load_level(
         level_path: Annotated[
             str,
             Field(description="Path to the level to load (e.g., /Game/Maps/MyLevel)"),
@@ -223,6 +226,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         Load a level in the editor.
 
         This uses LevelEditorSubsystem.load_level() to open a level in the editor.
+
+        If the editor is not running, it will be automatically launched.
 
         Args:
             level_path: Path to the level to load (must start with /Game/)
@@ -238,7 +243,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         script_path = Path(__file__).parent.parent / "extra" / "scripts" / "level_load.py"
 
-        result = execute_script_from_path(
+        result = await execute_script_from_path_with_auto_launch(
             execution,
             script_path,
             params={"level_path": level_path},

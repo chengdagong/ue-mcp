@@ -15,7 +15,11 @@ if TYPE_CHECKING:
 def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     """Register capture and tracing tools."""
 
-    from ..script_executor import execute_script, execute_script_from_path
+    from ..script_executor import (
+        execute_script,
+        execute_script_from_path,
+        execute_script_from_path_with_auto_launch,
+    )
 
     from ._helpers import parse_json_result, run_pie_task
 
@@ -345,7 +349,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         )
 
     @mcp.tool(name="editor_capture_window")
-    def capture_window(
+    async def capture_window(
         level: Annotated[str, Field(description="Path to the level to load")],
         output_file: Annotated[
             Optional[str],
@@ -392,6 +396,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         NOTE: This tool is Windows-only and uses Windows API for window capture.
 
+        If the editor is not running, it will be automatically launched.
+
         Args:
             level: Path to the level to load (required)
             output_file: Output file path (required for "window" and "asset" modes)
@@ -410,6 +416,11 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - file/files: Path(s) to captured screenshot(s)
         """
         execution = state.get_execution_subsystem()
+
+        # Ensure editor is ready (may auto-launch)
+        ensure_result = await execution._ensure_editor_ready()
+        if ensure_result is not None:
+            return ensure_result
 
         params: dict[str, Any] = {
             "level": level,
@@ -458,7 +469,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         return parse_json_result(result)
 
     @mcp.tool(name="editor_level_screenshot")
-    def level_screenshot(
+    async def level_screenshot(
         cameras: Annotated[
             Optional[list[str]],
             Field(
@@ -503,6 +514,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         This is useful for capturing level screenshots from specific angles without
         manually placing cameras in the editor.
+
+        If the editor is not running, it will be automatically launched.
 
         Args:
             cameras: List of camera specs in format 'name@x,y,z'. Each camera will be
@@ -570,7 +583,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         # Execute the take_screenshots.py script
         script_path = Path(__file__).parent.parent / "extra" / "scripts" / "take_screenshots.py"
 
-        result = execute_script_from_path(
+        result = await execute_script_from_path_with_auto_launch(
             execution,
             script_path,
             params=params,

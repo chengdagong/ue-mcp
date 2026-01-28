@@ -11,12 +11,15 @@ Scripts read parameters via bootstrap_from_env() which converts env vars to sys.
 import tempfile
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from .tools._helpers import build_env_injection_code
 
 if TYPE_CHECKING:
     from .editor.execution_manager import ExecutionManager
+
+# Type alias for notification callbacks
+NotifyCallback = Callable[[str, str], Coroutine[Any, Any, None]]
 
 
 def get_scripts_dir() -> Path:
@@ -132,4 +135,55 @@ def execute_script_from_path(
         output_file=str(output_file),
         wait_for_latent=wait_for_latent,
         latent_timeout=latent_timeout,
+    )
+
+
+async def execute_script_from_path_with_auto_launch(
+    execution: "ExecutionManager",
+    script_path: Path | str,
+    params: dict[str, Any],
+    timeout: float = 120.0,
+    wait_for_latent: bool = True,
+    latent_timeout: float = 60.0,
+    notify: "NotifyCallback | None" = None,
+) -> dict[str, Any]:
+    """
+    Execute a script from a specific path with automatic editor launch if not running.
+
+    This is the async version of execute_script_from_path that automatically
+    launches the editor if it's not running before executing the script.
+
+    Args:
+        execution: ExecutionManager instance
+        script_path: Full path to the script file
+        params: Parameters to pass to the script
+        timeout: Execution timeout in seconds
+        wait_for_latent: Whether to wait for latent commands to complete (default: True)
+        latent_timeout: Max time to wait for latent commands in seconds (default: 60)
+        notify: Optional callback for launch progress notifications
+
+    Returns:
+        Execution result from the script
+
+    Raises:
+        FileNotFoundError: If the script does not exist
+    """
+    script_path = Path(script_path)
+
+    if not script_path.exists():
+        raise FileNotFoundError(f"Script not found: {script_path}")
+
+    # Ensure editor is ready (may auto-launch)
+    ensure_result = await execution._ensure_editor_ready(notify)
+    if ensure_result is not None:
+        return ensure_result
+
+    # Editor is ready, execute the script
+    return execute_script_from_path(
+        execution,
+        script_path,
+        params,
+        timeout,
+        wait_for_latent,
+        latent_timeout,
     )

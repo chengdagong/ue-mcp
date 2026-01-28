@@ -37,6 +37,8 @@ from ..remote_client import RemoteExecutionClient
 
 if TYPE_CHECKING:
     from .context import EditorContext
+    from .launch_manager import LaunchManager
+    from .types import NotifyCallback
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +59,18 @@ class ExecutionManager:
             context: Shared editor context
         """
         self._ctx = context
+        self._launch_manager: "LaunchManager | None" = None
+
+    def set_launch_manager(self, launch_manager: "LaunchManager") -> None:
+        """Set the LaunchManager reference for auto-launch capability.
+
+        This allows ExecutionManager to automatically launch the editor
+        when tools require it but the editor is not running.
+
+        Args:
+            launch_manager: LaunchManager instance for auto-launch
+        """
+        self._launch_manager = launch_manager
 
     def execute_code(self, code: str, timeout: float = 30.0) -> dict[str, Any]:
         """
@@ -941,3 +955,143 @@ else:
         """
         python_path = self._get_python_path()
         return pip_install(packages, python_path=python_path, upgrade=upgrade)
+
+    # =========================================================================
+    # Auto-Launch Methods
+    # =========================================================================
+
+    async def _ensure_editor_ready(
+        self, notify: "NotifyCallback | None" = None
+    ) -> dict[str, Any] | None:
+        """
+        Ensure editor is running and ready, auto-launching if needed.
+
+        This method checks if the editor is running and ready. If not, it
+        automatically launches the editor using the configured LaunchManager.
+
+        Args:
+            notify: Optional callback for launch progress notifications
+
+        Returns:
+            None if editor is ready (caller should proceed with execution).
+            Error dict if auto-launch failed or LaunchManager not configured.
+        """
+        # Check if editor is already ready
+        if self._ctx.editor is not None and self._ctx.editor.status == "ready":
+            return None  # Editor ready, proceed
+
+        # Check if LaunchManager is available for auto-launch
+        if self._launch_manager is None:
+            return {
+                "success": False,
+                "error": "No editor is running. Call editor_launch() first.",
+            }
+
+        # Auto-launch the editor
+        logger.info("Editor not running, auto-launching...")
+
+        async def default_notify(level: str, message: str) -> None:
+            logger.info(f"[AUTO-LAUNCH] {level}: {message}")
+
+        actual_notify = notify or default_notify
+        await actual_notify("info", "Auto-launching Unreal Editor...")
+
+        launch_result = await self._launch_manager.launch(
+            notify=actual_notify,
+            wait_timeout=120.0,
+        )
+
+        if not launch_result.get("success"):
+            return {
+                "success": False,
+                "error": f"Auto-launch failed: {launch_result.get('error', 'Unknown error')}",
+                "auto_launch_attempted": True,
+                "launch_result": launch_result,
+            }
+
+        await actual_notify("info", "Editor auto-launched successfully")
+        return None  # Editor now ready
+
+    async def execute_code_with_auto_launch(
+        self,
+        code: str,
+        timeout: float = 30.0,
+        notify: "NotifyCallback | None" = None,
+    ) -> dict[str, Any]:
+        """
+        Execute code with automatic editor launch if not running.
+
+        This is the recommended entry point for tools that need editor execution.
+        It automatically launches the editor if not running, then executes the code.
+
+        Args:
+            code: Python code to execute
+            timeout: Execution timeout in seconds
+            notify: Optional callback for launch progress notifications
+
+        Returns:
+            Execution result dictionary
+        """
+        ensure_result = await self._ensure_editor_ready(notify)
+        if ensure_result is not None:
+            return ensure_result
+        return self.execute_with_checks(code, timeout=timeout)
+
+    async def execute_script_with_auto_launch(
+        self,
+        script_path: str,
+        timeout: float = 120.0,
+        output_file: str | None = None,
+        wait_for_latent: bool = True,
+        latent_timeout: float = 60.0,
+        notify: "NotifyCallback | None" = None,
+    ) -> dict[str, Any]:
+        """
+        Execute script with automatic editor launch if not running.
+
+        This is the recommended entry point for tools that need script execution.
+        It automatically launches the editor if not running, then executes the script.
+
+        Args:
+            script_path: Absolute path to the Python script file
+            timeout: Execution timeout in seconds
+            output_file: Optional path to temp file for stdout/stderr capture
+            wait_for_latent: Whether to wait for latent commands to complete
+            latent_timeout: Max time to wait for latent commands
+            notify: Optional callback for launch progress notifications
+
+        Returns:
+            Execution result dictionary
+        """
+        ensure_result = await self._ensure_editor_ready(notify)
+        if ensure_result is not None:
+            return ensure_result
+        return self.execute_script_with_checks(
+            script_path,
+            timeout=timeout,
+            output_file=output_file,
+            wait_for_latent=wait_for_latent,
+            latent_timeout=latent_timeout,
+        )
+
+    async def pip_install_with_auto_launch(
+        self,
+        packages: list[str],
+        upgrade: bool = False,
+        notify: "NotifyCallback | None" = None,
+    ) -> dict[str, Any]:
+        """
+        Install Python packages with automatic editor launch if not running.
+
+        Args:
+            packages: List of package names to install
+            upgrade: Whether to upgrade existing packages
+            notify: Optional callback for launch progress notifications
+
+        Returns:
+            Installation result dictionary
+        """
+        ensure_result = await self._ensure_editor_ready(notify)
+        if ensure_result is not None:
+            return ensure_result
+        return self.pip_install_packages(packages, upgrade=upgrade)

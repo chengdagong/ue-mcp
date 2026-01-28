@@ -80,6 +80,9 @@ class EditorSubsystems:
         # Wire up circular dependency: HealthMonitor needs LaunchManager for restart
         health_monitor.set_restart_callback(lifecycle._launch_internal)
 
+        # Wire up ExecutionManager's access to LaunchManager for auto-launch
+        execution.set_launch_manager(lifecycle)
+
         instance = cls(
             context=context,
             project_analyzer=project_analyzer,
