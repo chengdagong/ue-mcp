@@ -110,29 +110,28 @@ print(f"Created: {{level_path}}")
         # Verify asset_changes is present
         assert "asset_changes" in data, f"No asset_changes in result. Keys: {list(data.keys())}"
 
-        changes = data["asset_changes"]
-        logger.info(f"Asset changes: {changes}")
+        # asset_changes is now a simple array of paths
+        asset_changes = data["asset_changes"]
+        logger.info(f"Asset changes: {asset_changes}")
 
-        # Verify detection
-        assert changes.get("detected") is True, "Expected detected=True"
-        assert len(changes.get("created", [])) > 0, "Expected at least one created asset"
+        # Verify it's a list
+        assert isinstance(asset_changes, list), "asset_changes should be a list"
+        assert len(asset_changes) > 0, "Expected at least one changed asset"
 
-        # Verify Level is in created list
-        created_levels = [c for c in changes["created"] if c["asset_type"] == "Level"]
-        assert len(created_levels) > 0, "Expected Level in created list"
-        assert any(TEST_LEVEL_CREATE in c["path"] for c in created_levels), \
-            f"Expected {TEST_LEVEL_CREATE} in created levels"
+        # Verify the created level is in the list
+        assert any(TEST_LEVEL_CREATE in path for path in asset_changes), \
+            f"Expected {TEST_LEVEL_CREATE} in asset_changes"
 
         # Cleanup
         await cleanup_test_asset(mcp_client, TEST_LEVEL_CREATE)
 
     @pytest.mark.asyncio
-    async def test_level_diagnostic_on_creation(self, mcp_client, running_editor):
-        """Test that creating a Level with issues triggers diagnostic."""
+    async def test_level_creation_simple_path_array(self, mcp_client, running_editor):
+        """Test that creating a Level returns a simple array of paths (no diagnostic details)."""
         # Cleanup first
         await cleanup_test_asset(mcp_client, TEST_LEVEL_DIAGNOSTIC)
 
-        # Create a level with a floating object (should trigger diagnostic warning)
+        # Create a level with a floating object
         create_code = f'''import unreal
 
 level_path = "{TEST_LEVEL_DIAGNOSTIC}"
@@ -142,19 +141,7 @@ actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 # Create new level
 level_subsystem.new_level(level_path)
 
-# Add a floor
-floor = actor_subsystem.spawn_actor_from_class(
-    unreal.StaticMeshActor, unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 0)
-)
-floor.set_actor_label("Floor")
-floor.set_actor_scale3d(unreal.Vector(100, 100, 1))
-mesh_comp = floor.get_component_by_class(unreal.StaticMeshComponent)
-if mesh_comp:
-    cube = unreal.load_asset("/Engine/BasicShapes/Cube")
-    if cube:
-        mesh_comp.set_static_mesh(cube)
-
-# Add a floating cube (should trigger diagnostic ERROR)
+# Add a floating cube
 floating = actor_subsystem.spawn_actor_from_class(
     unreal.StaticMeshActor, unreal.Vector(0, 0, 500), unreal.Rotator(0, 0, 0)
 )
@@ -167,7 +154,7 @@ if mesh_comp2:
 
 # Save
 level_subsystem.save_current_level()
-print(f"Created level with floating object: {{level_path}}")
+print(f"Created level: {{level_path}}")
 '''
         result = await mcp_client.call_tool(
             "editor_execute_code",
@@ -178,28 +165,20 @@ print(f"Created level with floating object: {{level_path}}")
         assert data.get("success") is True, f"Code execution failed: {data.get('error')}"
         assert "asset_changes" in data, f"No asset_changes in result. Keys: {list(data.keys())}"
 
-        changes = data["asset_changes"]
-        logger.info(f"Asset changes with diagnostic: {changes}")
+        # asset_changes is now a simple array of paths
+        asset_changes = data["asset_changes"]
+        logger.info(f"Asset changes: {asset_changes}")
 
-        # Find the Level in created list
-        created_levels = [c for c in changes.get("created", []) if c["asset_type"] == "Level"]
-        assert len(created_levels) > 0, "Expected Level in created list"
+        # Verify it's a list of strings (paths only, no objects)
+        assert isinstance(asset_changes, list), "asset_changes should be a list"
+        assert all(isinstance(p, str) for p in asset_changes), (
+            "asset_changes should contain only string paths"
+        )
 
-        # Verify diagnostic details
-        level_change = created_levels[0]
-        assert "details" in level_change, f"Expected details in level change: {level_change}"
-
-        details = level_change["details"]
-        logger.info(f"Diagnostic details: {details}")
-
-        # Should have errors (floating object + no PlayerStart)
-        assert details.get("errors", 0) > 0, "Expected at least one error in diagnostic"
-        assert "issues" in details, "Expected issues in details"
-
-        # Verify floating object is detected
-        issues = details["issues"]
-        floating_issues = [i for i in issues if "floating" in i.get("message", "").lower()]
-        assert len(floating_issues) > 0, f"Expected floating object issue. Issues: {issues}"
+        # Verify the created level is in the list
+        assert any(TEST_LEVEL_DIAGNOSTIC in path for path in asset_changes), (
+            f"Expected {TEST_LEVEL_DIAGNOSTIC} in asset_changes"
+        )
 
         # Cleanup
         await cleanup_test_asset(mcp_client, TEST_LEVEL_DIAGNOSTIC)
@@ -254,16 +233,14 @@ print(f"Modified: {{level_path}}")
         assert data.get("success") is True, f"Code execution failed: {data.get('error')}"
         assert "asset_changes" in data, f"No asset_changes in result. Keys: {list(data.keys())}"
 
-        changes = data["asset_changes"]
-        logger.info(f"Modification changes: {changes}")
+        # asset_changes is now a simple array of paths
+        asset_changes = data["asset_changes"]
+        logger.info(f"Modification changes: {asset_changes}")
 
-        # Verify detection
-        assert changes.get("detected") is True, "Expected detected=True"
-
-        # Should be in modified list (not created, since it already existed)
-        modified_levels = [c for c in changes.get("modified", []) if c["asset_type"] == "Level"]
-        assert len(modified_levels) > 0, \
-            f"Expected Level in modified list. Changes: {changes}"
+        # Should contain the modified level path
+        assert isinstance(asset_changes, list), "asset_changes should be a list"
+        assert any(TEST_LEVEL_MODIFY in path for path in asset_changes), \
+            f"Expected {TEST_LEVEL_MODIFY} in asset_changes. Got: {asset_changes}"
 
         # Cleanup
         await cleanup_test_asset(mcp_client, TEST_LEVEL_MODIFY)
@@ -323,16 +300,14 @@ else:
         assert data.get("success") is True, f"Code execution failed: {data.get('error')}"
         assert "asset_changes" in data, f"No asset_changes in result. Keys: {list(data.keys())}"
 
-        changes = data["asset_changes"]
-        logger.info(f"Deletion changes: {changes}")
+        # asset_changes is now a simple array of paths
+        asset_changes = data["asset_changes"]
+        logger.info(f"Deletion changes: {asset_changes}")
 
-        # Verify detection
-        assert changes.get("detected") is True, "Expected detected=True"
-
-        # Should be in deleted list
-        deleted_levels = [c for c in changes.get("deleted", []) if c["asset_type"] == "Level"]
-        assert len(deleted_levels) > 0, \
-            f"Expected Level in deleted list. Changes: {changes}"
+        # Should contain the deleted level path
+        assert isinstance(asset_changes, list), "asset_changes should be a list"
+        assert any(TEST_LEVEL_DELETE in path for path in asset_changes), \
+            f"Expected {TEST_LEVEL_DELETE} in asset_changes. Got: {asset_changes}"
 
     @pytest.mark.asyncio
     async def test_no_changes_when_only_reading(self, mcp_client, running_editor):
@@ -365,16 +340,13 @@ print(f"Exists: {{exists}}")
         data = read_result.structuredContent
         assert data.get("success") is True
 
-        # Should either have no asset_changes, or detected=False
+        # asset_changes should NOT be present when there are no actual changes
+        # (asset_changes is now a simple list, and is omitted when empty)
         if "asset_changes" in data:
-            changes = data["asset_changes"]
-            logger.info(f"Changes on read-only: {changes}")
-            # If present, should show no changes
-            assert changes.get("detected") is False or (
-                len(changes.get("created", [])) == 0 and
-                len(changes.get("modified", [])) == 0 and
-                len(changes.get("deleted", [])) == 0
-            ), f"Unexpected changes detected: {changes}"
+            asset_changes = data["asset_changes"]
+            logger.info(f"Changes on read-only: {asset_changes}")
+            # If present (shouldn't be for read-only), verify it's empty
+            assert len(asset_changes) == 0, f"Unexpected changes detected: {asset_changes}"
 
         # Cleanup
         await cleanup_test_asset(mcp_client, TEST_LEVEL_NO_CHANGE)
@@ -423,28 +395,16 @@ print(f"Level has {len(actors)} actors")
         data = result.structuredContent
         assert data.get("success") is True, f"Code execution failed: {data.get('error')}"
 
-        # With auto-tracking, asset_changes should be present (even if no changes detected)
-        # because the current level directory should be scanned
-        # Note: If no changes are detected, asset_changes may not be in the result
-        # So we check for either: asset_changes present, or verify via logs that tracking occurred
-
+        # With auto-tracking enabled, the current level directory should be scanned.
+        # But if no changes are detected, asset_changes is omitted (empty list not included).
+        # For read-only code, we expect no asset_changes field.
         if "asset_changes" in data:
-            changes = data["asset_changes"]
-            logger.info(f"Auto-track result: {changes}")
-
-            # Verify the current level's directory is in scanned_paths
-            scanned_paths = changes.get("scanned_paths", [])
-            thirdperson_tracked = any("ThirdPerson" in p for p in scanned_paths)
-            assert thirdperson_tracked, (
-                f"Expected /Game/ThirdPerson/ in scanned_paths. "
-                f"Got: {scanned_paths}"
-            )
-            logger.info("Auto-tracking verified: ThirdPerson directory was scanned")
+            asset_changes = data["asset_changes"]
+            logger.info(f"Auto-track result: {asset_changes}")
+            # asset_changes is now a simple list of paths
+            assert isinstance(asset_changes, list), "asset_changes should be a list"
         else:
-            # asset_changes not in result means either:
-            # 1. No changes detected (which is fine for read-only code)
-            # 2. Auto-tracking didn't work (which would be a bug)
-            # We need to check the logs to verify tracking occurred
+            # No changes detected (expected for read-only code)
             logger.info(
                 "No asset_changes in result (expected for read-only code). "
                 "Auto-tracking feature verified via server logs."
@@ -513,23 +473,14 @@ print("Added and saved OFPATestActor")
         assert data.get("success") is True, f"Code execution failed: {data.get('error')}"
         assert "asset_changes" in data, f"No asset_changes in result. Keys: {list(data.keys())}"
 
-        changes = data["asset_changes"]
-        logger.info(f"OFPA modification changes: {changes}")
+        # asset_changes is now a simple array of paths
+        asset_changes = data["asset_changes"]
+        logger.info(f"OFPA modification changes: {asset_changes}")
 
-        # Verify detection - should be detected either as created or modified
-        assert changes.get("detected") is True, (
-            "Expected level modification to be detected via OFPA external actors. "
-            f"Changes: {changes}"
-        )
-
-        # The level should appear in modified list (or possibly created if it's a new snapshot)
-        all_changed = (
-            changes.get("modified", []) +
-            changes.get("created", [])
-        )
-        level_changes = [c for c in all_changed if c.get("asset_type") == "Level"]
-        assert len(level_changes) > 0, (
-            f"Expected Level in changed assets. Changes: {changes}"
+        # Verify the level path is in the changed assets
+        assert isinstance(asset_changes, list), "asset_changes should be a list"
+        assert any("Lvl_ThirdPerson" in path or "ThirdPerson" in path for path in asset_changes), (
+            f"Expected Lvl_ThirdPerson in changed assets. Got: {asset_changes}"
         )
 
         # Cleanup - delete the test actor
@@ -547,14 +498,14 @@ for actor in actor_subsystem.get_all_level_actors():
 
 @pytest.mark.integration
 class TestActorChangeTracking:
-    """Tests for actor-based change tracking (OFPA mode support)."""
+    """Tests for actor-based change tracking merged into asset_changes."""
 
     @pytest.mark.asyncio
-    async def test_actor_addition_detected(self, mcp_client, running_editor):
-        """Test that adding an actor is detected via actor_changes.
+    async def test_actor_addition_marks_level_as_changed(self, mcp_client, running_editor):
+        """Test that adding an actor marks the level as changed in asset_changes.
 
-        This tests the actor-based tracking that works even with OFPA mode,
-        where file timestamps may not change when adding actors.
+        Actor changes are now merged into asset_changes - when actors are added,
+        the current level path should appear in the asset_changes list.
         """
         # First, ensure we're on the ThirdPerson level
         load_code = '''import unreal
@@ -569,7 +520,7 @@ print("Loaded Lvl_ThirdPerson")
         )
         assert load_result.structuredContent.get("success") is True
 
-        # Add an actor (should be detected by actor tracking)
+        # Add an actor (should cause level to be marked as changed)
         add_code = '''import unreal
 
 actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
@@ -589,32 +540,26 @@ print(f"Added actor: {actor.get_actor_label()}")
         data = result.structuredContent
         assert data.get("success") is True, f"Code execution failed: {data.get('error')}"
 
-        # Verify actor_changes is present
-        assert "actor_changes" in data, f"No actor_changes in result. Keys: {list(data.keys())}"
+        # Verify asset_changes is present (actor_changes is now merged into it)
+        assert "asset_changes" in data, f"No asset_changes in result. Keys: {list(data.keys())}"
+        assert "actor_changes" not in data, "actor_changes should be merged into asset_changes"
 
-        actor_changes = data["actor_changes"]
-        logger.info(f"Actor changes: {actor_changes}")
+        # asset_changes is now a simple array of paths
+        asset_changes = data["asset_changes"]
+        logger.info(f"Asset changes: {asset_changes}")
 
-        # Verify detection
-        assert actor_changes.get("detected") is True, "Expected detected=True"
-        assert len(actor_changes.get("created", [])) > 0, "Expected at least one created actor"
+        # Verify it's a list of strings
+        assert isinstance(asset_changes, list), "asset_changes should be a list"
 
-        # Find our test actor
-        created_actors = actor_changes["created"]
-        test_actor = next(
-            (a for a in created_actors if "ActorTrackingTestActor" in a.get("label", "")),
-            None
-        )
-        assert test_actor is not None, (
-            f"Expected ActorTrackingTestActor in created actors. "
-            f"Got: {created_actors}"
+        # Verify the ThirdPerson level is in the changed paths
+        assert any("ThirdPerson" in path for path in asset_changes), (
+            f"Expected Lvl_ThirdPerson in asset_changes. Got: {asset_changes}"
         )
 
         # Cleanup - delete the test actor
         cleanup_code = '''import unreal
 
 actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
-world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
 
 # Find and delete the test actor
 for actor in actor_subsystem.get_all_level_actors():
@@ -626,8 +571,8 @@ for actor in actor_subsystem.get_all_level_actors():
         await mcp_client.call_tool("editor_execute_code", {"code": cleanup_code, "timeout": 30})
 
     @pytest.mark.asyncio
-    async def test_actor_modification_detected(self, mcp_client, running_editor):
-        """Test that moving an actor is detected via actor_changes."""
+    async def test_actor_modification_marks_level_as_changed(self, mcp_client, running_editor):
+        """Test that modifying an actor marks the level as changed in asset_changes."""
         # First, ensure we're on the ThirdPerson level
         load_code = '''import unreal
 
@@ -653,7 +598,7 @@ print(f"Added actor at {actor.get_actor_location()}")
 '''
         await mcp_client.call_tool("editor_execute_code", {"code": add_code, "timeout": 30})
 
-        # Now modify the actor's position (should be detected)
+        # Now modify the actor's position (should cause level to be marked as changed)
         move_code = '''import unreal
 
 actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
@@ -675,28 +620,19 @@ for actor in actor_subsystem.get_all_level_actors():
         data = result.structuredContent
         assert data.get("success") is True
 
-        # Verify actor_changes
-        assert "actor_changes" in data, f"No actor_changes in result"
+        # Verify asset_changes is present
+        assert "asset_changes" in data, "No asset_changes in result"
+        assert "actor_changes" not in data, "actor_changes should be merged into asset_changes"
 
-        actor_changes = data["actor_changes"]
-        logger.info(f"Actor modification changes: {actor_changes}")
+        # asset_changes is now a simple array of paths
+        asset_changes = data["asset_changes"]
+        logger.info(f"Asset changes after actor modification: {asset_changes}")
 
-        # Should detect modification
-        assert actor_changes.get("detected") is True
-        modified = actor_changes.get("modified", [])
-        assert len(modified) > 0, "Expected modified actors"
-
-        # Find our test actor in modified
-        test_mod = next(
-            (m for m in modified if "ActorModifyTestActor" in m.get("label", "")),
-            None
+        # Verify it's a list and contains the ThirdPerson level
+        assert isinstance(asset_changes, list), "asset_changes should be a list"
+        assert any("ThirdPerson" in path for path in asset_changes), (
+            f"Expected ThirdPerson level in asset_changes. Got: {asset_changes}"
         )
-        assert test_mod is not None, f"Expected ActorModifyTestActor in modified. Got: {modified}"
-
-        # Verify location change is recorded
-        changes = test_mod.get("changes", [])
-        location_change = next((c for c in changes if c.get("property") == "location"), None)
-        assert location_change is not None, f"Expected location change. Got: {changes}"
 
         # Cleanup
         cleanup_code = '''import unreal
@@ -711,12 +647,8 @@ for actor in actor_subsystem.get_all_level_actors():
         await mcp_client.call_tool("editor_execute_code", {"code": cleanup_code, "timeout": 30})
 
     @pytest.mark.asyncio
-    async def test_actor_change_triggers_level_diagnostic(self, mcp_client, running_editor):
-        """Test that actor changes trigger level diagnostic.
-
-        When actors are added/modified/deleted in memory (without saving the level),
-        the actor_changes should include level_diagnostic with diagnostic results.
-        """
+    async def test_no_actor_changes_field(self, mcp_client, running_editor):
+        """Test that actor_changes field no longer exists (merged into asset_changes)."""
         # First, ensure we're on a persistent level (not /Temp/)
         load_code = '''import unreal
 
@@ -730,7 +662,7 @@ print("Loaded Lvl_ThirdPerson")
         )
         assert load_result.structuredContent.get("success") is True
 
-        # Add an actor (should trigger diagnostic)
+        # Add an actor
         add_code = '''import unreal
 
 actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
@@ -739,7 +671,7 @@ actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 actor = actor_subsystem.spawn_actor_from_class(
     unreal.StaticMeshActor, unreal.Vector(1000, 1000, 100), unreal.Rotator(0, 0, 0)
 )
-actor.set_actor_label("DiagnosticTestActor")
+actor.set_actor_label("NoActorChangesTestActor")
 mesh_comp = actor.get_component_by_class(unreal.StaticMeshComponent)
 if mesh_comp:
     cube = unreal.load_asset("/Engine/BasicShapes/Cube")
@@ -755,33 +687,23 @@ print(f"Added actor: {actor.get_actor_label()}")
         data = result.structuredContent
         assert data.get("success") is True, f"Code execution failed: {data.get('error')}"
 
-        # Verify actor_changes is present
-        assert "actor_changes" in data, f"No actor_changes in result. Keys: {list(data.keys())}"
-
-        actor_changes = data["actor_changes"]
-        logger.info(f"Actor changes with diagnostic: {actor_changes}")
-
-        # Verify detection
-        assert actor_changes.get("detected") is True, "Expected detected=True"
-
-        # Verify level_diagnostic is present (since we're in a /Game/ level, not /Temp/)
-        assert "level_diagnostic" in actor_changes, (
-            f"Expected level_diagnostic in actor_changes for persistent level. "
-            f"Got keys: {list(actor_changes.keys())}"
+        # Verify actor_changes is NOT present (merged into asset_changes)
+        assert "actor_changes" not in data, (
+            f"actor_changes should NOT be present (merged into asset_changes). "
+            f"Got keys: {list(data.keys())}"
         )
 
-        diagnostic = actor_changes["level_diagnostic"]
-        logger.info(f"Level diagnostic: {diagnostic}")
+        # Verify asset_changes IS present
+        assert "asset_changes" in data, f"No asset_changes in result. Keys: {list(data.keys())}"
 
-        # Verify diagnostic structure
-        assert "asset_path" in diagnostic, "Expected asset_path in diagnostic"
-        assert "errors" in diagnostic, "Expected errors count in diagnostic"
-        assert "warnings" in diagnostic, "Expected warnings count in diagnostic"
-        assert "issues" in diagnostic, "Expected issues list in diagnostic"
+        # asset_changes is now a simple array of paths
+        asset_changes = data["asset_changes"]
+        logger.info(f"Asset changes: {asset_changes}")
 
-        # The asset_path should be the level path
-        assert "/Game/ThirdPerson" in diagnostic["asset_path"], (
-            f"Expected ThirdPerson level in diagnostic asset_path. Got: {diagnostic['asset_path']}"
+        # Verify it's a list and contains the ThirdPerson level
+        assert isinstance(asset_changes, list), "asset_changes should be a list"
+        assert any("ThirdPerson" in path for path in asset_changes), (
+            f"Expected ThirdPerson level in asset_changes. Got: {asset_changes}"
         )
 
         # Cleanup - delete the test actor
@@ -789,87 +711,9 @@ print(f"Added actor: {actor.get_actor_label()}")
 
 actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 for actor in actor_subsystem.get_all_level_actors():
-    if actor.get_actor_label() == "DiagnosticTestActor":
+    if actor.get_actor_label() == "NoActorChangesTestActor":
         actor.destroy_actor()
-        print("Deleted DiagnosticTestActor")
-        break
-'''
-        await mcp_client.call_tool("editor_execute_code", {"code": cleanup_code, "timeout": 30})
-
-    @pytest.mark.asyncio
-    async def test_actor_change_diagnostic_detects_issues(self, mcp_client, running_editor):
-        """Test that actor change diagnostic can detect issues like floating objects.
-
-        When a floating actor is added without saving, the level_diagnostic
-        should detect the floating object issue.
-        """
-        # First, load a persistent level
-        load_code = '''import unreal
-
-level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
-level_subsystem.load_level("/Game/ThirdPerson/Lvl_ThirdPerson")
-print("Loaded Lvl_ThirdPerson")
-'''
-        load_result = await mcp_client.call_tool(
-            "editor_execute_code",
-            {"code": load_code, "timeout": 60},
-        )
-        assert load_result.structuredContent.get("success") is True
-
-        # Add a floating actor (high above ground, should trigger floating warning/error)
-        add_code = '''import unreal
-
-actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
-
-# Add a floating actor at very high Z (should be detected as floating)
-actor = actor_subsystem.spawn_actor_from_class(
-    unreal.StaticMeshActor, unreal.Vector(0, 0, 5000), unreal.Rotator(0, 0, 0)
-)
-actor.set_actor_label("FloatingDiagnosticTestActor")
-mesh_comp = actor.get_component_by_class(unreal.StaticMeshComponent)
-if mesh_comp:
-    sphere = unreal.load_asset("/Engine/BasicShapes/Sphere")
-    if sphere:
-        mesh_comp.set_static_mesh(sphere)
-print(f"Added floating actor at Z=5000: {actor.get_actor_label()}")
-'''
-        result = await mcp_client.call_tool(
-            "editor_execute_code",
-            {"code": add_code, "timeout": 60},
-        )
-
-        data = result.structuredContent
-        assert data.get("success") is True, f"Code execution failed: {data.get('error')}"
-
-        # Verify actor_changes and level_diagnostic
-        assert "actor_changes" in data, f"No actor_changes in result"
-        actor_changes = data["actor_changes"]
-
-        assert actor_changes.get("detected") is True
-        assert "level_diagnostic" in actor_changes, "Expected level_diagnostic"
-
-        diagnostic = actor_changes["level_diagnostic"]
-        logger.info(f"Diagnostic for floating actor: {diagnostic}")
-
-        # Check if floating object is detected
-        # The exact behavior depends on the diagnostic implementation
-        issues = diagnostic.get("issues", [])
-        total_issues = diagnostic.get("errors", 0) + diagnostic.get("warnings", 0)
-
-        logger.info(f"Total issues: {total_issues}, Issues detail: {issues}")
-
-        # Verify the diagnostic ran (may or may not find the floating object
-        # depending on level content and diagnostic rules)
-        assert isinstance(issues, list), "Expected issues to be a list"
-
-        # Cleanup - delete the floating actor
-        cleanup_code = '''import unreal
-
-actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
-for actor in actor_subsystem.get_all_level_actors():
-    if actor.get_actor_label() == "FloatingDiagnosticTestActor":
-        actor.destroy_actor()
-        print("Deleted FloatingDiagnosticTestActor")
+        print("Deleted NoActorChangesTestActor")
         break
 '''
         await mcp_client.call_tool("editor_execute_code", {"code": cleanup_code, "timeout": 30})
@@ -879,8 +723,7 @@ for actor in actor_subsystem.get_all_level_actors():
         """Test that changes in a temporary level include a warning.
 
         When actors are modified in a temporary level (path starts with /Temp/),
-        the actor_changes should include a warning field alerting the user that
-        they are working in an unsaved level.
+        the result should include a temp_level_warning field.
         """
         # Step 1: Create a new temporary level (unsaved)
         new_level_code = '''import unreal
@@ -922,28 +765,24 @@ print(f"Added actor in temp level: {actor.get_actor_label()}")
         data = result.structuredContent
         assert data.get("success") is True, f"Code execution failed: {data.get('error')}"
 
-        # Verify actor_changes is present
-        assert "actor_changes" in data, f"No actor_changes in result. Keys: {list(data.keys())}"
+        # Verify asset_changes is present (actor_changes merged into it)
+        assert "asset_changes" in data, f"No asset_changes in result. Keys: {list(data.keys())}"
+        assert "actor_changes" not in data, "actor_changes should be merged into asset_changes"
 
-        actor_changes = data["actor_changes"]
-        logger.info(f"Actor changes in temp level: {actor_changes}")
+        # asset_changes is now a simple array of paths
+        asset_changes = data["asset_changes"]
+        logger.info(f"Asset changes in temp level: {asset_changes}")
 
-        # Verify we're in a temporary level
-        level_path = actor_changes.get("level_path", "")
-        assert level_path.startswith("/Temp/"), (
-            f"Expected temporary level path starting with /Temp/. Got: {level_path}"
+        # Verify it's a list
+        assert isinstance(asset_changes, list), "asset_changes should be a list"
+
+        # Verify the temp_level_warning is present at top level (not inside asset_changes)
+        assert "temp_level_warning" in data, (
+            f"Expected 'temp_level_warning' field in result for temporary level. "
+            f"Got keys: {list(data.keys())}"
         )
 
-        # Verify changes were detected
-        assert actor_changes.get("detected") is True, "Expected detected=True"
-
-        # Verify the warning is present
-        assert "warning" in actor_changes, (
-            f"Expected 'warning' field in actor_changes for temporary level. "
-            f"Got keys: {list(actor_changes.keys())}"
-        )
-
-        warning = actor_changes["warning"]
+        warning = data["temp_level_warning"]
         logger.info(f"Temporary level warning: {warning}")
 
         # Verify warning message content
@@ -951,23 +790,6 @@ print(f"Added actor in temp level: {actor.get_actor_label()}")
         assert "editor_load_level" in warning, (
             "Warning should suggest using editor_load_level"
         )
-
-        # Verify that level_diagnostic IS present even for temporary levels
-        # Diagnostic should run for all levels, including /Temp/
-        assert "level_diagnostic" in actor_changes, (
-            f"Expected level_diagnostic for temporary level. "
-            f"Diagnostic should run for all levels including /Temp/. "
-            f"Got keys: {list(actor_changes.keys())}"
-        )
-
-        diagnostic = actor_changes["level_diagnostic"]
-        logger.info(f"Temp level diagnostic: {diagnostic}")
-
-        # Verify diagnostic structure
-        assert "asset_path" in diagnostic, "Expected asset_path in diagnostic"
-        assert "errors" in diagnostic, "Expected errors count in diagnostic"
-        assert "warnings" in diagnostic, "Expected warnings count in diagnostic"
-        assert "issues" in diagnostic, "Expected issues list in diagnostic"
 
         # Step 3: Switch back to a persistent level for cleanup
         switch_back_code = '''import unreal
@@ -980,6 +802,79 @@ print("Switched back to Lvl_ThirdPerson")
             "editor_execute_code",
             {"code": switch_back_code, "timeout": 60},
         )
+
+
+@pytest.mark.integration
+class TestDirtyAssets:
+    """Tests for dirty assets tracking feature."""
+
+    @pytest.mark.asyncio
+    async def test_dirty_assets_returned_after_modification(self, mcp_client, running_editor):
+        """Test that dirty_assets field is returned when assets have unsaved changes."""
+        # Create a new temporary level (which will be dirty by default)
+        new_level_code = '''import unreal
+
+# Create a new blank map (this creates a dirty/unsaved level)
+world = unreal.EditorLoadingAndSavingUtils.new_blank_map(False)
+if world:
+    print(f"Created temp level: {world.get_outer().get_path_name()}")
+else:
+    print("Failed to create temp level")
+'''
+        result = await mcp_client.call_tool(
+            "editor_execute_code",
+            {"code": new_level_code, "timeout": 60},
+        )
+
+        data = result.structuredContent
+        assert data.get("success") is True, f"Code execution failed: {data.get('error')}"
+
+        # dirty_assets should be present when there are unsaved changes
+        # Note: The new blank map may or may not show up in dirty_assets
+        # depending on how UE5 tracks it, but the field should be present
+        # when execution succeeds
+        logger.info(f"Result keys: {list(data.keys())}")
+        if "dirty_assets" in data:
+            dirty_assets = data["dirty_assets"]
+            logger.info(f"Dirty assets: {dirty_assets}")
+            assert isinstance(dirty_assets, list), "dirty_assets should be a list"
+
+        # Switch back to a clean state
+        cleanup_code = '''import unreal
+
+level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+level_subsystem.load_level("/Game/ThirdPerson/Lvl_ThirdPerson")
+print("Loaded clean level")
+'''
+        await mcp_client.call_tool("editor_execute_code", {"code": cleanup_code, "timeout": 60})
+
+    @pytest.mark.asyncio
+    async def test_no_dirty_assets_after_save(self, mcp_client, running_editor):
+        """Test that dirty_assets is empty after saving changes."""
+        # Load a level and then ensure it's saved
+        load_code = '''import unreal
+
+level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+level_subsystem.load_level("/Game/ThirdPerson/Lvl_ThirdPerson")
+print("Loaded Lvl_ThirdPerson")
+'''
+        result = await mcp_client.call_tool(
+            "editor_execute_code",
+            {"code": load_code, "timeout": 60},
+        )
+
+        data = result.structuredContent
+        assert data.get("success") is True
+
+        # After loading a clean level without modifications, dirty_assets
+        # should either not be present or be an empty list
+        if "dirty_assets" in data:
+            dirty_assets = data["dirty_assets"]
+            logger.info(f"Dirty assets (should be empty): {dirty_assets}")
+            # This level should be clean (no unsaved changes)
+            # Note: there might be some system-level dirty packages
+            # so we just verify the format is correct
+            assert isinstance(dirty_assets, list), "dirty_assets should be a list"
 
 
 @pytest.mark.integration

@@ -12,9 +12,9 @@ from .asset_tracker import (
     compare_snapshots,
     create_snapshot,
     extract_game_paths,
-    gather_actor_change_details,
-    gather_change_details,
+    extract_level_paths,
     get_current_level_path,
+    get_dirty_asset_paths,
     get_snapshot_script_path,
 )
 from .log_watcher import (
@@ -28,12 +28,12 @@ __all__ = [
     "compare_level_actor_snapshots",
     # Asset tracker
     "extract_game_paths",
+    "extract_level_paths",
     "get_snapshot_script_path",
     "get_current_level_path",
+    "get_dirty_asset_paths",
     "create_snapshot",
     "compare_snapshots",
-    "gather_change_details",
-    "gather_actor_change_details",
     # Log watcher
     "CompletionWatcher",
     "watch_pie_capture_complete",
