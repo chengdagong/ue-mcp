@@ -178,7 +178,8 @@ class ClientDetectionMiddleware(Middleware):
                 )
             )
 
-        return ToolResult(content=new_content)
+        # Preserve structured_content for FastMCP output schema validation
+        return ToolResult(content=new_content, structured_content=processed_data)
 
 
 # Create FastMCP instance
