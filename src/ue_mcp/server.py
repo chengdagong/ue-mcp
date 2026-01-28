@@ -14,6 +14,7 @@ from pathlib import Path
 import mcp.types as mt
 from fastmcp import FastMCP
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+from fastmcp.tools.tool import ToolResult
 from mcp.types import ImageContent, TextContent
 
 from .state import server_state
@@ -90,9 +91,9 @@ class ClientDetectionMiddleware(Middleware):
 
     async def on_call_tool(
         self,
-        context: MiddlewareContext[mt.CallToolRequest],
-        call_next: CallNext[mt.CallToolRequest, mt.CallToolResult],
-    ) -> mt.CallToolResult:
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        call_next: CallNext[mt.CallToolRequestParams, ToolResult],
+    ) -> ToolResult:
         """Intercept tool results and convert images to base64 for Claude AI clients."""
         # Execute the tool first
         result = await call_next(context)
@@ -108,9 +109,7 @@ class ClientDetectionMiddleware(Middleware):
         # Process the result content for images
         return self._process_images_in_result(result)
 
-    def _process_images_in_result(
-        self, result: mt.CallToolResult
-    ) -> mt.CallToolResult:
+    def _process_images_in_result(self, result: ToolResult) -> ToolResult:
         """Process tool result and add base64 images for Claude AI.
 
         This method:
@@ -179,7 +178,7 @@ class ClientDetectionMiddleware(Middleware):
                 )
             )
 
-        return mt.CallToolResult(content=new_content, isError=result.isError)
+        return ToolResult(content=new_content)
 
 
 # Create FastMCP instance
