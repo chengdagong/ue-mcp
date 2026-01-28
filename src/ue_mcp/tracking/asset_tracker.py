@@ -58,6 +58,74 @@ def extract_game_paths(code: str) -> list[str]:
     return list(paths)
 
 
+def extract_level_paths(code: str) -> list[str]:
+    """
+    Extract level asset paths from Python code by detecting UE5 level-related API calls.
+
+    This function identifies level paths by looking for specific UE5 Python API calls
+    that operate on levels, rather than guessing based on path naming conventions.
+
+    Detected APIs include:
+    - LevelEditorSubsystem: load_level, new_level, new_level_from_template
+    - EditorLoadingAndSavingUtils: load_map, new_map_from_template
+    - EditorLevelUtils: add_level_to_world, add_level_to_world_with_transform
+    - GameplayStatics: open_level, load_stream_level, unload_stream_level, get_streaming_level
+    - LevelStreamingDynamic: load_level_instance
+
+    Args:
+        code: Python code to analyze
+
+    Returns:
+        List of unique level asset paths found in level-related API calls
+    """
+    # Patterns to match level-related API calls and extract the level path argument
+    # Each pattern captures the /Game/... path from a specific API call
+    level_api_patterns = [
+        # LevelEditorSubsystem methods (first arg is level path)
+        # .load_level("/Game/Maps/Level") or .load_level('/Game/Maps/Level')
+        r"\.load_level\s*\(\s*[\"'](/Game/[^\"']+)[\"']",
+        # .new_level("/Game/Maps/Level")
+        r"\.new_level\s*\(\s*[\"'](/Game/[^\"']+)[\"']",
+        # .new_level_from_template("/Game/Maps/New", "/Game/Maps/Template") - both are levels
+        r"\.new_level_from_template\s*\(\s*[\"'](/Game/[^\"']+)[\"']",
+        r"\.new_level_from_template\s*\([^,]+,\s*[\"'](/Game/[^\"']+)[\"']",
+        # EditorLoadingAndSavingUtils methods
+        # .load_map("/Game/Maps/Level")
+        r"\.load_map\s*\(\s*[\"'](/Game/[^\"']+)[\"']",
+        # .new_map_from_template("/Game/Maps/Template", ...)
+        r"\.new_map_from_template\s*\(\s*[\"'](/Game/[^\"']+)[\"']",
+        # EditorLevelUtils methods (second arg is level path)
+        # .add_level_to_world(world, "/Game/Maps/SubLevel", ...)
+        r"\.add_level_to_world\s*\([^,]+,\s*[\"'](/Game/[^\"']+)[\"']",
+        # .add_level_to_world_with_transform(world, "/Game/Maps/SubLevel", ...)
+        r"\.add_level_to_world_with_transform\s*\([^,]+,\s*[\"'](/Game/[^\"']+)[\"']",
+        # GameplayStatics methods (second arg is level path)
+        # .open_level(ctx, "/Game/Maps/Level", ...)
+        r"\.open_level\s*\([^,]+,\s*[\"'](/Game/[^\"']+)[\"']",
+        # .load_stream_level(ctx, "/Game/Maps/Level", ...)
+        r"\.load_stream_level\s*\([^,]+,\s*[\"'](/Game/[^\"']+)[\"']",
+        # .unload_stream_level(ctx, "/Game/Maps/Level", ...)
+        r"\.unload_stream_level\s*\([^,]+,\s*[\"'](/Game/[^\"']+)[\"']",
+        # .get_streaming_level(ctx, "/Game/Maps/Level")
+        r"\.get_streaming_level\s*\([^,]+,\s*[\"'](/Game/[^\"']+)[\"']",
+        # LevelStreamingDynamic (keyword arg: level_name="/Game/...")
+        # .load_level_instance(..., level_name="/Game/Maps/Room", ...)
+        r"level_name\s*=\s*[\"'](/Game/[^\"']+)[\"']",
+    ]
+
+    paths: set[str] = set()
+
+    for pattern in level_api_patterns:
+        matches = re.findall(pattern, code)
+        for match in matches:
+            # Clean up the path (remove trailing slash if any)
+            level_path = match.rstrip("/")
+            if level_path:
+                paths.add(level_path)
+
+    return list(paths)
+
+
 def get_snapshot_script_path() -> Path:
     """Get the path to the asset_snapshot.py script."""
     return Path(__file__).parent.parent / "extra" / "scripts" / "diagnostic" / "asset_snapshot.py"
@@ -242,23 +310,16 @@ os.environ['UE_MCP_MODE'] = '1'
     return None
 
 
-def compare_snapshots(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+def compare_snapshots(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
     """
-    Compare two snapshots and detect changes.
+    Compare two snapshots and return paths of changed assets.
 
     Args:
         before: Pre-execution snapshot
         after: Post-execution snapshot
 
     Returns:
-        Dictionary with detected changes:
-        {
-            "detected": bool,
-            "scanned_paths": [...],
-            "created": [{"path": ..., "asset_type": ...}, ...],
-            "deleted": [{"path": ..., "asset_type": ...}, ...],
-            "modified": [{"path": ..., "asset_type": ...}, ...]
-        }
+        List of paths of assets that were created, deleted, or modified
     """
     before_assets = before.get("assets", {})
     after_assets = after.get("assets", {})
@@ -266,28 +327,15 @@ def compare_snapshots(before: dict[str, Any], after: dict[str, Any]) -> dict[str
     before_paths = set(before_assets.keys())
     after_paths = set(after_assets.keys())
 
-    # New assets
-    created_paths = after_paths - before_paths
-    created = [
-        {
-            "path": path,
-            "asset_type": after_assets[path].get("asset_type", "Unknown"),
-        }
-        for path in created_paths
-    ]
+    changed_paths: set[str] = set()
+
+    # New assets (created)
+    changed_paths.update(after_paths - before_paths)
 
     # Deleted assets
-    deleted_paths = before_paths - after_paths
-    deleted = [
-        {
-            "path": path,
-            "asset_type": before_assets[path].get("asset_type", "Unknown"),
-        }
-        for path in deleted_paths
-    ]
+    changed_paths.update(before_paths - after_paths)
 
     # Modified assets (timestamp changed or external file count changed for Levels)
-    modified = []
     for path in before_paths & after_paths:
         before_ts = before_assets[path].get("timestamp", 0)
         after_ts = after_assets[path].get("timestamp", 0)
@@ -304,236 +352,59 @@ def compare_snapshots(before: dict[str, Any], after: dict[str, Any]) -> dict[str
                     is_modified = True
 
         if is_modified:
-            modified.append(
-                {
-                    "path": path,
-                    "asset_type": after_assets[path].get("asset_type", "Unknown"),
-                }
-            )
+            changed_paths.add(path)
 
-    return {
-        "detected": bool(created or deleted or modified),
-        "scanned_paths": after.get("scanned_paths", []),
-        "created": created,
-        "deleted": deleted,
-        "modified": modified,
-    }
+    return sorted(changed_paths)
 
 
-def gather_change_details(manager, changes: dict[str, Any]) -> dict[str, Any]:
+def get_dirty_asset_paths(manager) -> list[str]:
     """
-    Gather detailed information for changed assets.
+    Get paths of dirty (unsaved) packages in the editor.
 
-    For Level assets: runs diagnostic
-    For other assets: runs lightweight inspect
+    Uses UE5's EditorLoadingAndSavingUtils to query dirty content and map packages.
 
     Args:
         manager: ExecutionManager instance
-        changes: Changes dictionary from compare_snapshots
 
     Returns:
-        Updated changes dictionary with details populated
+        List of package paths that have unsaved changes
     """
-    from ..script_executor import get_diagnostic_scripts_dir
+    code = '''import json
+import unreal
 
-    diagnostic_script = get_diagnostic_scripts_dir() / "diagnostic_runner.py"
-    inspect_script = get_diagnostic_scripts_dir() / "inspect_runner.py"
+try:
+    dirty_content = unreal.EditorLoadingAndSavingUtils.get_dirty_content_packages()
+    dirty_maps = unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages()
 
-    def run_script(script_path: Path, params: dict) -> dict[str, Any] | None:
-        """Execute a diagnostic/inspect script and parse result."""
-        if not script_path.exists():
-            return None
+    paths = []
+    for pkg in dirty_content:
+        if pkg:
+            paths.append(pkg.get_path_name())
+    for pkg in dirty_maps:
+        if pkg:
+            paths.append(pkg.get_path_name())
 
-        # Read script content
-        try:
-            script_content = script_path.read_text(encoding="utf-8")
-        except Exception:
-            return None
-
-        # Build CLI args
-        import json as json_module
-
-        args = []
-        for key, value in params.items():
-            args.append(f"--{key.replace('_', '-')}")
-            # Use JSON encoding for lists/dicts to preserve structure
-            if isinstance(value, (list, dict)):
-                args.append(json_module.dumps(value))
-            else:
-                args.append(str(value))
-
-        # Build parameter injection code
-        injection_code = f"""import sys
-import os
-sys.argv = {repr([str(script_path)] + args)}
-os.environ['UE_MCP_MODE'] = '1'
-
-"""
-
-        # Concatenate injection with script content
-        full_code = injection_code + script_content
-
-        # Execute full code
-        result = manager.execute_code(full_code, timeout=60.0)
-
-        if not result.get("success"):
-            return None
-
-        # Parse pure JSON output (no markers)
-        output = result.get("output", [])
-
-        # Find last valid JSON in output
-        for line in reversed(output):
-            line_str = str(line.get("output", "")) if isinstance(line, dict) else str(line)
-            line_str = line_str.strip()
-            if line_str.startswith("{") or line_str.startswith("["):
-                try:
-                    return json.loads(line_str)
-                except json.JSONDecodeError:
-                    continue
-
-        return None
-
-    # Process created and modified assets
-    for change_list in [changes.get("created", []), changes.get("modified", [])]:
-        for change in change_list:
-            asset_path = change["path"]
-            asset_type = change["asset_type"]
-
-            if asset_type == "Level":
-                # Run diagnostic for Level assets
-                result = run_script(diagnostic_script, {"asset_path": asset_path})
-                if result:
-                    change["details"] = {
-                        "errors": result.get("errors", 0),
-                        "warnings": result.get("warnings", 0),
-                        "issues": result.get("issues", []),
-                    }
-            else:
-                # Run lightweight inspect for other assets
-                result = run_script(inspect_script, {"asset_path": asset_path})
-                if result:
-                    change["details"] = {
-                        "properties": result.get("properties", {}),
-                        "screenshot_path": result.get("screenshot_path"),
-                    }
-
-    return changes
-
-
-def gather_actor_change_details(manager, actor_changes: dict[str, Any]) -> dict[str, Any]:
-    """
-    Gather diagnostic information when actor changes are detected.
-
-    Runs level diagnostic on the current level when actors are created,
-    deleted, or modified in memory (even without saving).
-
-    This function works for both persistent levels (/Game/) and temporary
-    levels (/Temp/) by using diagnose_current_level() which operates on
-    the currently loaded level in memory.
-
-    Args:
-        manager: ExecutionManager instance
-        actor_changes: Actor changes dictionary from compare_level_actor_snapshots
-
-    Returns:
-        Updated actor_changes dictionary with diagnostic details
-    """
-    # Get the level path from actor_changes
-    level_path = actor_changes.get("level_path", "")
-
-    # Skip if no valid level path
-    if not level_path:
-        logger.debug("Skipping diagnostic: no level path")
-        return actor_changes
-
-    # Use diagnose_current_level() which works for both persistent and temp levels
-    # This diagnoses the currently loaded level in memory, not by asset path
-    diagnostic_code = """
-import json
-import sys
-
-# Force reload asset_diagnostic module to ensure latest version
-modules_to_remove = [k for k in list(sys.modules.keys()) if k.startswith("asset_diagnostic")]
-for mod_name in modules_to_remove:
-    del sys.modules[mod_name]
-
-import asset_diagnostic
-
-# Run diagnostic on current level (works for both /Game/ and /Temp/ levels)
-result = asset_diagnostic.diagnose_current_level(verbose=True)
-
-if result is None:
-    print(json.dumps({"success": False, "error": "No diagnostic result"}))
-else:
-    # Serialize result
-    if hasattr(result, "to_dict"):
-        result_dict = result.to_dict()
-    else:
-        # Fallback manual serialization
-        issues = []
-        for issue in result.issues:
-            issues.append({
-                "severity": issue.severity.value if hasattr(issue.severity, "value") else str(issue.severity),
-                "category": issue.category,
-                "message": issue.message,
-                "actor": issue.actor,
-                "details": issue.details,
-                "suggestion": issue.suggestion,
-            })
-        result_dict = {
-            "asset_path": result.asset_path,
-            "asset_type": result.asset_type.value if hasattr(result.asset_type, "value") else str(result.asset_type),
-            "asset_name": result.asset_name,
-            "errors": result.error_count if hasattr(result, "error_count") else 0,
-            "warnings": result.warning_count if hasattr(result, "warning_count") else 0,
-            "issues": issues,
-        }
-    result_dict["success"] = True
-    print(json.dumps(result_dict))
-"""
-
-    # Execute diagnostic
-    logger.debug(f"Running diagnostic for level with actor changes: {level_path}")
-    result = manager.execute_code(diagnostic_code, timeout=60.0)
-
+    print(json.dumps({"success": True, "paths": paths}))
+except AttributeError:
+    # EditorLoadingAndSavingUtils may not have these methods in all UE versions
+    print(json.dumps({"success": True, "paths": []}))
+except Exception as e:
+    print(json.dumps({"success": False, "error": str(e), "paths": []}))
+'''
+    result = manager.execute_code(code, timeout=30.0)
     if not result.get("success"):
-        logger.warning(f"Diagnostic execution failed: {result.get('error')}")
-        return actor_changes
+        logger.debug(f"Failed to get dirty asset paths: {result.get('error')}")
+        return []
 
-    # Parse pure JSON output
+    # Parse JSON output
     output = result.get("output", [])
-
-    diagnostic_result = None
     for line in reversed(output):
         line_str = str(line.get("output", "")) if isinstance(line, dict) else str(line)
         line_str = line_str.strip()
-        if line_str.startswith("{") or line_str.startswith("["):
+        if line_str.startswith("{"):
             try:
-                diagnostic_result = json.loads(line_str)
-                break
+                data = json.loads(line_str)
+                return data.get("paths", [])
             except json.JSONDecodeError:
                 continue
-
-    if diagnostic_result and diagnostic_result.get("success"):
-        # Convert level path to asset path format for display
-        # e.g., "/Game/Maps/TestLevel.TestLevel:PersistentLevel" -> "/Game/Maps/TestLevel"
-        # For temp levels, keep the path as is
-        asset_path = level_path
-        if "." in asset_path:
-            asset_path = asset_path.split(".")[0]
-
-        actor_changes["level_diagnostic"] = {
-            "asset_path": asset_path,
-            "errors": diagnostic_result.get("errors", 0),
-            "warnings": diagnostic_result.get("warnings", 0),
-            "issues": diagnostic_result.get("issues", []),
-        }
-        logger.info(
-            f"Level diagnostic: {diagnostic_result.get('errors', 0)} errors, "
-            f"{diagnostic_result.get('warnings', 0)} warnings"
-        )
-    elif diagnostic_result:
-        logger.warning(f"Diagnostic returned error: {diagnostic_result.get('error')}")
-
-    return actor_changes
+    return []
