@@ -4,7 +4,9 @@ UE-MCP Server
 FastMCP-based MCP server for Unreal Editor interaction.
 """
 
+import json
 import logging
+import os
 import signal
 import sys
 from pathlib import Path
@@ -12,9 +14,11 @@ from pathlib import Path
 import mcp.types as mt
 from fastmcp import FastMCP
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+from mcp.types import ImageContent, TextContent
 
 from .state import server_state
 from .tools import register_all_tools
+from .core.image_processing import is_claude_ai_client, process_result_for_images
 
 # Configure logging
 # Get project root directory (two levels up from current file)
@@ -83,6 +87,99 @@ class ClientDetectionMiddleware(Middleware):
     ) -> mt.InitializeResult | None:
         """Return full tool list - project_set_path is available for all clients."""
         return await call_next(context)
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mt.CallToolRequest],
+        call_next: CallNext[mt.CallToolRequest, mt.CallToolResult],
+    ) -> mt.CallToolResult:
+        """Intercept tool results and convert images to base64 for Claude AI clients."""
+        # Execute the tool first
+        result = await call_next(context)
+
+        # Check if we should process images for this client
+        if not is_claude_ai_client(server_state.client_name):
+            return result
+
+        # Check if disabled via environment variable
+        if os.environ.get("UE_MCP_DISABLE_BASE64_IMAGES"):
+            return result
+
+        # Process the result content for images
+        return self._process_images_in_result(result)
+
+    def _process_images_in_result(
+        self, result: mt.CallToolResult
+    ) -> mt.CallToolResult:
+        """Process tool result and add base64 images for Claude AI.
+
+        This method:
+        1. Finds text content in the result and parses it as JSON
+        2. Scans for image paths in known fields
+        3. Converts images to base64 and adds them as ImageContent blocks
+        4. Adds an 'images' array to the JSON with metadata
+        """
+        if not result.content:
+            return result
+
+        # Find text content and parse as JSON
+        text_content = None
+        text_index = -1
+        for i, block in enumerate(result.content):
+            if isinstance(block, TextContent):
+                text_content = block
+                text_index = i
+                break
+
+        if text_content is None:
+            return result
+
+        try:
+            data = json.loads(text_content.text)
+        except json.JSONDecodeError:
+            return result
+
+        if not isinstance(data, dict):
+            return result
+
+        # Process for images
+        processed_data, images = process_result_for_images(data)
+
+        if not images:
+            return result
+
+        logger.info(
+            f"Converting {len(images)} image(s) to base64 for Claude AI client"
+        )
+
+        # Add images array to the result data (metadata only, not the base64 data)
+        processed_data["images"] = [
+            {
+                "path": img["path"],
+                "mime_type": img["mime_type"],
+                "size_bytes": img["size_bytes"],
+                "source_field": img["source_field"],
+            }
+            for img in images
+        ]
+
+        # Build new content list
+        new_content = list(result.content)
+        new_content[text_index] = TextContent(
+            type="text", text=json.dumps(processed_data)
+        )
+
+        # Add ImageContent blocks
+        for img in images:
+            new_content.append(
+                ImageContent(
+                    type="image",
+                    data=img["data"],
+                    mimeType=img["mime_type"],
+                )
+            )
+
+        return mt.CallToolResult(content=new_content, isError=result.isError)
 
 
 # Create FastMCP instance
