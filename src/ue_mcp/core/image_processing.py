@@ -225,9 +225,32 @@ def process_result_for_images(
             return True
         return False
 
+    # Track if screenshot list fields were processed (have explicit file lists)
+    screenshot_fields_processed: set[str] = set()
+
+    # Process screenshot list fields FIRST (e.g., screenshots[].filename)
+    # These provide explicit file lists, so we don't need directory scanning
+    for field, key in SCREENSHOT_LIST_FIELDS.items():
+        if field not in result:
+            continue
+
+        items = result[field]
+        if isinstance(items, list) and items:
+            screenshot_fields_processed.add(field)
+            for item in items:
+                if isinstance(item, dict) and key in item:
+                    path = Path(item[key])
+                    if path.exists() and is_image_file(path):
+                        add_image(path, f"{field}[].{key}")
+
     # Process single/list/directory fields
     for field, field_type in IMAGE_PATH_FIELDS.items():
         if field not in result:
+            continue
+
+        # Skip output_dir directory scanning if screenshots were already processed
+        # (tools with explicit file lists don't need directory scanning)
+        if field == "output_dir" and field_type == "directory" and screenshot_fields_processed:
             continue
 
         value = result[field]
@@ -247,18 +270,5 @@ def process_result_for_images(
             dir_path = Path(value)
             for img_path in find_images_in_directory(dir_path):
                 add_image(img_path, field)
-
-    # Process screenshot list fields (e.g., screenshots[].filename)
-    for field, key in SCREENSHOT_LIST_FIELDS.items():
-        if field not in result:
-            continue
-
-        items = result[field]
-        if isinstance(items, list):
-            for item in items:
-                if isinstance(item, dict) and key in item:
-                    path = Path(item[key])
-                    if path.exists() and is_image_file(path):
-                        add_image(path, f"{field}[].{key}")
 
     return result, images

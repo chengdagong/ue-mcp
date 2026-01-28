@@ -1,10 +1,12 @@
 """Unit tests for image processing utilities."""
 
 import base64
+import io
 import tempfile
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from ue_mcp.core.image_processing import (
     CLAUDE_AI_CLIENT_NAME,
@@ -14,6 +16,29 @@ from ue_mcp.core.image_processing import (
     is_image_file,
     process_result_for_images,
 )
+
+
+def create_test_image(path: Path, width: int = 100, height: int = 100, color: tuple = (255, 0, 0)) -> None:
+    """Create a valid test image file using Pillow.
+
+    Args:
+        path: Path to save the image
+        width: Image width in pixels
+        height: Image height in pixels
+        color: RGB color tuple for the image
+    """
+    img = Image.new("RGB", (width, height), color)
+    # Determine format from extension
+    ext = path.suffix.lower()
+    fmt = {
+        ".png": "PNG",
+        ".jpg": "JPEG",
+        ".jpeg": "JPEG",
+        ".bmp": "BMP",
+        ".gif": "GIF",
+        ".tiff": "TIFF",
+    }.get(ext, "PNG")
+    img.save(path, format=fmt)
 
 
 class TestIsClaudeAiClient:
@@ -89,95 +114,21 @@ class TestImageToBase64:
     """Tests for image_to_base64 function."""
 
     def test_converts_existing_image(self, tmp_path: Path):
-        """Test that existing image is converted to base64."""
-        # Create a minimal PNG (1x1 pixel, red)
-        # PNG header + IHDR + IDAT + IEND
-        png_data = bytes(
-            [
-                0x89,
-                0x50,
-                0x4E,
-                0x47,
-                0x0D,
-                0x0A,
-                0x1A,
-                0x0A,
-                0x00,
-                0x00,
-                0x00,
-                0x0D,
-                0x49,
-                0x48,
-                0x44,
-                0x52,
-                0x00,
-                0x00,
-                0x00,
-                0x01,
-                0x00,
-                0x00,
-                0x00,
-                0x01,
-                0x08,
-                0x02,
-                0x00,
-                0x00,
-                0x00,
-                0x90,
-                0x77,
-                0x53,
-                0xDE,
-                0x00,
-                0x00,
-                0x00,
-                0x0C,
-                0x49,
-                0x44,
-                0x41,
-                0x54,
-                0x08,
-                0xD7,
-                0x63,
-                0xF8,
-                0xCF,
-                0xC0,
-                0x00,
-                0x00,
-                0x00,
-                0x03,
-                0x00,
-                0x01,
-                0x00,
-                0x18,
-                0xDD,
-                0x8D,
-                0xB4,
-                0x00,
-                0x00,
-                0x00,
-                0x00,
-                0x49,
-                0x45,
-                0x4E,
-                0x44,
-                0xAE,
-                0x42,
-                0x60,
-                0x82,
-            ]
-        )
+        """Test that existing image is converted to base64 JPEG."""
         img_path = tmp_path / "test.png"
-        img_path.write_bytes(png_data)
+        create_test_image(img_path, width=100, height=100, color=(255, 0, 0))
 
         result = image_to_base64(img_path)
 
         assert result is not None
         assert result["path"] == str(img_path)
-        assert result["mime_type"] == "image/png"
-        assert result["size_bytes"] == len(png_data)
-        # Verify base64 can be decoded back
+        # Now converts to JPEG
+        assert result["mime_type"] == "image/jpeg"
+        assert result["size_bytes"] > 0
+        # Verify base64 can be decoded back to valid JPEG
         decoded = base64.standard_b64decode(result["data"])
-        assert decoded == png_data
+        # Verify it's valid JPEG data (starts with JPEG magic bytes)
+        assert decoded[:2] == b"\xff\xd8"
 
     def test_nonexistent_file_returns_none(self):
         """Test that nonexistent file returns None."""
@@ -259,7 +210,7 @@ class TestProcessResultForImages:
     def test_processes_screenshot_path_field(self, tmp_path: Path):
         """Test processing screenshot_path field."""
         img_path = tmp_path / "screenshot.png"
-        img_path.write_bytes(b"fake png data")
+        create_test_image(img_path)
 
         result = {"success": True, "screenshot_path": str(img_path)}
 
@@ -272,7 +223,7 @@ class TestProcessResultForImages:
     def test_processes_file_field(self, tmp_path: Path):
         """Test processing file field."""
         img_path = tmp_path / "capture.png"
-        img_path.write_bytes(b"fake png data")
+        create_test_image(img_path)
 
         result = {"success": True, "file": str(img_path)}
 
@@ -285,8 +236,8 @@ class TestProcessResultForImages:
         """Test processing files list field."""
         img1 = tmp_path / "img1.png"
         img2 = tmp_path / "img2.png"
-        img1.write_bytes(b"fake png data 1")
-        img2.write_bytes(b"fake png data 2")
+        create_test_image(img1, color=(255, 0, 0))
+        create_test_image(img2, color=(0, 255, 0))
 
         result = {"success": True, "files": [str(img1), str(img2)]}
 
@@ -296,8 +247,8 @@ class TestProcessResultForImages:
 
     def test_processes_output_dir_field(self, tmp_path: Path):
         """Test processing output_dir field."""
-        (tmp_path / "capture1.png").write_bytes(b"data1")
-        (tmp_path / "capture2.jpg").write_bytes(b"data2")
+        create_test_image(tmp_path / "capture1.png")
+        create_test_image(tmp_path / "capture2.jpg")
         (tmp_path / "readme.txt").write_bytes(b"text")
 
         result = {"success": True, "output_dir": str(tmp_path)}
@@ -310,8 +261,8 @@ class TestProcessResultForImages:
         """Test processing screenshots list field with filename key."""
         img1 = tmp_path / "shot1.png"
         img2 = tmp_path / "shot2.png"
-        img1.write_bytes(b"data1")
-        img2.write_bytes(b"data2")
+        create_test_image(img1)
+        create_test_image(img2)
 
         result = {
             "success": True,
@@ -328,15 +279,15 @@ class TestProcessResultForImages:
 
     def test_respects_size_limits(self, tmp_path: Path):
         """Test that size limits are respected."""
-        # Create a "large" file (1KB for testing)
+        # Create a larger image (500x500 will be several KB)
         large_img = tmp_path / "large.png"
-        large_img.write_bytes(b"x" * 1024)
+        create_test_image(large_img, width=500, height=500)
 
         result = {"success": True, "screenshot_path": str(large_img)}
 
-        # Set very small limits
+        # Set very small limits (smaller than a 500x500 JPEG)
         processed, images = process_result_for_images(
-            result, max_image_size_mb=0.0001  # ~100 bytes
+            result, max_image_size_mb=0.001  # ~1KB limit
         )
 
         # Large file should be skipped
@@ -345,7 +296,7 @@ class TestProcessResultForImages:
     def test_returns_original_result_unchanged(self, tmp_path: Path):
         """Test that original result dict is not modified."""
         img_path = tmp_path / "test.png"
-        img_path.write_bytes(b"data")
+        create_test_image(img_path)
 
         original = {"success": True, "screenshot_path": str(img_path)}
         original_copy = dict(original)
@@ -373,3 +324,34 @@ class TestProcessResultForImages:
         processed, images = process_result_for_images(result)
 
         assert len(images) == 0
+
+    def test_screenshots_field_skips_output_dir_scanning(self, tmp_path: Path):
+        """Test that output_dir is NOT scanned when screenshots array is present.
+
+        This prevents returning old/leftover images from the directory.
+        Bug: editor_level_screenshot with 1 camera returned 4 images due to
+        both screenshots[].filename AND output_dir directory scan being processed.
+        """
+        # Create explicit screenshot
+        shot = tmp_path / "front.png"
+        create_test_image(shot)
+
+        # Create leftover files (simulating previous runs)
+        create_test_image(tmp_path / "back.png")
+        create_test_image(tmp_path / "Camera.png")
+
+        # Result with BOTH screenshots array AND output_dir (like editor_level_screenshot)
+        result = {
+            "success": True,
+            "screenshots": [
+                {"camera": "front", "filename": str(shot)},
+            ],
+            "output_dir": str(tmp_path),  # Contains 3 images, but only 1 was requested
+        }
+
+        processed, images = process_result_for_images(result)
+
+        # Should only return the explicit screenshot, NOT scan the whole directory
+        assert len(images) == 1
+        assert images[0]["source_field"] == "screenshots[].filename"
+        assert "front.png" in images[0]["path"]
