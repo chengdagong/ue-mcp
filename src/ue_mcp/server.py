@@ -95,10 +95,10 @@ UE-MCP is an MCP server for interacting with Unreal Editor.
 **Project Initialization:**
 - If started from a UE5 project directory, the server auto-detects and launches the editor
 - If started from any other directory, use the 'project_set_path' tool to set your UE5 project directory
-- The 'project_set_path' tool can only be called once per server session
+- The 'project_set_path' tool can be called multiple times - if an editor is running, it will be stopped first
 
 Available tools:
-- project_set_path: Set the UE5 project directory (can be called from any directory)
+- project_set_path: Set the UE5 project directory (stops running editor if switching projects)
 - editor_launch: Start the Unreal Editor for the bound project
 - editor_status: Get the current editor status (includes log_file_path)
 - editor_read_log: Read the editor log file content

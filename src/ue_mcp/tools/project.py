@@ -32,7 +32,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         Set the UE5 project path for the MCP server.
 
         This tool can be called from any directory to specify which UE5 project to use.
-        It can only be called once during the server's lifetime.
+        It can be called multiple times - if an editor is running, it will be stopped first.
 
         Args:
             project_path: Absolute path to the directory containing the .uproject file
@@ -40,16 +40,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         Returns:
             Result with success status and detected project information
         """
-        # Check if already called
-        if state.project_path_set:
-            subsystems = state.subsystems
-            return {
-                "success": False,
-                "error": "project.set_path can only be called once per server lifetime. Project path already set.",
-                "current_project": subsystems.project_name if subsystems else None,
-            }
-
-        # Validate path
+        # Validate path first
         project_dir = Path(project_path)
         if not project_dir.exists():
             return {"success": False, "error": f"Path does not exist: {project_path}"}
@@ -68,17 +59,40 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
                 "error": f"No .uproject file found in: {project_path}",
             }
 
-        # Initialize EditorSubsystems
+        # Check if we already have a project set
+        previous_project = None
+        editor_stopped = False
+        if state.subsystems is not None:
+            previous_project = state.subsystems.project_name
+            # Check if editor is running and stop it
+            context = state.subsystems.context
+            if context.is_running():
+                logger.info(f"Stopping running editor for project: {previous_project}")
+                health_monitor = state.subsystems.health_monitor
+                stop_result = context.stop(health_monitor=health_monitor)
+                if stop_result.get("success"):
+                    editor_stopped = True
+                    logger.info("Editor stopped successfully")
+                else:
+                    logger.warning(f"Failed to stop editor: {stop_result.get('error')}")
+
+        # Initialize new EditorSubsystems
         logger.info(f"Setting project path: {uproject_path}")
         state.subsystems = EditorSubsystems.create(uproject_path)
         state.project_path_set = True
 
-        return {
+        result: dict[str, Any] = {
             "success": True,
             "project_name": state.subsystems.project_name,
             "project_path": str(state.subsystems.project_root),
             "uproject_file": str(uproject_path),
         }
+
+        if previous_project is not None:
+            result["previous_project"] = previous_project
+            result["editor_stopped"] = editor_stopped
+
+        return result
 
     @mcp.tool(name="project_build")
     async def build_project(
