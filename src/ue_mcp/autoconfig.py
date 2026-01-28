@@ -4,6 +4,7 @@ UE-MCP Auto Configuration
 Automatically detect and fix UE5 project configuration for Python remote execution.
 """
 
+import filecmp
 import json
 import logging
 import shutil
@@ -54,19 +55,125 @@ PYTHON_PLUGIN_SECTION = "[/Script/PythonScriptPlugin.PythonScriptPluginSettings]
 # Extra Python APIs plugin name
 EXTRA_PYTHON_APIS_PLUGIN = "ExtraPythonAPIs"
 
+# C++ source file extensions to compare
+CPP_SOURCE_EXTENSIONS = {".cpp", ".h", ".cs"}
+
+
+def _compare_plugin_source_files(
+    source_dir: Path, target_dir: Path
+) -> tuple[bool, list[str]]:
+    """
+    Compare C++ source files and .uplugin between source and target plugin directories.
+
+    Args:
+        source_dir: Path to the bundled plugin directory (source of truth)
+        target_dir: Path to the installed plugin directory
+
+    Returns:
+        (files_match, differences) - differences is a list of file paths that differ
+    """
+    differences = []
+
+    # Compare .uplugin file
+    source_uplugin = source_dir / f"{EXTRA_PYTHON_APIS_PLUGIN}.uplugin"
+    target_uplugin = target_dir / f"{EXTRA_PYTHON_APIS_PLUGIN}.uplugin"
+    if source_uplugin.exists() and target_uplugin.exists():
+        if not filecmp.cmp(source_uplugin, target_uplugin, shallow=False):
+            differences.append(f"{EXTRA_PYTHON_APIS_PLUGIN}.uplugin (content differs)")
+
+    # Compare Source directory
+    source_source_dir = source_dir / "Source"
+    target_source_dir = target_dir / "Source"
+
+    if not source_source_dir.exists():
+        # No source files to compare
+        return len(differences) == 0, differences
+
+    if not target_source_dir.exists():
+        # Target has no Source directory but source does
+        differences.append("Source directory missing in target")
+        return False, differences
+
+    # Collect all C++ source files from the bundled plugin
+    source_files: dict[str, Path] = {}
+    for ext in CPP_SOURCE_EXTENSIONS:
+        for file_path in source_source_dir.rglob(f"*{ext}"):
+            relative_path = file_path.relative_to(source_source_dir)
+            source_files[str(relative_path)] = file_path
+
+    # Compare each source file
+    for relative_path, source_file in source_files.items():
+        target_file = target_source_dir / relative_path
+
+        if not target_file.exists():
+            differences.append(f"{relative_path} (missing in target)")
+            continue
+
+        # Compare file contents
+        if not filecmp.cmp(source_file, target_file, shallow=False):
+            differences.append(f"{relative_path} (content differs)")
+
+    # Also check for extra files in target that don't exist in source
+    for ext in CPP_SOURCE_EXTENSIONS:
+        for target_file in target_source_dir.rglob(f"*{ext}"):
+            relative_path = str(target_file.relative_to(target_source_dir))
+            if relative_path not in source_files:
+                differences.append(f"{relative_path} (extra file in target)")
+
+    return len(differences) == 0, differences
+
+
+def _update_plugin_source_files(source_dir: Path, target_dir: Path) -> tuple[bool, str]:
+    """
+    Update the Source directory and .uplugin file of the target plugin to match the source plugin.
+
+    Args:
+        source_dir: Path to the bundled plugin directory (source of truth)
+        target_dir: Path to the installed plugin directory
+
+    Returns:
+        (success, message)
+    """
+    try:
+        # Update .uplugin file
+        source_uplugin = source_dir / f"{EXTRA_PYTHON_APIS_PLUGIN}.uplugin"
+        target_uplugin = target_dir / f"{EXTRA_PYTHON_APIS_PLUGIN}.uplugin"
+        if source_uplugin.exists():
+            shutil.copy2(source_uplugin, target_uplugin)
+
+        # Update Source directory
+        source_source_dir = source_dir / "Source"
+        target_source_dir = target_dir / "Source"
+
+        if source_source_dir.exists():
+            # Remove existing Source directory in target
+            if target_source_dir.exists():
+                shutil.rmtree(target_source_dir)
+
+            # Copy Source directory from source to target
+            shutil.copytree(source_source_dir, target_source_dir)
+
+        return True, "Plugin files updated successfully"
+    except Exception as e:
+        return False, f"Failed to update plugin files: {e}"
+
 
 def check_extra_python_apis_plugin(
     project_root: Path, auto_fix: bool = False
 ) -> tuple[bool, bool, str]:
     """
-    Check and optionally install the ExtraPythonAPIs plugin.
+    Check and optionally install/update the ExtraPythonAPIs plugin.
 
     This plugin provides extra Python-accessible APIs for UE5 that are not
     exposed by default.
 
+    The function checks:
+    1. If the plugin exists and has the .uplugin file
+    2. If the C++ source files match between bundled and installed versions
+
     Args:
         project_root: Path to UE5 project root directory
-        auto_fix: Whether to automatically copy the plugin if missing
+        auto_fix: Whether to automatically copy/update the plugin if needed
 
     Returns:
         (installed, modified, message)
@@ -84,10 +191,47 @@ def check_extra_python_apis_plugin(
         # Verify it has the .uplugin file
         uplugin_file = target_plugin_dir / f"{EXTRA_PYTHON_APIS_PLUGIN}.uplugin"
         if uplugin_file.exists():
-            return True, False, f"{EXTRA_PYTHON_APIS_PLUGIN} plugin already installed"
+            # Plugin exists, now verify source files match
+            files_match, differences = _compare_plugin_source_files(
+                source_plugin_dir, target_plugin_dir
+            )
+
+            if files_match:
+                return True, False, f"{EXTRA_PYTHON_APIS_PLUGIN} plugin already installed and up to date"
+
+            # Source files differ
+            if not auto_fix:
+                diff_summary = "; ".join(differences[:3])
+                if len(differences) > 3:
+                    diff_summary += f" and {len(differences) - 3} more"
+                return (
+                    True,
+                    False,
+                    f"{EXTRA_PYTHON_APIS_PLUGIN} plugin installed but source files differ: {diff_summary}",
+                )
+
+            # Update source files
+            success, message = _update_plugin_source_files(
+                source_plugin_dir, target_plugin_dir
+            )
+            if success:
+                logger.info(
+                    f"Updated {EXTRA_PYTHON_APIS_PLUGIN} plugin source files: {len(differences)} file(s) changed"
+                )
+                return (
+                    True,
+                    True,
+                    f"Updated {EXTRA_PYTHON_APIS_PLUGIN} plugin source files ({len(differences)} file(s) changed)",
+                )
+            else:
+                return False, False, message
         else:
             if not auto_fix:
-                return False, False, f"{EXTRA_PYTHON_APIS_PLUGIN} directory exists but missing .uplugin file"
+                return (
+                    False,
+                    False,
+                    f"{EXTRA_PYTHON_APIS_PLUGIN} directory exists but missing .uplugin file",
+                )
             # Remove corrupted directory and reinstall
             try:
                 shutil.rmtree(target_plugin_dir)
