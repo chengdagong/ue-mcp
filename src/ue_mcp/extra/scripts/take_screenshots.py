@@ -257,18 +257,24 @@ if __name__ == "__main__":
         height = config["resolution_height"]
         out_dir = config["out_dir"]
 
+        # 获取默认截图目录（当 out_dir 未指定时使用）
+        if not out_dir:
+            # UE5 默认保存到 {Project}/Saved/Screenshots/WindowsEditor/
+            project_dir = unreal.Paths.project_dir()
+            out_dir = os.path.join(project_dir, "Saved", "Screenshots", "WindowsEditor")
+            os.makedirs(out_dir, exist_ok=True)
+            config["out_dir"] = out_dir
+            print(f"Using default screenshot directory: {out_dir}")
+
         # 确保截图前所有资源加载完成
         unreal.AutomationLibrary.finish_loading_before_screenshot()
-        
+
         for cam in created_cameras:
             camera_name = cam.get_actor_label()
             unreal.log("Found camera: " + camera_name)
 
-            # 构建输出文件名
-            if out_dir:
-                filename = os.path.join(out_dir, camera_name)
-            else:
-                filename = camera_name
+            # 构建输出文件名（不含扩展名，UE5 会自动添加 .png）
+            filename = os.path.join(out_dir, camera_name)
 
             task = unreal.AutomationLibrary.take_high_res_screenshot(
                 res_x=width,
@@ -302,10 +308,12 @@ if __name__ == "__main__":
 
             unreal.log(f"Done capturing: {camera_name}")
 
+            # 返回完整路径（包含 .png 扩展名）
+            full_path = filename + ".png"
             screenshot_results.append({
                 "camera": camera_name,
                 "success": task.is_task_done(),
-                "filename": filename
+                "filename": full_path
             })
 
 
