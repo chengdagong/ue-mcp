@@ -5,10 +5,12 @@ data for MCP clients that support image display (like Claude AI).
 """
 
 import base64
+import io
 import logging
-import mimetypes
 from pathlib import Path
 from typing import Any
+
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,12 @@ SCREENSHOT_LIST_FIELDS: dict[str, str] = {
 # Size limits
 DEFAULT_MAX_IMAGE_SIZE_MB = 10.0
 DEFAULT_MAX_TOTAL_SIZE_MB = 50.0
+
+# JPEG compression settings
+MAX_COMPRESSED_SIZE_BYTES = 1 * 1024 * 1024  # 1MB max for compressed images
+JPEG_INITIAL_QUALITY = 85  # Start with high quality
+JPEG_MIN_QUALITY = 20  # Don't go below this quality
+JPEG_QUALITY_STEP = 10  # Reduce quality by this amount each iteration
 
 
 def is_claude_ai_client(client_name: str | None) -> bool:
@@ -92,11 +100,18 @@ def find_images_in_directory(dir_path: Path, max_depth: int = 3) -> list[Path]:
     return sorted(images)
 
 
-def image_to_base64(path: Path) -> dict[str, Any] | None:
-    """Convert an image file to base64.
+def image_to_base64(
+    path: Path,
+    max_size_bytes: int = MAX_COMPRESSED_SIZE_BYTES,
+) -> dict[str, Any] | None:
+    """Convert an image file to base64 JPEG, compressing if necessary.
+
+    Converts all image formats to JPEG and compresses to stay under max_size_bytes.
+    Uses iterative quality reduction to achieve target size.
 
     Args:
         path: Path to the image file
+        max_size_bytes: Maximum size for the compressed image (default: 1MB)
 
     Returns:
         Dict with path, data, mime_type, size_bytes, or None if failed
@@ -105,18 +120,59 @@ def image_to_base64(path: Path) -> dict[str, Any] | None:
         if not path.exists():
             return None
 
-        size_bytes = path.stat().st_size
-        mime_type = mimetypes.guess_type(str(path))[0] or "image/png"
+        original_size = path.stat().st_size
 
-        with open(path, "rb") as f:
-            data = base64.standard_b64encode(f.read()).decode("utf-8")
+        # Load image with Pillow
+        with Image.open(path) as img:
+            # Convert RGBA to RGB (JPEG doesn't support alpha)
+            if img.mode in ("RGBA", "LA", "P"):
+                # Create white background for transparency
+                background = Image.new("RGB", img.size, (255, 255, 255))
+                if img.mode == "P":
+                    img = img.convert("RGBA")
+                background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+                img = background
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
 
-        return {
-            "path": str(path),
-            "data": data,
-            "mime_type": mime_type,
-            "size_bytes": size_bytes,
-        }
+            # Try to compress to target size
+            quality = JPEG_INITIAL_QUALITY
+            jpeg_data = None
+
+            while quality >= JPEG_MIN_QUALITY:
+                buffer = io.BytesIO()
+                img.save(buffer, format="JPEG", quality=quality, optimize=True)
+                jpeg_data = buffer.getvalue()
+
+                if len(jpeg_data) <= max_size_bytes:
+                    break
+
+                quality -= JPEG_QUALITY_STEP
+
+            if jpeg_data is None:
+                logger.warning(f"Failed to compress image {path}")
+                return None
+
+            compressed_size = len(jpeg_data)
+            compression_ratio = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
+
+            logger.info(
+                f"Compressed {path.name}: {original_size / 1024:.1f}KB -> "
+                f"{compressed_size / 1024:.1f}KB ({compression_ratio:.1f}% reduction, quality={quality})"
+            )
+
+            # Encode to base64
+            data = base64.standard_b64encode(jpeg_data).decode("utf-8")
+
+            return {
+                "path": str(path),
+                "data": data,
+                "mime_type": "image/jpeg",
+                "size_bytes": compressed_size,
+                "original_size_bytes": original_size,
+                "compression_quality": quality,
+            }
+
     except Exception as e:
         logger.warning(f"Failed to convert image {path}: {e}")
         return None
