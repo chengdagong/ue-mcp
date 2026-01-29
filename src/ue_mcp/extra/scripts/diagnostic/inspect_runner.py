@@ -26,9 +26,249 @@ import unreal
 import asset_diagnostic
 
 from asset_diagnostic import detect_asset_type, load_asset, get_asset_references, AssetType
+from asset_diagnostic.utils import (
+    get_actor_size,
+    get_actor_bounds,
+    classify_actor_size,
+)
 
 # Import shared utilities from ue_mcp_capture (avoid code duplication)
 from ue_mcp_capture.utils import output_result
+
+
+# ============================================
+# Level Inspection Constants
+# ============================================
+
+# Non-physical actor classes to skip in level inspection
+NON_PHYSICAL_CLASSES = [
+    "DirectionalLight",
+    "PointLight",
+    "SpotLight",
+    "RectLight",
+    "SkyLight",
+    "SkyAtmosphere",
+    "VolumetricCloud",
+    "ExponentialHeightFog",
+    "AtmosphericFog",
+    "Fog",
+    "PostProcessVolume",
+    "LightmassImportanceVolume",
+    "NavMeshBoundsVolume",
+    "BlockingVolume",
+    "CameraActor",
+    "LevelSequenceActor",
+    "Note",
+    "WorldSettings",
+]
+
+# Actor classes that are considered "tangible" (have physical presence)
+TANGIBLE_CLASSES = [
+    "StaticMeshActor",
+    "SkeletalMeshActor",
+    "Character",
+    "Pawn",
+    "PlayerStart",
+]
+
+
+# ============================================
+# Level Inspection Functions
+# ============================================
+
+
+def _is_tangible_actor(actor) -> bool:
+    """Check if an actor has physical presence."""
+    class_name = actor.get_class().get_name()
+
+    for skip in NON_PHYSICAL_CLASSES:
+        if skip.lower() in class_name.lower():
+            return False
+
+    for tangible in TANGIBLE_CLASSES:
+        if tangible.lower() in class_name.lower():
+            return True
+
+    # Blueprint classes end with _C
+    if class_name.endswith("_C"):
+        return True
+
+    return False
+
+
+def get_level_actors() -> dict:
+    """
+    Get all actors in the current level with their properties.
+
+    Returns:
+        Dictionary with actor statistics and actor list
+    """
+    try:
+        actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+        all_actors = list(actor_subsystem.get_all_level_actors())
+    except Exception:
+        return {"total_actors": 0, "tangible_actors": 0, "actors": []}
+
+    actors_list = []
+    tangible_count = 0
+
+    for actor in all_actors:
+        class_name = actor.get_class().get_name()
+        actor_name = actor.get_actor_label()
+        location = actor.get_actor_location()
+        rotation = actor.get_actor_rotation()
+
+        is_tangible = _is_tangible_actor(actor)
+        if is_tangible:
+            tangible_count += 1
+
+        # Get size info for tangible actors
+        size_info = None
+        size_category = None
+        if is_tangible:
+            size = get_actor_size(actor)
+            if size:
+                size_info = {
+                    "x_extent": size[0],
+                    "y_extent": size[1],
+                    "z_extent": size[2],
+                }
+                size_category = classify_actor_size({
+                    "x_extent": size[0],
+                    "y_extent": size[1],
+                    "z_extent": size[2],
+                })
+
+        actor_info = {
+            "name": actor_name,
+            "class": class_name,
+            "is_tangible": is_tangible,
+            "position": {
+                "x": float(location.x),
+                "y": float(location.y),
+                "z": float(location.z),
+            },
+            "rotation": {
+                "pitch": float(rotation.pitch),
+                "yaw": float(rotation.yaw),
+                "roll": float(rotation.roll),
+            },
+        }
+
+        if size_info:
+            actor_info["size"] = size_info
+            actor_info["size_category"] = size_category
+
+        actors_list.append(actor_info)
+
+    return {
+        "total_actors": len(all_actors),
+        "tangible_actors": tangible_count,
+        "actors": actors_list,
+    }
+
+
+def get_level_spatial_analysis(actors_data: dict) -> dict:
+    """
+    Generate spatial analysis for the level (bounds, dimensions, center).
+
+    Args:
+        actors_data: Result from get_level_actors()
+
+    Returns:
+        Dictionary with spatial analysis data
+    """
+    actors = actors_data.get("actors", [])
+
+    # Filter to tangible actors only
+    tangible = [a for a in actors if a.get("is_tangible", False)]
+
+    if not tangible:
+        return {}
+
+    # Calculate bounds
+    positions = [a["position"] for a in tangible]
+
+    min_x = min(p["x"] for p in positions)
+    max_x = max(p["x"] for p in positions)
+    min_y = min(p["y"] for p in positions)
+    max_y = max(p["y"] for p in positions)
+    min_z = min(p["z"] for p in positions)
+    max_z = max(p["z"] for p in positions)
+
+    return {
+        "bounds": {
+            "min": {"x": min_x, "y": min_y, "z": min_z},
+            "max": {"x": max_x, "y": max_y, "z": max_z},
+        },
+        "dimensions": {
+            "width": max_x - min_x,
+            "length": max_y - min_y,
+            "height": max_z - min_z,
+        },
+        "center": {
+            "x": (min_x + max_x) / 2,
+            "y": (min_y + max_y) / 2,
+            "z": (min_z + max_z) / 2,
+        },
+    }
+
+
+def ensure_level_loaded(asset_path: str) -> bool:
+    """
+    Ensure the specified level is loaded before inspection.
+
+    Args:
+        asset_path: Level path to load (e.g., "/Game/Maps/MyLevel")
+
+    Returns:
+        True if level was loaded or already loaded, False on error
+    """
+    try:
+        level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+        if not level_subsystem:
+            return False
+
+        # Get current level info
+        current_level_obj = level_subsystem.get_current_level()
+        if not current_level_obj:
+            # No level loaded, try to load target
+            return level_subsystem.load_level(asset_path)
+
+        current_package = current_level_obj.get_outermost()
+        current_level_full = current_package.get_name()
+        current_level_name = (
+            current_level_full.split("/")[-1] if "/" in current_level_full else current_level_full
+        )
+
+        # Release UE object references
+        del current_package
+        del current_level_obj
+
+        # Extract target name for comparison
+        target_name = asset_path.split("/")[-1] if "/" in asset_path else asset_path
+
+        # Check if target matches current level
+        is_same_level = (
+            current_level_name == target_name
+            or current_level_full == asset_path
+            or (target_name.lower() == "untitled" and current_level_name.lower().startswith("untitled"))
+        )
+
+        if is_same_level:
+            return True
+
+        # Load the target level
+        if not level_subsystem.load_level(asset_path):
+            return False
+
+        # Wait for level to load
+        time.sleep(0.5)
+        return True
+
+    except Exception as e:
+        unreal.log(f"[WARNING] Failed to load level: {e}")
+        return False
 
 
 def serialize_value(value, depth=0, max_depth=3):
@@ -584,8 +824,24 @@ def main():
         "asset_class": asset_class,
     }
 
-    # Handle Blueprint-specific inspection
-    if asset_type == AssetType.BLUEPRINT:
+    # Handle asset-type-specific inspection
+    if asset_type == AssetType.LEVEL:
+        # Level-specific inspection: actor enumeration and spatial analysis
+        if not ensure_level_loaded(asset_path):
+            result["warning"] = "Could not verify level is loaded"
+
+        # Get all actors in the level
+        actors_data = get_level_actors()
+        result["total_actors"] = actors_data["total_actors"]
+        result["tangible_actors"] = actors_data["tangible_actors"]
+        result["actors"] = actors_data["actors"]
+
+        # Generate spatial analysis
+        spatial = get_level_spatial_analysis(actors_data)
+        if spatial:
+            result["spatial_analysis"] = spatial
+
+    elif asset_type == AssetType.BLUEPRINT:
         if component_name:
             # Inspect a specific component
             comp_result = get_component_properties(asset, component_name)
@@ -603,7 +859,7 @@ def main():
             result["properties"] = get_asset_properties(asset)
             result["property_count"] = len(result["properties"])
     else:
-        # Non-Blueprint: standard property extraction
+        # Other asset types: standard property extraction
         result["properties"] = get_asset_properties(asset)
         result["property_count"] = len(result["properties"])
 

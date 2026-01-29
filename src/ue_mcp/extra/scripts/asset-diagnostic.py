@@ -6,14 +6,11 @@ A simple CLI wrapper for the asset_diagnostic module that makes it easy to
 diagnose UE5 assets through remote execution.
 
 Usage:
-    asset-diagnostic.py ASSET_PATH [--verbose]
+    asset-diagnostic.py ASSET_PATH
 
 Examples:
     # Diagnose a level
     asset-diagnostic.py /Game/Maps/TestLevel
-
-    # Diagnose with verbose output
-    asset-diagnostic.py /Game/Maps/TestLevel --verbose
 
     # Diagnose a blueprint
     asset-diagnostic.py /Game/Blueprints/BP_MyActor
@@ -21,9 +18,6 @@ Examples:
 Via remote-execute.py:
     remote-execute.py --file asset-diagnostic.py \\
         --args "asset_path=/Game/Maps/TestLevel"
-
-    remote-execute.py --file asset-diagnostic.py \\
-        --args "asset_path=/Game/Blueprints/BP_Test,verbose=true"
 """
 
 import sys
@@ -62,12 +56,10 @@ def main():
         epilog="""
 Examples:
   %(prog)s /Game/Maps/TestLevel
-  %(prog)s /Game/Maps/TestLevel --verbose
   %(prog)s /Game/Blueprints/BP_MyActor
 
 Via remote-execute.py:
   remote-execute.py --file %(prog)s --args "asset_path=/Game/Maps/TestLevel"
-  remote-execute.py --file %(prog)s --args "asset_path=/Game/Maps/TestLevel,verbose=true"
 
 For diagnosing current level or selected assets, use Python API directly:
   import asset_diagnostic
@@ -83,12 +75,6 @@ For diagnosing current level or selected assets, use Python API directly:
         help="Path to the asset to diagnose (e.g., /Game/Maps/TestLevel)"
     )
 
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Print comprehensive analysis and metadata (default: issues only)"
-    )
-
     args = parser.parse_args()
 
     # Import asset_diagnostic module (must be done in UE5 Python environment)
@@ -96,7 +82,7 @@ For diagnosing current level or selected assets, use Python API directly:
 
     # Run diagnostic
     try:
-        result = asset_diagnostic.diagnose(args.asset_path, verbose=args.verbose)
+        result = asset_diagnostic.diagnose(args.asset_path)
 
         # Exit with error code if diagnostic found issues
         if result and result.has_errors:

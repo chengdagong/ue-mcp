@@ -61,7 +61,7 @@ def serialize_result(result) -> dict:
         "issues": issues,
         "metadata": result.metadata if hasattr(result, "metadata") else {},
         "summary": result.summary if hasattr(result, "summary") else None,
-        "report": result.get_report(verbose=True) if hasattr(result, "get_report") else "",
+        "report": result.get_report() if hasattr(result, "get_report") else "",
     }
 
 
@@ -80,7 +80,7 @@ def main():
     asset_path = args.asset_path
 
     # Run diagnostic - asset_diagnostic handles type detection internally
-    result = asset_diagnostic.diagnose(asset_path, verbose=True)
+    result = asset_diagnostic.diagnose(asset_path)
 
     if result is None:
         output_result(
