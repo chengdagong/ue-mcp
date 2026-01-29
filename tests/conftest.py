@@ -395,10 +395,17 @@ async def running_editor(initialized_tool_caller, request):
     try:
         yield initialized_tool_caller
     finally:
-        # Stop editor after all tests complete
-        logger.info("Stopping editor after test session...")
-        await initialized_tool_caller.call("editor_stop", timeout=30)
-        logger.info("Editor stopped")
+        # Check if crash was detected - if so, editor is already dead
+        if getattr(request.config, "_editor_crash_detected", False):
+            logger.warning(
+                "Editor crash was detected during tests, "
+                "skipping graceful shutdown (editor process already terminated)"
+            )
+        else:
+            # Stop editor after all tests complete
+            logger.info("Stopping editor after test session...")
+            await initialized_tool_caller.call("editor_stop", timeout=30)
+            logger.info("Editor stopped")
 
 
 # =============================================================================
@@ -701,18 +708,64 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
 
 # =============================================================================
-# Test Timing Hooks
+# Editor Crash Detection and Session Abort
 # =============================================================================
+
+# Global flag to track if editor has crashed
+_editor_crashed = False
+
+
+def _check_editor_crash_from_report(report) -> tuple[bool, str | None]:
+    """
+    Check if a test failure was caused by editor crash.
+    
+    Args:
+        report: pytest test report
+        
+    Returns:
+        Tuple of (is_crash, crash_message)
+    """
+    if report.outcome != "failed":
+        return False, None
+    
+    # Check longrepr (failure representation) for crash indicators
+    longrepr = str(report.longrepr) if report.longrepr else ""
+    
+    # Crash indicators in error messages
+    crash_indicators = [
+        '"exit_type": "crash"',
+        "'exit_type': 'crash'",
+        '"crashed": true',
+        "'crashed': True",
+        "Editor crashed:",
+        "ACCESS_VIOLATION",
+        "STACK_OVERFLOW", 
+        "HEAP_CORRUPTION",
+        "Use 'editor_launch' to restart",
+    ]
+    
+    for indicator in crash_indicators:
+        if indicator in longrepr:
+            # Extract a summary message
+            for line in longrepr.split("\n"):
+                if any(ind in line for ind in crash_indicators):
+                    return True, line.strip()
+            return True, "Editor crash detected"
+    
+    return False, None
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     """
-    Record timing for each test phase (setup, call, teardown).
+    Record timing for each test phase and detect editor crashes.
 
     This hook captures the duration of the 'call' phase (actual test execution)
-    and stores it for the timing summary.
+    and stores it for the timing summary. It also detects if a test failed
+    due to editor crash and aborts the entire test session.
     """
+    global _editor_crashed
+    
     outcome = yield
     report = outcome.get_result()
 
@@ -727,3 +780,63 @@ def pytest_runtest_makereport(item, call):
         duration = report.duration
 
         item.config._test_timings[test_name] = duration
+        
+        # Check if this failure was caused by editor crash
+        if not _editor_crashed:  # Only check if we haven't already detected a crash
+            is_crash, crash_msg = _check_editor_crash_from_report(report)
+            if is_crash:
+                _editor_crashed = True
+                item.config._editor_crash_detected = True
+                item.config._editor_crash_message = crash_msg
+                item.config._editor_crash_test = test_name
+                
+                # Print crash info immediately to terminal
+                print(f"\n{'='*70}")
+                print(f"EDITOR CRASH DETECTED")
+                print(f"{'='*70}")
+                print(f"Test: {test_name}")
+                print(f"Message: {crash_msg}")
+                print(f"Aborting test session...")
+                print(f"{'='*70}\n")
+                
+                # Abort the entire test session immediately
+                pytest.exit(
+                    f"Test session aborted due to editor crash in {test_name}. "
+                    f"Crash: {crash_msg}",
+                    returncode=2  # Use custom return code to indicate crash
+                )
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_setup(item):
+    """
+    Check if editor crash was detected in previous tests.
+    
+    If a crash was detected, skip remaining tests.
+    """
+    if _editor_crashed:
+        crash_test = getattr(item.config, "_editor_crash_test", "unknown")
+        crash_msg = getattr(item.config, "_editor_crash_message", "unknown")
+        pytest.skip(
+            f"Skipping due to editor crash in previous test ({crash_test}). "
+            f"Crash: {crash_msg}"
+        )
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """
+    Display crash information at the end of the test session.
+    """
+    if getattr(session.config, "_editor_crash_detected", False):
+        crash_test = getattr(session.config, "_editor_crash_test", "unknown")
+        crash_msg = getattr(session.config, "_editor_crash_message", "unknown")
+        
+        # Print to terminal
+        print(f"\n{'='*70}")
+        print(f"EDITOR CRASH DETECTED")
+        print(f"{'='*70}")
+        print(f"Test that caused crash: {crash_test}")
+        print(f"Crash message: {crash_msg}")
+        print(f"Remaining tests were skipped.")
+        print(f"Please check the UE5 editor log for details.")
+        print(f"{'='*70}\n")
