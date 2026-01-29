@@ -27,6 +27,8 @@ import json
 import os
 import unreal
 
+from ue_mcp_capture.utils import ensure_level_loaded
+
 # 存储创建的 camera actors，以便后续删除
 created_cameras = []
 
@@ -206,19 +208,15 @@ def parse_args():
 if __name__ == "__main__":
     parse_args()
 
-    @unreal.AutomationScheduler.add_latent_command
-    def load_level():
-        """加载指定关卡（如果有）"""
-        level_path = config["level"]
-        if level_path:
-            level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
-            success = level_subsystem.load_level(level_path)
-            if success:
-                print(f"Loaded level: {level_path}")
-            else:
-                print(f"Failed to load level: {level_path}")
-        else:
-            print("No level specified, using current level")
+    level_path = config["level"]
+    if level_path:
+        try:
+            ensure_level_loaded(level_path)
+            print(f"Loaded level: {level_path}")
+        except RuntimeError as e:
+            print(f"Failed to load level: {e}")
+    else:
+        print("No level specified, using current level")
 
     @unreal.AutomationScheduler.add_latent_command
     def create_cameras():
