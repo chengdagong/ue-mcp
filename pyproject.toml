@@ -10,6 +10,7 @@ keywords = ["unreal", "ue5", "mcp", "fastmcp", "editor", "automation"]
 
 dependencies = [
     "fastmcp>=2.0.0,<3.0.0",
+    "pillow>=12.1.0",
 ]
 
 [project.optional-dependencies]
