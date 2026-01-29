@@ -1102,6 +1102,16 @@ except Exception as e:
         # Check if editor is already ready
         if self._ctx.editor is not None and self._ctx.editor.status == "ready":
             return None  # Editor ready, proceed
+        
+        # Check if editor stopped due to crash
+        if self._ctx.editor is not None and self._ctx.editor.status == "stopped":
+            if self._ctx.editor.log_file_path:
+                if CrashDetector.check_log_file(self._ctx.editor.log_file_path):
+                    return {
+                        "success": False,
+                        "error": "Editor crashed. Use 'editor_launch' to restart.",
+                        "exit_type": "crash",
+                    }
 
         # Check if LaunchManager is available for auto-launch
         if self._launch_manager is None:
@@ -1125,6 +1135,17 @@ except Exception as e:
         )
 
         if not launch_result.get("success"):
+            # Check if editor crashed (log may show crash even if status is stopped)
+            if self._ctx.editor and self._ctx.editor.log_file_path:
+                if CrashDetector.check_log_file(self._ctx.editor.log_file_path):
+                    return {
+                        "success": False,
+                        "error": "Editor crashed. Use 'editor_launch' to restart.",
+                        "exit_type": "crash",
+                        "auto_launch_attempted": True,
+                        "launch_result": launch_result,
+                    }
+            
             return {
                 "success": False,
                 "error": f"Auto-launch failed: {launch_result.get('error', 'Unknown error')}",

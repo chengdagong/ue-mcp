@@ -6,7 +6,8 @@ Tests the HealthMonitor's exit detection and notification behavior.
 
 import pytest
 
-from ue_mcp.editor.health_monitor import WINDOWS_CRASH_CODES, HealthMonitor
+from ue_mcp.editor.crash_detector import WINDOWS_CRASH_CODES
+from ue_mcp.editor.health_monitor import HealthMonitor
 
 
 class TestExitAnalysis:
