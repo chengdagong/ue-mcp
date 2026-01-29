@@ -321,6 +321,33 @@ class ExecutionManager:
         # Check for crash
         if result.get("crashed", False):
             return _build_crash_response(self._ctx, result)
+        
+        # Also check for crash indicators in error message or output
+        # This handles cases where UE5 crashes but doesn't set crashed flag
+        if not result.get("success", True):
+            error_msg = str(result.get("error", ""))
+            output_str = str(result.get("output", ""))
+            combined = error_msg + output_str
+            
+            crash_indicators = [
+                "Fatal error:",
+                "Access violation",
+                "Unhandled Exception",
+                "LowLevelFatalError",
+                "Assertion failed",
+                "Ensure condition failed",
+                "Out of memory",
+                "GPU crash",
+                "Rendering thread exception",
+                "Game thread exception",
+                "SIGSEGV",
+            ]
+            
+            for indicator in crash_indicators:
+                if indicator in combined:
+                    logger.warning(f"Detected crash indicator in output: {indicator}")
+                    result["crashed"] = True
+                    return _build_crash_response(self._ctx, result)
 
         return result
 
@@ -379,6 +406,32 @@ class ExecutionManager:
             # Check for crash
             if result.get("crashed", False):
                 return _build_crash_response(self._ctx, result)
+            
+            # Also check for crash indicators in error message or output
+            if not result.get("success", True):
+                error_msg = str(result.get("error", ""))
+                output_str = str(result.get("output", ""))
+                combined = error_msg + output_str
+                
+                crash_indicators = [
+                    "Fatal error:",
+                    "Access violation",
+                    "Unhandled Exception",
+                    "LowLevelFatalError",
+                    "Assertion failed",
+                    "Ensure condition failed",
+                    "Out of memory",
+                    "GPU crash",
+                    "Rendering thread exception",
+                    "Game thread exception",
+                    "SIGSEGV",
+                ]
+                
+                for indicator in crash_indicators:
+                    if indicator in combined:
+                        logger.warning(f"Detected crash indicator in output: {indicator}")
+                        result["crashed"] = True
+                        return _build_crash_response(self._ctx, result)
 
             # Wait for latent commands to complete if script contains them
             # This handles async scripts using @unreal.AutomationScheduler.add_latent_command
@@ -853,13 +906,15 @@ else:
 
         # Step 3b: Editor-side code inspection (runs in UE, requires editor)
         if self._ctx.editor and self._ctx.editor.status == "ready":
+            # Pre-escape the code to avoid backslash in f-string expression
+            escaped_code = code.replace('"', '\\"')
             inspector_code = f'''
 import sys
 if "unreal_api_checker" in sys.modules:
     del sys.modules["unreal_api_checker"]
 try:
     import unreal_api_checker
-    result = unreal_api_checker.check_code("""{code.replace('"', '\\"')}""")
+    result = unreal_api_checker.check_code("""{escaped_code}""")
     if not result["valid"]:
         print("CODE_INSPECTION_FAILED " + "; ".join(result.get("errors", [])))
     else:
