@@ -11,29 +11,13 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from .crash_detector import CrashDetector
 from .types import NotifyCallback
 
 if TYPE_CHECKING:
     from .context import EditorContext
 
 logger = logging.getLogger(__name__)
-
-
-# Windows NTSTATUS crash codes (converted to signed 32-bit integers)
-# Reference: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55
-WINDOWS_CRASH_CODES: dict[int, str] = {
-    -1073741819: "ACCESS_VIOLATION (0xC0000005)",
-    -1073741795: "ILLEGAL_INSTRUCTION (0xC000001D)",
-    -1073741571: "STACK_OVERFLOW (0xC00000FD)",
-    -1073740791: "HEAP_CORRUPTION (0xC0000374)",
-    -1073740940: "STATUS_STACK_BUFFER_OVERRUN (0xC0000409)",
-    -1073741676: "INTEGER_DIVIDE_BY_ZERO (0xC0000094)",
-    -1073741675: "INTEGER_OVERFLOW (0xC0000095)",
-    -1073741674: "PRIVILEGED_INSTRUCTION (0xC0000096)",
-    -1073741811: "INVALID_HANDLE (0xC0000008)",
-    -1073741801: "INVALID_PARAMETER (0xC000000D)",
-    -1073740777: "FATAL_APP_EXIT (0xC0000417)",
-}
 
 
 class HealthMonitor:
@@ -83,125 +67,26 @@ class HealthMonitor:
         self._ctx._notify_callback = None
         logger.info("Health monitor stopped")
 
-    def _check_log_for_crash(self) -> bool:
-        """
-        Check editor log file for crash indicators.
-        
-        Windows crash reporting may cause UE to exit with code 0 after showing
-        the "Send Report" dialog. We check the log file for crash markers.
-        
-        Returns:
-            True if log contains crash indicators
-        """
-        from pathlib import Path
-        
-        # Get log file path from editor instance
-        if self._ctx.editor is None or not self._ctx.editor.log_file_path:
-            return False
-        
-        log_path = self._ctx.editor.log_file_path
-        if not isinstance(log_path, Path):
-            log_path = Path(log_path)
-        
-        if not log_path.exists():
-            return False
-        
-        # Crash indicators in UE5 log
-        crash_indicators = [
-            "[CRASH]",
-            "Fatal error:",
-            "Access violation",
-            "Unhandled Exception",
-            "SIGSEGV",
-            "Assertion failed",
-            "Ensure condition failed",
-            "LowLevelFatalError",
-            "Out of memory",
-            "GPU crash",
-            "D3D11/12 crash",
-            "Rendering thread exception",
-            "Game thread exception",
-        ]
-        
-        try:
-            # Read last 100KB of log (most recent entries)
-            file_size = log_path.stat().st_size
-            read_size = min(100 * 1024, file_size)  # Last 100KB
-            
-            with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
-                if read_size < file_size:
-                    f.seek(file_size - read_size)
-                log_tail = f.read()
-            
-            # Check for crash indicators
-            for indicator in crash_indicators:
-                if indicator in log_tail:
-                    logger.debug(f"Found crash indicator in log: {indicator}")
-                    return True
-            
-            return False
-        except (OSError, IOError, UnicodeDecodeError) as e:
-            logger.debug(f"Failed to read log file for crash check: {e}")
-            return False
-
     def analyze_exit(self, exit_code: int) -> dict[str, Any]:
         """
         Analyze process exit code and return detailed exit information.
 
-        Also checks for crash artifacts (folders in Saved/Crashes) because
-        Windows crash reporting may cause UE to exit with code 0 after
-        showing the "Send Report" dialog.
+        Uses CrashDetector to handle Windows crash reporting case where
+        exit code is 0 but log shows crash.
 
         Args:
             exit_code: The process exit code
 
         Returns:
-            Dictionary containing:
-            - exit_type: "normal", "error", or "crash"
-            - exit_code: The raw exit code
-            - description: Human-readable description
-            - hex_code: (for crashes) Hex representation of the code
+            Dictionary containing exit analysis
         """
-        # Check for crash indicators in log even if exit code is 0
-        # Windows crash reporting can mask crash with exit code 0
-        log_shows_crash = self._check_log_for_crash()
-        
-        if exit_code == 0 and not log_shows_crash:
-            return {
-                "exit_type": "normal",
-                "exit_code": 0,
-                "description": "Editor exited normally",
-            }
-        elif exit_code == 0 and log_shows_crash:
-            # Crash was reported but Windows showed "Send Report" dialog
-            return {
-                "exit_type": "crash",
-                "exit_code": 0,
-                "description": "Editor crashed (Windows crash report dialog was shown)",
-                "note": "Exit code was 0 due to Windows crash reporting, but log shows crash",
-            }
-        elif exit_code > 0:
-            return {
-                "exit_type": "error",
-                "exit_code": exit_code,
-                "description": f"Editor exited with error code {exit_code}",
-            }
-        else:
-            # Negative exit codes on Windows are NTSTATUS crash codes
-            crash_name = WINDOWS_CRASH_CODES.get(exit_code)
-            hex_code = hex(exit_code & 0xFFFFFFFF)
+        # Get log file path if available
+        log_path = None
+        if self._ctx.editor and self._ctx.editor.log_file_path:
+            log_path = self._ctx.editor.log_file_path
 
-            if crash_name:
-                description = f"Editor crashed: {crash_name}"
-            else:
-                description = f"Editor crashed with code {hex_code}"
-
-            return {
-                "exit_type": "crash",
-                "exit_code": exit_code,
-                "hex_code": hex_code,
-                "description": description,
-            }
+        # Use CrashDetector for comprehensive analysis
+        return CrashDetector.analyze_exit_with_log_check(exit_code, log_path)
 
     async def _monitor_loop(self) -> None:
         """

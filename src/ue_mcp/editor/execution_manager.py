@@ -37,6 +37,7 @@ from ..tracking.asset_tracker import (
 )
 from ..tools._helpers import build_env_injection_code
 from ..validation.code_inspector import inspect_code
+from .crash_detector import CrashDetector
 from .health_monitor import HealthMonitor
 
 if TYPE_CHECKING:
@@ -318,36 +319,9 @@ class ExecutionManager:
                 timeout=timeout,
             )
 
-        # Check for crash
-        if result.get("crashed", False):
+        # Check for crash using CrashDetector
+        if CrashDetector.check_execution_result(result):
             return _build_crash_response(self._ctx, result)
-        
-        # Also check for crash indicators in error message or output
-        # This handles cases where UE5 crashes but doesn't set crashed flag
-        if not result.get("success", True):
-            error_msg = str(result.get("error", ""))
-            output_str = str(result.get("output", ""))
-            combined = error_msg + output_str
-            
-            crash_indicators = [
-                "Fatal error:",
-                "Access violation",
-                "Unhandled Exception",
-                "LowLevelFatalError",
-                "Assertion failed",
-                "Ensure condition failed",
-                "Out of memory",
-                "GPU crash",
-                "Rendering thread exception",
-                "Game thread exception",
-                "SIGSEGV",
-            ]
-            
-            for indicator in crash_indicators:
-                if indicator in combined:
-                    logger.warning(f"Detected crash indicator in output: {indicator}")
-                    result["crashed"] = True
-                    return _build_crash_response(self._ctx, result)
 
         return result
 
@@ -403,35 +377,9 @@ class ExecutionManager:
                 timeout=timeout,
             )
 
-            # Check for crash
-            if result.get("crashed", False):
+            # Check for crash using CrashDetector
+            if CrashDetector.check_execution_result(result):
                 return _build_crash_response(self._ctx, result)
-            
-            # Also check for crash indicators in error message or output
-            if not result.get("success", True):
-                error_msg = str(result.get("error", ""))
-                output_str = str(result.get("output", ""))
-                combined = error_msg + output_str
-                
-                crash_indicators = [
-                    "Fatal error:",
-                    "Access violation",
-                    "Unhandled Exception",
-                    "LowLevelFatalError",
-                    "Assertion failed",
-                    "Ensure condition failed",
-                    "Out of memory",
-                    "GPU crash",
-                    "Rendering thread exception",
-                    "Game thread exception",
-                    "SIGSEGV",
-                ]
-                
-                for indicator in crash_indicators:
-                    if indicator in combined:
-                        logger.warning(f"Detected crash indicator in output: {indicator}")
-                        result["crashed"] = True
-                        return _build_crash_response(self._ctx, result)
 
             # Wait for latent commands to complete if script contains them
             # This handles async scripts using @unreal.AutomationScheduler.add_latent_command
