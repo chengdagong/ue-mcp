@@ -58,6 +58,73 @@ EXTRA_PYTHON_APIS_PLUGIN = "ExtraPythonAPIs"
 # C++ source file extensions to compare
 CPP_SOURCE_EXTENSIONS = {".cpp", ".h", ".cs"}
 
+# UHT generated file patterns
+UHT_GENERATED_PATTERNS = {
+    ".h": ".gen.cpp",  # Header files generate .gen.cpp files
+}
+
+
+def _check_uht_generated_files_outdated(plugin_dir: Path) -> tuple[bool, list[str]]:
+    """
+    Check if UHT (Unreal Header Tool) generated files are outdated.
+
+    Compares timestamps of source .h files against their corresponding .gen.cpp files
+    in the Intermediate directory. If any .gen.cpp is older than its .h file, the plugin
+    needs to be rebuilt.
+
+    Args:
+        plugin_dir: Path to the plugin directory in the project
+
+    Returns:
+        (outdated, details) - outdated is True if rebuild needed, details lists outdated files
+    """
+    source_dir = plugin_dir / "Source"
+    intermediate_dir = plugin_dir / "Intermediate" / "Build" / "Win64" / "UnrealEditor" / "Inc"
+
+    if not source_dir.exists():
+        return False, []
+
+    if not intermediate_dir.exists():
+        # No intermediate files means plugin was never built
+        return True, ["Intermediate directory not found - plugin needs initial build"]
+
+    outdated_files = []
+
+    # Find all header files in the Source directory
+    for header_file in source_dir.rglob("*.h"):
+        # Skip generated headers
+        if ".generated.h" in header_file.name:
+            continue
+
+        # Determine the expected .gen.cpp file path
+        # UHT generates files in: Intermediate/Build/Win64/UnrealEditor/Inc/{ModuleName}/UHT/{FileName}.gen.cpp
+        header_name = header_file.stem
+        gen_cpp_pattern = f"**/{header_name}.gen.cpp"
+
+        gen_cpp_files = list(intermediate_dir.rglob(gen_cpp_pattern))
+        if not gen_cpp_files:
+            # No generated file found - might be a non-UCLASS header, skip
+            continue
+
+        gen_cpp_file = gen_cpp_files[0]
+
+        # Compare timestamps
+        header_mtime = header_file.stat().st_mtime
+        gen_cpp_mtime = gen_cpp_file.stat().st_mtime
+
+        if gen_cpp_mtime < header_mtime:
+            relative_header = header_file.relative_to(plugin_dir)
+            relative_gen = gen_cpp_file.relative_to(plugin_dir)
+            outdated_files.append(
+                f"{relative_header} (modified) -> {relative_gen} (outdated)"
+            )
+            logger.debug(
+                f"UHT generated file outdated: {header_file.name} "
+                f"(header: {header_mtime}, gen: {gen_cpp_mtime})"
+            )
+
+    return len(outdated_files) > 0, outdated_files
+
 
 def _compare_plugin_source_files(
     source_dir: Path, target_dir: Path
@@ -160,7 +227,7 @@ def _update_plugin_source_files(source_dir: Path, target_dir: Path) -> tuple[boo
 
 def check_extra_python_apis_plugin(
     project_root: Path, auto_fix: bool = False
-) -> tuple[bool, bool, str]:
+) -> tuple[bool, bool, bool, str]:
     """
     Check and optionally install/update the ExtraPythonAPIs plugin.
 
@@ -170,13 +237,18 @@ def check_extra_python_apis_plugin(
     The function checks:
     1. If the plugin exists and has the .uplugin file
     2. If the C++ source files match between bundled and installed versions
+    3. If the UHT generated files are up to date with source headers
 
     Args:
         project_root: Path to UE5 project root directory
         auto_fix: Whether to automatically copy/update the plugin if needed
 
     Returns:
-        (installed, modified, message)
+        (installed, modified, requires_build, message)
+        - installed: Whether the plugin is installed
+        - modified: Whether source files were modified
+        - requires_build: Whether the plugin needs to be rebuilt (source updated or UHT files outdated)
+        - message: Status message
     """
     plugins_dir = project_root / "Plugins"
     target_plugin_dir = plugins_dir / EXTRA_PYTHON_APIS_PLUGIN
@@ -184,7 +256,7 @@ def check_extra_python_apis_plugin(
 
     # Check if source plugin exists
     if not source_plugin_dir.exists():
-        return False, False, f"Bundled plugin not found at {source_plugin_dir}"
+        return False, False, False, f"Bundled plugin not found at {source_plugin_dir}"
 
     # Check if plugin already exists in project
     if target_plugin_dir.exists():
@@ -197,7 +269,26 @@ def check_extra_python_apis_plugin(
             )
 
             if files_match:
-                return True, False, f"{EXTRA_PYTHON_APIS_PLUGIN} plugin already installed and up to date"
+                # Source files match, now check if UHT generated files are up to date
+                uht_outdated, outdated_details = _check_uht_generated_files_outdated(
+                    target_plugin_dir
+                )
+                if uht_outdated:
+                    outdated_summary = "; ".join(outdated_details[:2])
+                    if len(outdated_details) > 2:
+                        outdated_summary += f" and {len(outdated_details) - 2} more"
+                    return (
+                        True,
+                        False,
+                        True,  # requires_build
+                        f"{EXTRA_PYTHON_APIS_PLUGIN} plugin installed but UHT generated files outdated: {outdated_summary}",
+                    )
+                return (
+                    True,
+                    False,
+                    False,
+                    f"{EXTRA_PYTHON_APIS_PLUGIN} plugin already installed and up to date",
+                )
 
             # Source files differ
             if not auto_fix:
@@ -207,6 +298,7 @@ def check_extra_python_apis_plugin(
                 return (
                     True,
                     False,
+                    True,  # requires_build because source differs
                     f"{EXTRA_PYTHON_APIS_PLUGIN} plugin installed but source files differ: {diff_summary}",
                 )
 
@@ -221,13 +313,15 @@ def check_extra_python_apis_plugin(
                 return (
                     True,
                     True,
+                    True,  # requires_build because source was updated
                     f"Updated {EXTRA_PYTHON_APIS_PLUGIN} plugin source files ({len(differences)} file(s) changed)",
                 )
             else:
-                return False, False, message
+                return False, False, False, message
         else:
             if not auto_fix:
                 return (
+                    False,
                     False,
                     False,
                     f"{EXTRA_PYTHON_APIS_PLUGIN} directory exists but missing .uplugin file",
@@ -236,24 +330,24 @@ def check_extra_python_apis_plugin(
             try:
                 shutil.rmtree(target_plugin_dir)
             except Exception as e:
-                return False, False, f"Failed to remove corrupted plugin directory: {e}"
+                return False, False, False, f"Failed to remove corrupted plugin directory: {e}"
 
     if not auto_fix:
-        return False, False, f"{EXTRA_PYTHON_APIS_PLUGIN} plugin not installed"
+        return False, False, False, f"{EXTRA_PYTHON_APIS_PLUGIN} plugin not installed"
 
     # Create Plugins directory if it doesn't exist
     try:
         plugins_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:
-        return False, False, f"Failed to create Plugins directory: {e}"
+        return False, False, False, f"Failed to create Plugins directory: {e}"
 
     # Copy the plugin
     try:
         shutil.copytree(source_plugin_dir, target_plugin_dir)
         logger.info(f"Installed {EXTRA_PYTHON_APIS_PLUGIN} plugin to {target_plugin_dir}")
-        return True, True, f"Installed {EXTRA_PYTHON_APIS_PLUGIN} plugin"
+        return True, True, True, f"Installed {EXTRA_PYTHON_APIS_PLUGIN} plugin"  # requires_build for new install
     except Exception as e:
-        return False, False, f"Failed to copy plugin: {e}"
+        return False, False, False, f"Failed to copy plugin: {e}"
 
 
 def check_python_plugin(
@@ -658,6 +752,7 @@ def run_config_check(
             "path": None,
             "installed": False,
             "modified": False,
+            "requires_build": False,
             "message": "",
         },
         "restart_needed": False,
@@ -705,9 +800,11 @@ def run_config_check(
     result["extra_python_apis"]["path"] = str(
         (project_root / "Plugins" / EXTRA_PYTHON_APIS_PLUGIN).relative_to(project_root)
     )
-    installed, modified, message = check_extra_python_apis_plugin(project_root, auto_fix)
+    installed, modified, requires_build, message = check_extra_python_apis_plugin(
+        project_root, auto_fix
+    )
     result["extra_python_apis"].update(
-        installed=installed, modified=modified, message=message
+        installed=installed, modified=modified, requires_build=requires_build, message=message
     )
     _update_status(result, modified, installed)
 
