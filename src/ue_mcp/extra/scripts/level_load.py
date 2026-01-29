@@ -109,6 +109,9 @@ def main():
                 "level_path": level_path,
                 "current_level": current_level,
             }
+
+        # Note: RefreshSlateView is automatically called by the patched load_level method
+
     except Exception as e:
         result = {
             "success": False,

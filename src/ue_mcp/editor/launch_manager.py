@@ -385,6 +385,9 @@ class LaunchManager:
                         self._ctx.editor.remote_client = remote_client
                         self._ctx.editor.status = "ready"
 
+                    # Run editor initialization (monkey patches, etc.)
+                    await self._run_editor_init()
+
                     logger.info(
                         f"Background connect succeeded (node_id: {remote_client.get_node_id()})"
                     )
@@ -491,6 +494,9 @@ class LaunchManager:
             self._ctx.editor.remote_client = remote_client
             self._ctx.editor.status = "ready"
 
+        # Run editor initialization (monkey patches, etc.)
+        await self._run_editor_init()
+
         elapsed = time.time() - start_time
         logger.info(
             f"Editor connected successfully (node_id: {remote_client.get_node_id()}, "
@@ -509,3 +515,40 @@ class LaunchManager:
             "message": "Editor launched and connected",
             "status": self._ctx.get_status(),
         }
+
+    async def _run_editor_init(self) -> None:
+        """
+        Run editor initialization script after connection.
+
+        This applies monkey patches and other initialization that needs
+        to happen once after the editor is connected (e.g., patching
+        LevelEditorSubsystem.load_level to call RefreshSlateView).
+        """
+        from ..core.paths import get_scripts_dir
+
+        if self._ctx.editor is None or self._ctx.editor.status != "ready":
+            logger.warning("Cannot run editor init: editor not ready")
+            return
+
+        if self._ctx.editor.remote_client is None:
+            logger.warning("Cannot run editor init: no remote client")
+            return
+
+        init_script = get_scripts_dir() / "editor_init.py"
+        if not init_script.exists():
+            logger.warning(f"Editor init script not found: {init_script}")
+            return
+
+        try:
+            logger.info("Running editor initialization script...")
+            result = self._ctx.editor.remote_client.execute(
+                str(init_script),
+                exec_type=self._ctx.editor.remote_client.ExecTypes.EXECUTE_FILE,
+                timeout=10.0,
+            )
+            if result.get("success"):
+                logger.info("Editor initialization completed successfully")
+            else:
+                logger.warning(f"Editor initialization returned failure: {result}")
+        except Exception as e:
+            logger.warning(f"Editor initialization failed: {e}")
