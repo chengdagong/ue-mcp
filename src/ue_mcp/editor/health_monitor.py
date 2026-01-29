@@ -83,9 +83,74 @@ class HealthMonitor:
         self._ctx._notify_callback = None
         logger.info("Health monitor stopped")
 
+    def _check_log_for_crash(self) -> bool:
+        """
+        Check editor log file for crash indicators.
+        
+        Windows crash reporting may cause UE to exit with code 0 after showing
+        the "Send Report" dialog. We check the log file for crash markers.
+        
+        Returns:
+            True if log contains crash indicators
+        """
+        from pathlib import Path
+        
+        # Get log file path from editor instance
+        if self._ctx.editor is None or not self._ctx.editor.log_file_path:
+            return False
+        
+        log_path = self._ctx.editor.log_file_path
+        if not isinstance(log_path, Path):
+            log_path = Path(log_path)
+        
+        if not log_path.exists():
+            return False
+        
+        # Crash indicators in UE5 log
+        crash_indicators = [
+            "[CRASH]",
+            "Fatal error:",
+            "Access violation",
+            "Unhandled Exception",
+            "SIGSEGV",
+            "Assertion failed",
+            "Ensure condition failed",
+            "LowLevelFatalError",
+            "Out of memory",
+            "GPU crash",
+            "D3D11/12 crash",
+            "Rendering thread exception",
+            "Game thread exception",
+        ]
+        
+        try:
+            # Read last 100KB of log (most recent entries)
+            file_size = log_path.stat().st_size
+            read_size = min(100 * 1024, file_size)  # Last 100KB
+            
+            with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                if read_size < file_size:
+                    f.seek(file_size - read_size)
+                log_tail = f.read()
+            
+            # Check for crash indicators
+            for indicator in crash_indicators:
+                if indicator in log_tail:
+                    logger.debug(f"Found crash indicator in log: {indicator}")
+                    return True
+            
+            return False
+        except (OSError, IOError, UnicodeDecodeError) as e:
+            logger.debug(f"Failed to read log file for crash check: {e}")
+            return False
+
     def analyze_exit(self, exit_code: int) -> dict[str, Any]:
         """
         Analyze process exit code and return detailed exit information.
+
+        Also checks for crash artifacts (folders in Saved/Crashes) because
+        Windows crash reporting may cause UE to exit with code 0 after
+        showing the "Send Report" dialog.
 
         Args:
             exit_code: The process exit code
@@ -97,11 +162,23 @@ class HealthMonitor:
             - description: Human-readable description
             - hex_code: (for crashes) Hex representation of the code
         """
-        if exit_code == 0:
+        # Check for crash indicators in log even if exit code is 0
+        # Windows crash reporting can mask crash with exit code 0
+        log_shows_crash = self._check_log_for_crash()
+        
+        if exit_code == 0 and not log_shows_crash:
             return {
                 "exit_type": "normal",
                 "exit_code": 0,
                 "description": "Editor exited normally",
+            }
+        elif exit_code == 0 and log_shows_crash:
+            # Crash was reported but Windows showed "Send Report" dialog
+            return {
+                "exit_type": "crash",
+                "exit_code": 0,
+                "description": "Editor crashed (Windows crash report dialog was shown)",
+                "note": "Exit code was 0 due to Windows crash reporting, but log shows crash",
             }
         elif exit_code > 0:
             return {
