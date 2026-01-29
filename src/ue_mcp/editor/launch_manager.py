@@ -89,6 +89,7 @@ class LaunchManager:
         notify: NotifyCallback,
         additional_paths: Optional[list[str]] = None,
         wait_timeout: float = 120.0,
+        unattended: bool = False,
     ) -> Any:
         """
         Shared preparation logic for launching the editor.
@@ -192,15 +193,19 @@ class LaunchManager:
                 f"RemoteExecutionMulticastGroupEndpoint=239.0.0.1:{allocated_port}"
             )
 
+            cmd_args = [
+                str(editor_path),
+                str(self._ctx.project_path),
+                f"-ABSLOG={log_file_path}",
+                ini_override,
+                "-AutoDeclinePackageRecovery",  # Skip package recovery dialogs on startup
+                "-NoLiveCoding",  # Disable Live Coding to allow builds while editor is running
+            ]
+            if unattended:
+                cmd_args.append("-unattended")  # Skip crash report UI
+
             process = subprocess.Popen(
-                [
-                    str(editor_path),
-                    str(self._ctx.project_path),
-                    f"-ABSLOG={log_file_path}",
-                    ini_override,
-                    "-AutoDeclinePackageRecovery",  # Skip package recovery dialogs on startup
-                    "-NoLiveCoding",  # Disable Live Coding to allow builds while editor is running
-                ],
+                cmd_args,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
@@ -221,6 +226,7 @@ class LaunchManager:
             additional_paths=additional_paths,
             wait_timeout=wait_timeout,
             multicast_port=allocated_port,
+            unattended=unattended,
         )
         logger.info(f"Editor process started (PID: {process.pid})")
         return process, config_result
@@ -230,6 +236,7 @@ class LaunchManager:
         notify: Optional[NotifyCallback] = None,
         additional_paths: Optional[list[str]] = None,
         wait_timeout: float = 120.0,
+        unattended: bool = False,
     ) -> dict[str, Any]:
         """
         Internal launch implementation shared by launch() and launch_async().
@@ -238,6 +245,7 @@ class LaunchManager:
             notify: Optional async callback to send notifications
             additional_paths: Optional list of additional Python paths
             wait_timeout: Maximum time to wait for editor connection
+            unattended: Whether to pass -unattended flag to editor
 
         Returns:
             Launch result dictionary
@@ -251,7 +259,7 @@ class LaunchManager:
 
         actual_notify = notify or null_notify
 
-        prep_result = await self._prepare_launch(actual_notify, additional_paths, wait_timeout)
+        prep_result = await self._prepare_launch(actual_notify, additional_paths, wait_timeout, unattended)
         if isinstance(prep_result, dict):
             return prep_result
 
@@ -274,6 +282,7 @@ class LaunchManager:
         notify: Optional[NotifyCallback] = None,
         additional_paths: Optional[list[str]] = None,
         wait_timeout: float = 120.0,
+        unattended: bool = False,
     ) -> dict[str, Any]:
         """
         Launch Unreal Editor and wait for connection (synchronous startup).
@@ -282,6 +291,7 @@ class LaunchManager:
             notify: Optional async callback to send notifications
             additional_paths: Optional list of additional Python paths
             wait_timeout: Maximum time to wait for editor connection
+            unattended: Whether to pass -unattended flag to editor
 
         Returns:
             Launch result dictionary
@@ -290,6 +300,7 @@ class LaunchManager:
             notify=notify,
             additional_paths=additional_paths,
             wait_timeout=wait_timeout,
+            unattended=unattended,
         )
 
     async def launch_async(
@@ -297,6 +308,7 @@ class LaunchManager:
         notify: NotifyCallback,
         additional_paths: Optional[list[str]] = None,
         wait_timeout: float = 120.0,
+        unattended: bool = False,
     ) -> dict[str, Any]:
         """
         Launch Unreal Editor asynchronously (returns immediately).
@@ -305,6 +317,7 @@ class LaunchManager:
             notify: Async callback to send notifications
             additional_paths: Optional list of additional Python paths
             wait_timeout: Maximum time to wait for editor connection
+            unattended: Whether to pass -unattended flag to editor
 
         Returns:
             Initial launch result (editor starting in background)
@@ -312,7 +325,7 @@ class LaunchManager:
         # Reset monitor state on fresh launch
         self._ctx.reset_monitor_state()
 
-        prep_result = await self._prepare_launch(notify, additional_paths, wait_timeout)
+        prep_result = await self._prepare_launch(notify, additional_paths, wait_timeout, unattended)
         if isinstance(prep_result, dict):
             return prep_result
 

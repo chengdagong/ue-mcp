@@ -31,3 +31,4 @@ class EditorInstance:
     additional_paths: Optional[list[str]] = None
     wait_timeout: float = 120.0
     multicast_port: int = 6766  # Allocated multicast port for this instance
+    unattended: bool = False  # Whether editor was launched with -unattended flag

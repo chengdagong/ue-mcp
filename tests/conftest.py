@@ -367,7 +367,7 @@ async def running_editor(initialized_tool_caller, request):
     logger.info("Launching editor for test session...")
     launch_result = await initialized_tool_caller.call(
         "editor_launch",
-        {"wait": True, "wait_timeout": 180},
+        {"wait": True, "wait_timeout": 180, "unattended": True},
         timeout=240,
     )
 

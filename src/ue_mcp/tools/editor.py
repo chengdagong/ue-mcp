@@ -47,6 +47,13 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
                 description="Maximum time in seconds to wait for editor connection",
             ),
         ],
+        unattended: Annotated[
+            bool,
+            Field(
+                default=False,
+                description="Whether to pass -unattended flag to suppress crash dialogs",
+            ),
+        ],
     ) -> dict[str, Any]:
         """
         Launch Unreal Editor for the bound project.
@@ -61,6 +68,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             additional_paths: Optional list of additional Python paths to add to the editor's sys.path
             wait: Whether to wait for the editor to connect before returning (default: True)
             wait_timeout: Maximum time in seconds to wait for editor connection (default: 120)
+            unattended: Whether to pass -unattended flag to suppress crash dialogs (default: False)
 
         Returns:
             Launch result with status information.
@@ -87,12 +95,14 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
                 notify=notify,
                 additional_paths=all_paths if all_paths else None,
                 wait_timeout=wait_timeout,
+                unattended=unattended,
             )
         else:
             result = await lifecycle.launch_async(
                 notify=notify,
                 additional_paths=all_paths if all_paths else None,
                 wait_timeout=wait_timeout,
+                unattended=unattended,
             )
 
         # Query project assets if launch was successful
