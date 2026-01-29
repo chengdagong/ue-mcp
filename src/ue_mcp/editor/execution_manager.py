@@ -738,6 +738,7 @@ else:
             result["temp_level_warning"] = temp_level_warning
 
         # Step 6: Get dirty asset paths
+        dirty_paths: list[str] = []
         if result.get("success"):
             try:
                 dirty_paths = get_dirty_asset_paths(self)
@@ -746,6 +747,18 @@ else:
                     logger.debug(f"Dirty assets: {dirty_paths}")
             except Exception as e:
                 logger.warning(f"Failed to get dirty asset paths: {e}")
+
+        # Step 7: Refresh Slate UI if changes were detected
+        if result.get("success") and (changed_paths or dirty_paths):
+            try:
+                refresh_result = self._execute_code_impl(
+                    "import unreal; unreal.ExSlateTabLibrary.refresh_slate_view()",
+                    timeout=5.0,
+                )
+                if refresh_result.get("success"):
+                    logger.debug("Refreshed Slate UI after detected changes")
+            except Exception as e:
+                logger.debug(f"RefreshSlateView failed (non-critical): {e}")
 
         return result
 
@@ -992,6 +1005,7 @@ except Exception as e:
             result["temp_level_warning"] = temp_level_warning
 
         # Get dirty asset paths
+        dirty_paths: list[str] = []
         if result.get("success"):
             try:
                 dirty_paths = get_dirty_asset_paths(self)
@@ -1000,6 +1014,18 @@ except Exception as e:
                     logger.debug(f"Dirty assets: {dirty_paths}")
             except Exception as e:
                 logger.warning(f"Failed to get dirty asset paths: {e}")
+
+        # Refresh Slate UI if changes were detected
+        if result.get("success") and (changed_paths or dirty_paths):
+            try:
+                refresh_result = self._execute_code_impl(
+                    "import unreal; unreal.ExSlateTabLibrary.refresh_slate_view()",
+                    timeout=5.0,
+                )
+                if refresh_result.get("success"):
+                    logger.debug("Refreshed Slate UI after detected changes")
+            except Exception as e:
+                logger.debug(f"RefreshSlateView failed (non-critical): {e}")
 
         return result
 
