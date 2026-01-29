@@ -843,15 +843,12 @@ else:
         installed_packages: list[str] = []
 
         # Step 3a: Server-side code inspection (runs locally, no editor required)
-        issues = inspect_code(code)
-        blocking_errors = [issue for issue in issues if issue.get("severity") == "error"]
-        if blocking_errors:
-            # Format error messages
-            error_msgs = [f"- {err.get('message', 'Unknown error')}" for err in blocking_errors]
+        inspection = inspect_code(code)
+        if not inspection.allowed:
             return {
                 "success": False,
-                "error": "Code inspection found blocking issues:\n" + "\n".join(error_msgs),
-                "inspection_issues": issues,
+                "error": inspection.format_error(),
+                "inspection_issues": [i.to_dict() for i in inspection.issues],
             }
 
         # Step 3b: Editor-side code inspection (runs in UE, requires editor)
