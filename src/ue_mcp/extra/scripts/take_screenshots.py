@@ -331,6 +331,11 @@ if __name__ == "__main__":
             created_cameras = []
             print("All cameras cleaned up")
 
+            # Force garbage collection to prevent world memory leaks
+            # This is critical when switching levels after screenshot capture
+            unreal.SystemLibrary.collect_garbage()
+            print("Garbage collection completed")
+
             # 输出 JSON 结果
             result = {
                 "success": all(r.get("success", False) for r in screenshot_results),
