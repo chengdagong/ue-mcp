@@ -19,10 +19,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     """Register editor management tools."""
 
     from ..autoconfig import get_bundled_site_packages, run_config_check
-    from ..script_executor import (
-        execute_script_from_path,
-        execute_script_from_path_with_auto_launch,
-    )
+    from ..core.paths import get_scripts_dir
 
     from ._helpers import parse_json_result, query_project_assets
 
@@ -241,11 +238,10 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         """
         execution = state.get_execution_subsystem()
 
-        script_path = Path(__file__).parent.parent / "extra" / "scripts" / "level_load.py"
+        script_path = get_scripts_dir() / "level_load.py"
 
-        result = await execute_script_from_path_with_auto_launch(
-            execution,
-            script_path,
+        result = await execution.execute_script_with_auto_launch(
+            str(script_path),
             params={"level_path": level_path},
             timeout=30.0,
         )

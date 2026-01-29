@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     """Register PIE control tools."""
 
-    from ..script_executor import execute_script_from_path_with_auto_launch
+    from ..core.paths import get_scripts_dir
 
     from ._helpers import parse_json_result
 
@@ -36,11 +36,10 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         """
         execution = state.get_execution_subsystem()
 
-        script_path = Path(__file__).parent.parent / "extra" / "scripts" / "pie_control.py"
+        script_path = get_scripts_dir() / "pie_control.py"
 
-        result = await execute_script_from_path_with_auto_launch(
-            execution,
-            script_path,
+        result = await execution.execute_script_with_auto_launch(
+            str(script_path),
             params={"command": "start"},
             timeout=10.0,
         )
@@ -65,11 +64,10 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         """
         execution = state.get_execution_subsystem()
 
-        script_path = Path(__file__).parent.parent / "extra" / "scripts" / "pie_control.py"
+        script_path = get_scripts_dir() / "pie_control.py"
 
-        result = await execute_script_from_path_with_auto_launch(
-            execution,
-            script_path,
+        result = await execution.execute_script_with_auto_launch(
+            str(script_path),
             params={"command": "stop"},
             timeout=10.0,
         )

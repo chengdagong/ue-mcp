@@ -140,7 +140,7 @@ except Exception as e:
     print("ACTOR_SNAPSHOT_RESULT:" + json.dumps({{"error": str(e)}}))
 """
 
-    result = manager.execute_code(code, timeout=30.0)
+    result = manager._execute_code_impl(code, timeout=30.0)
     if not result.get("success"):
         logger.debug(f"Failed to create actor snapshot: {result.get('error')}")
         return None

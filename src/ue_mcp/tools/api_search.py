@@ -13,10 +13,7 @@ if TYPE_CHECKING:
 def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     """Register API search tools."""
 
-    from ..script_executor import (
-        execute_script_from_path_with_auto_launch,
-        get_extra_scripts_dir,
-    )
+    from ..core.paths import get_scripts_dir
 
     from ._helpers import parse_json_result
 
@@ -148,7 +145,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             }
 
         # Execute api_search script
-        script_path = get_extra_scripts_dir() / "api_search.py"
+        script_path = get_scripts_dir() / "api_search.py"
         params = {
             "mode": mode,
             "query": query,
@@ -157,8 +154,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             "limit": limit,
         }
 
-        result = await execute_script_from_path_with_auto_launch(
-            execution, script_path, params, timeout=30.0
+        result = await execution.execute_script_with_auto_launch(
+            str(script_path), params=params, timeout=30.0
         )
 
         # Parse result

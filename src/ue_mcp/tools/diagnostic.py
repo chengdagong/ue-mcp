@@ -14,10 +14,7 @@ if TYPE_CHECKING:
 def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     """Register asset diagnostic and inspection tools."""
 
-    from ..script_executor import (
-        execute_script_from_path_with_auto_launch,
-        get_diagnostic_scripts_dir,
-    )
+    from ..core.paths import get_diagnostic_scripts_dir, get_scripts_dir
 
     from ._helpers import parse_json_result
 
@@ -71,13 +68,10 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         """
         execution = state.get_execution_subsystem()
 
-        script_path = (
-            Path(__file__).parent.parent / "extra" / "scripts" / "asset_open.py"
-        )
+        script_path = get_scripts_dir() / "asset_open.py"
 
-        result = await execute_script_from_path_with_auto_launch(
-            execution,
-            script_path,
+        result = await execution.execute_script_with_auto_launch(
+            str(script_path),
             params={"asset_path": asset_path, "tab_id": tab_id},
             timeout=30.0,
         )
@@ -119,12 +113,10 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         """
         execution = state.get_execution_subsystem()
 
-        scripts_dir = get_diagnostic_scripts_dir()
-        script_path = scripts_dir / "diagnostic_runner.py"
+        script_path = get_diagnostic_scripts_dir() / "diagnostic_runner.py"
 
-        result = await execute_script_from_path_with_auto_launch(
-            execution,
-            script_path,
+        result = await execution.execute_script_with_auto_launch(
+            str(script_path),
             params={"asset_path": asset_path},
             timeout=120.0,
         )
@@ -185,16 +177,14 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         """
         execution = state.get_execution_subsystem()
 
-        scripts_dir = get_diagnostic_scripts_dir()
-        script_path = scripts_dir / "inspect_runner.py"
+        script_path = get_diagnostic_scripts_dir() / "inspect_runner.py"
 
         params: dict[str, Any] = {"asset_path": asset_path}
         if component_name is not None:
             params["component_name"] = component_name
 
-        result = await execute_script_from_path_with_auto_launch(
-            execution,
-            script_path,
+        result = await execution.execute_script_with_auto_launch(
+            str(script_path),
             params=params,
             timeout=120.0,
         )

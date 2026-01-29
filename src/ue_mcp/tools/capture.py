@@ -15,11 +15,7 @@ if TYPE_CHECKING:
 def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     """Register capture and tracing tools."""
 
-    from ..script_executor import (
-        execute_script,
-        execute_script_from_path,
-        execute_script_from_path_with_auto_launch,
-    )
+    from ..core.paths import get_capture_scripts_dir, get_scripts_dir
 
     from ._helpers import parse_json_result, run_pie_task
 
@@ -460,9 +456,9 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             params["asset_list"] = asset_list
             params["output_dir"] = output_dir
 
-        result = execute_script(
-            execution,
-            "capture_window",
+        script_path = get_capture_scripts_dir() / "capture_window.py"
+        result = execution._execute_script_with_params(
+            str(script_path),
             params=params,
             timeout=120.0,
         )
@@ -581,11 +577,10 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             params["level"] = level
 
         # Execute the take_screenshots.py script
-        script_path = Path(__file__).parent.parent / "extra" / "scripts" / "take_screenshots.py"
+        script_path = get_scripts_dir() / "take_screenshots.py"
 
-        result = await execute_script_from_path_with_auto_launch(
-            execution,
-            script_path,
+        result = await execution.execute_script_with_auto_launch(
+            str(script_path),
             params=params,
             timeout=120.0,
             wait_for_latent=True,

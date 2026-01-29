@@ -8,6 +8,8 @@ This subsystem manages:
 """
 
 import logging
+import tempfile
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -33,6 +35,7 @@ from ..tracking.asset_tracker import (
     get_current_level_path,
     get_dirty_asset_paths,
 )
+from ..tools._helpers import build_env_injection_code
 from ..validation.code_inspector import inspect_code
 
 if TYPE_CHECKING:
@@ -277,6 +280,64 @@ class ExecutionManager:
                     Path(output_file).unlink(missing_ok=True)
                 except Exception as e:
                     logger.debug(f"Failed to clean up temp output file: {e}")
+
+    def _execute_script_with_params(
+        self,
+        script_path: str,
+        params: dict[str, Any],
+        timeout: float = 120.0,
+        wait_for_latent: bool = True,
+        latent_timeout: float = 60.0,
+    ) -> dict[str, Any]:
+        """
+        Execute a script with parameter injection via environment variables.
+
+        This is the internal implementation for scripts that need parameters.
+        It handles:
+        1. Creating a temporary file for output capture
+        2. Injecting parameters via environment variables (EXECUTE_STATEMENT)
+        3. Executing the script file (EXECUTE_FILE)
+        4. Reading captured output and cleaning up
+
+        Args:
+            script_path: Absolute path to the Python script file
+            params: Parameters to pass to the script
+            timeout: Execution timeout in seconds
+            wait_for_latent: Whether to wait for latent commands to complete
+            latent_timeout: Max time to wait for latent commands
+
+        Returns:
+            Execution result dictionary
+
+        Raises:
+            FileNotFoundError: If the script does not exist
+        """
+        path = Path(script_path)
+        if not path.exists():
+            return {"success": False, "error": f"Script not found: {script_path}"}
+
+        # Step 1: Create temporary file for output capture
+        temp_dir = Path(tempfile.gettempdir())
+        output_file = str(temp_dir / f"ue_mcp_output_{uuid.uuid4().hex[:8]}.txt")
+
+        # Step 2: Inject parameters via environment variables with output capture
+        injection_code = build_env_injection_code(str(script_path), params, output_file)
+        inject_result = self._execute_code(injection_code, timeout=5.0)
+
+        if not inject_result.get("success"):
+            return {
+                "success": False,
+                "error": f"Failed to inject parameters: {inject_result.get('error')}",
+            }
+
+        # Step 3: Execute script file directly (true hot-reload)
+        return self.execute_script_file(
+            script_path,
+            timeout=timeout,
+            output_file=output_file,
+            wait_for_latent=wait_for_latent,
+            latent_timeout=latent_timeout,
+        )
 
     def _wait_for_latent_commands(
         self, timeout: float = 60.0, poll_interval: float = 5.0
@@ -1130,7 +1191,7 @@ except Exception as e:
         self,
         script_path: str,
         timeout: float = 120.0,
-        output_file: str | None = None,
+        params: dict[str, Any] | None = None,
         wait_for_latent: bool = True,
         latent_timeout: float = 60.0,
         notify: "NotifyCallback | None" = None,
@@ -1141,10 +1202,14 @@ except Exception as e:
         This is the recommended entry point for tools that need script execution.
         It automatically launches the editor if not running, then executes the script.
 
+        If params is provided, parameters are injected via environment variables
+        before script execution. The script can read them using get_params() from
+        ue_mcp_capture.utils.
+
         Args:
             script_path: Absolute path to the Python script file
             timeout: Execution timeout in seconds
-            output_file: Optional path to temp file for stdout/stderr capture
+            params: Optional parameters to pass to the script via environment variables
             wait_for_latent: Whether to wait for latent commands to complete
             latent_timeout: Max time to wait for latent commands
             notify: Optional callback for launch progress notifications
@@ -1155,10 +1220,21 @@ except Exception as e:
         ensure_result = await self._ensure_editor_ready(notify)
         if ensure_result is not None:
             return ensure_result
+
+        # If params provided, use parameter injection flow
+        if params is not None:
+            return self._execute_script_with_params(
+                script_path,
+                params,
+                timeout=timeout,
+                wait_for_latent=wait_for_latent,
+                latent_timeout=latent_timeout,
+            )
+
+        # No params, use standard script execution with checks
         return self.execute_script_with_checks(
             script_path,
             timeout=timeout,
-            output_file=output_file,
             wait_for_latent=wait_for_latent,
             latent_timeout=latent_timeout,
         )

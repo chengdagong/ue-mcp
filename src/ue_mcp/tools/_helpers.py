@@ -80,18 +80,17 @@ def query_project_assets(execution: "ExecutionManager") -> dict[str, Any]:
     Returns:
         Dict with assets info or error
     """
-    from ..script_executor import execute_script_from_path, get_extra_scripts_dir
+    from ..core.paths import get_scripts_dir
 
     try:
-        script_path = get_extra_scripts_dir() / "asset_query.py"
+        script_path = get_scripts_dir() / "asset_query.py"
         if not script_path.exists():
             logger.warning(f"Asset query script not found: {script_path}")
             return {"success": False, "error": "Asset query script not found"}
 
         # Query Blueprint and World assets
-        exec_result = execute_script_from_path(
-            execution,
-            script_path,
+        exec_result = execution._execute_script_with_params(
+            str(script_path),
             {"types": "Blueprint,World", "base_path": "/Game", "limit": 100},
             timeout=30.0,
         )
@@ -260,7 +259,7 @@ async def run_pie_task(
     and editor_trace_actors_in_pie tools:
     - Auto-launch editor if not running
     - Generate unique task_id
-    - Execute script via script_executor
+    - Execute script via ExecutionManager
     - Monitor completion via watch_pie_capture_complete
     - Handle timeout and result processing
 
@@ -279,8 +278,8 @@ async def run_pie_task(
     Returns:
         Result dict from the PIE task execution
     """
+    from ..core.paths import get_capture_scripts_dir
     from ..tracking.log_watcher import watch_pie_capture_complete
-    from ..script_executor import execute_script
 
     # Create notification callback using ctx.log
     async def notify(level: str, message: str) -> None:
@@ -299,9 +298,9 @@ async def run_pie_task(
     params_with_id = {"task_id": task_id, **params}
 
     # Start task (returns immediately, runs via tick callbacks)
-    result = execute_script(
-        execution,
-        script_name,
+    script_path = get_capture_scripts_dir() / f"{script_name}.py"
+    result = execution._execute_script_with_params(
+        str(script_path),
         params=params_with_id,
         timeout=30.0,  # Short timeout since script returns immediately
     )
