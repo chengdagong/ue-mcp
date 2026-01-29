@@ -46,6 +46,13 @@ import unreal
 
 level_paths_to_check = {level_paths_json}
 
+# Initialize variables for cleanup in finally block
+editor_sub = None
+actor_sub = None
+world = None
+current_level = None
+all_actors = None
+
 try:
     editor_sub = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem)
     actor_sub = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
@@ -86,58 +93,25 @@ try:
             "actors": actors_data,
         }}
 
-        # Snapshot additional levels that are loaded as streaming levels
-        if level_paths_to_check:
-            # Get all streaming levels
-            streaming_levels = world.get_streaming_levels()
-            for level_path in level_paths_to_check:
-                # Skip if it's the current level
-                if level_path == current_asset_path:
-                    continue
-
-                # Try to find this level among streaming levels
-                for streaming_level in streaming_levels:
-                    try:
-                        loaded_level = streaming_level.get_loaded_level()
-                        if loaded_level:
-                            streaming_path = loaded_level.get_path_name()
-                            streaming_asset_path = streaming_path.split(".")[0] if "." in streaming_path else streaming_path
-                            if streaming_asset_path == level_path or level_path in streaming_asset_path:
-                                # Found the streaming level, snapshot its actors
-                                level_actors = loaded_level.get_level_actors()
-                                level_actors_data = {{}}
-                                for actor in level_actors:
-                                    try:
-                                        path_name = actor.get_path_name()
-                                        loc = actor.get_actor_location()
-                                        rot = actor.get_actor_rotation()
-                                        scale = actor.get_actor_scale3d()
-                                        level_actors_data[path_name] = {{
-                                            "label": actor.get_actor_label(),
-                                            "class": actor.get_class().get_name(),
-                                            "location": [loc.x, loc.y, loc.z],
-                                            "rotation": [rot.pitch, rot.yaw, rot.roll],
-                                            "scale": [scale.x, scale.y, scale.z],
-                                        }}
-                                    except Exception:
-                                        pass
-                                levels_data[level_path] = {{
-                                    "level_path": streaming_path,
-                                    "actor_count": len(level_actors_data),
-                                    "actors": level_actors_data,
-                                }}
-                                break
-                    except Exception:
-                        pass
+        # Note: Streaming level snapshot not supported - UE5 Python API doesn't expose
+        # Level.get_level_actors() or World.get_streaming_levels() for sub-level access.
+        # Only the current persistent level is snapshotted.
 
         result = {{
             "levels": levels_data,
             "current_level": current_level_path,
         }}
         print("ACTOR_SNAPSHOT_RESULT:" + json.dumps(result))
-        del all_actors, world, current_level
 except Exception as e:
     print("ACTOR_SNAPSHOT_RESULT:" + json.dumps({{"error": str(e)}}))
+finally:
+    # Clean up references to prevent World memory leaks
+    # Use explicit cleanup since del locals()[x] doesn't work reliably
+    all_actors = None
+    world = None
+    current_level = None
+    editor_sub = None
+    actor_sub = None
 """
 
     result = manager._execute_code_impl(code, timeout=30.0)
