@@ -411,22 +411,8 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             - success: Whether capture succeeded
             - file/files: Path(s) to captured screenshot(s)
         """
-        execution = state.get_execution_subsystem()
-
-        # Ensure editor is ready (may auto-launch)
-        ensure_result = await execution._ensure_editor_ready()
-        if ensure_result is not None:
-            return ensure_result
-
-        params: dict[str, Any] = {
-            "level": level,
-            "mode": mode,
-            "tab": tab,
-        }
-
-        if output_file:
-            params["output_file"] = output_file
-
+        # Validate parameters BEFORE auto-launching editor
+        # This prevents long waits for validation errors
         if mode == "window":
             if not output_file:
                 return {
@@ -445,7 +431,6 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
                     "success": False,
                     "error": "asset_path is required for 'asset' mode",
                 }
-            params["asset_path"] = asset_path
 
         elif mode == "batch":
             if not asset_list or not output_dir:
@@ -453,6 +438,27 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
                     "success": False,
                     "error": "asset_list and output_dir are required for 'batch' mode",
                 }
+
+        execution = state.get_execution_subsystem()
+
+        # Ensure editor is ready (may auto-launch)
+        ensure_result = await execution._ensure_editor_ready()
+        if ensure_result is not None:
+            return ensure_result
+
+        params: dict[str, Any] = {
+            "level": level,
+            "mode": mode,
+            "tab": tab,
+        }
+
+        if output_file:
+            params["output_file"] = output_file
+
+        if mode == "asset":
+            params["asset_path"] = asset_path
+
+        elif mode == "batch":
             params["asset_list"] = asset_list
             params["output_dir"] = output_dir
 
