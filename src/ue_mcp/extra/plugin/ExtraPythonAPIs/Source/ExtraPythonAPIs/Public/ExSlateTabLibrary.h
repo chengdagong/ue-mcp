@@ -179,4 +179,13 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Python|SlateTab", meta = (DevelopmentOnly))
 	static bool CloseGlobalTab(FName TabId);
+
+	/**
+	 * Refresh the Slate UI by opening and closing the Output Log window
+	 * This forces a UI message loop update which can help ensure pending UI operations complete
+	 *
+	 * @return True if the refresh operation was successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Python|SlateTab", meta = (DevelopmentOnly))
+	static bool RefreshSlateView();
 };

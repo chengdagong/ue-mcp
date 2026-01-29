@@ -236,3 +236,27 @@ bool UExSlateTabLibrary::CloseGlobalTab(FName TabId)
 	UE_LOG(LogExSlateTab, Warning, TEXT("CloseGlobalTab: Global tab '%s' not found or not open"), *TabId.ToString());
 	return false;
 }
+
+bool UExSlateTabLibrary::RefreshSlateView()
+{
+	UE_LOG(LogExSlateTab, Log, TEXT("RefreshSlateView: Refreshing Slate UI via Output Log toggle"));
+
+	// Open the Output Log to trigger UI processing
+	bool bOpened = OpenOutputLog();
+	if (!bOpened)
+	{
+		UE_LOG(LogExSlateTab, Warning, TEXT("RefreshSlateView: Failed to open Output Log"));
+		return false;
+	}
+
+	// Close the Output Log
+	bool bClosed = CloseOutputLog();
+	if (!bClosed)
+	{
+		UE_LOG(LogExSlateTab, Warning, TEXT("RefreshSlateView: Failed to close Output Log"));
+		return false;
+	}
+
+	UE_LOG(LogExSlateTab, Log, TEXT("RefreshSlateView: Successfully refreshed Slate UI"));
+	return true;
+}
