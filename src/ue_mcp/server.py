@@ -9,6 +9,7 @@ import logging
 import os
 import signal
 import sys
+import io
 from pathlib import Path
 
 import mcp.types as mt
@@ -20,6 +21,10 @@ from mcp.types import ImageContent, TextContent
 from .state import server_state
 from .tools import register_all_tools
 from .core.image_processing import is_claude_ai_client, process_result_for_images
+
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 # Configure logging
 # Get project root directory (two levels up from current file)
