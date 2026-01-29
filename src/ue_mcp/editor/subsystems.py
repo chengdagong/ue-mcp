@@ -34,7 +34,7 @@ class EditorSubsystems:
 
     Usage:
         subsystems = EditorSubsystems.create(project_path)
-        result = subsystems.execution.execute_with_checks(code)
+        result = await subsystems.execution.execute_code(code)
     """
 
     context: EditorContext
