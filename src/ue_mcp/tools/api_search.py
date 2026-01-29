@@ -154,7 +154,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             "limit": limit,
         }
 
-        result = await execution.execute_script_with_auto_launch(
+        result = await execution.execute_script(
             str(script_path), params=params, timeout=30.0
         )
 

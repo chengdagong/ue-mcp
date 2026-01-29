@@ -38,7 +38,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         script_path = get_scripts_dir() / "pie_control.py"
 
-        result = await execution.execute_script_with_auto_launch(
+        result = await execution.execute_script(
             str(script_path),
             params={"command": "start"},
             timeout=10.0,
@@ -66,7 +66,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         script_path = get_scripts_dir() / "pie_control.py"
 
-        result = await execution.execute_script_with_auto_launch(
+        result = await execution.execute_script(
             str(script_path),
             params={"command": "stop"},
             timeout=10.0,

@@ -240,7 +240,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
 
         script_path = get_scripts_dir() / "level_load.py"
 
-        result = await execution.execute_script_with_auto_launch(
+        result = await execution.execute_script(
             str(script_path),
             params={"level_path": level_path},
             timeout=30.0,

@@ -579,7 +579,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         # Execute the take_screenshots.py script
         script_path = get_scripts_dir() / "take_screenshots.py"
 
-        result = await execution.execute_script_with_auto_launch(
+        result = await execution.execute_script(
             str(script_path),
             params=params,
             timeout=120.0,

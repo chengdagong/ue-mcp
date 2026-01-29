@@ -173,7 +173,7 @@ except Exception as e:
 """
 
     # Use _execute directly to avoid recursion
-    result = manager.execute_code(code, timeout=10.0)
+    result = manager._execute_code_impl(code, timeout=10.0)
 
     if not result.get("success"):
         logger.debug(f"Failed to get current level path: {result.get('error')}")
@@ -266,7 +266,7 @@ os.environ['UE_MCP_MODE'] = '1'
     full_code = injection_code + script_content
 
     # Execute full code (avoid execute_with_checks to prevent recursion)
-    result = manager.execute_code(full_code, timeout=30.0)
+    result = manager._execute_code_impl(full_code, timeout=30.0)
 
     if not result.get("success"):
         logger.warning(f"Snapshot execution failed: {result.get('error')}")
@@ -391,7 +391,7 @@ except AttributeError:
 except Exception as e:
     print(json.dumps({"success": False, "error": str(e), "paths": []}))
 '''
-    result = manager.execute_code(code, timeout=30.0)
+    result = manager._execute_code_impl(code, timeout=30.0)
     if not result.get("success"):
         logger.debug(f"Failed to get dirty asset paths: {result.get('error')}")
         return []

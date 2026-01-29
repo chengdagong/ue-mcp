@@ -1,6 +1,5 @@
 """Code and script execution tools."""
 
-import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
@@ -14,8 +13,6 @@ if TYPE_CHECKING:
 
 def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
     """Register code and script execution tools."""
-
-    from ._helpers import build_env_injection_code
 
     @mcp.tool(name="editor_execute_code")
     async def execute_code(
@@ -47,7 +44,7 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             execute_code("import unreal; print(unreal.EditorAssetLibrary.list_assets('/Game/'))")
         """
         execution = state.get_execution_subsystem()
-        return await execution.execute_code_with_auto_launch(code, timeout=timeout)
+        return await execution.execute_code(code, timeout=timeout)
 
     @mcp.tool(name="editor_execute_script")
     async def execute_script(
@@ -142,50 +139,19 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
         # Build params from args/kwargs
         # For args: pass as special __args__ key for raw argv handling
         # For kwargs: pass directly as key-value pairs
-        params: dict[str, Any] = {}
-        if args:
-            params["__args__"] = args
-        if kwargs:
-            params.update(kwargs)
+        params: dict[str, Any] | None = None
+        if args or kwargs:
+            params = {}
+            if args:
+                params["__args__"] = args
+            if kwargs:
+                params.update(kwargs)
 
         execution = state.get_execution_subsystem()
-
-        # Ensure editor is ready (may auto-launch)
-        ensure_result = await execution._ensure_editor_ready()
-        if ensure_result is not None:
-            return ensure_result
-
-        # Generate temp file for capturing stdout/stderr output
-        # EXECUTE_FILE mode doesn't return print() output in the protocol response,
-        # so we redirect stdout/stderr to a temp file and read it after execution
-        temp_output_file = tempfile.NamedTemporaryFile(
-            mode="w", delete=False, suffix="_ue_mcp_output.txt", encoding="utf-8"
-        )
-        temp_output_path = temp_output_file.name
-        temp_output_file.close()
-
-        # Step 1: Inject parameters via environment variables
-        # Also sets up TeeWriter to capture stdout/stderr to temp file
-        injection_code = build_env_injection_code(str(path), params, output_file=temp_output_path)
-        inject_result = execution.execute_code(injection_code, timeout=5.0)
-
-        if not inject_result.get("success"):
-            # Clean up temp file on failure
-            try:
-                Path(temp_output_path).unlink(missing_ok=True)
-            except Exception:
-                pass
-            return {
-                "success": False,
-                "error": f"Failed to inject parameters: {inject_result.get('error')}",
-            }
-
-        # Step 2: Execute script file directly (true hot-reload)
-        # Wait for latent commands (async scripts) to complete before reading output
-        return execution.execute_script_file(
+        return await execution.execute_script(
             str(path),
             timeout=timeout,
-            output_file=temp_output_path,
+            params=params,
             wait_for_latent=wait_for_latent,
             latent_timeout=latent_timeout,
         )
@@ -229,4 +195,4 @@ def register_tools(mcp: "FastMCP", state: "ServerState") -> None:
             pip_install_packages(["Pillow", "numpy"])
         """
         execution = state.get_execution_subsystem()
-        return await execution.pip_install_with_auto_launch(packages, upgrade=upgrade)
+        return await execution.pip_install(packages, upgrade=upgrade)
