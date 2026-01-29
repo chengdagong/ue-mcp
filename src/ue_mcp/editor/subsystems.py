@@ -77,8 +77,7 @@ class EditorSubsystems:
             build,
         )
 
-        # Wire up circular dependency: HealthMonitor needs LaunchManager for restart
-        health_monitor.set_restart_callback(lifecycle._launch_internal)
+        # Note: HealthMonitor no longer auto-restarts, just monitors and notifies
 
         # Wire up ExecutionManager's access to LaunchManager for auto-launch
         execution.set_launch_manager(lifecycle)

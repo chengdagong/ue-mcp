@@ -45,9 +45,7 @@ class EditorContext:
     # Health monitor state
     _monitor_task: Optional[asyncio.Task] = field(default=None, repr=False)
     _notify_callback: Optional[NotifyCallback] = field(default=None, repr=False)
-    _restart_count: int = 0
-    _last_restart_time: Optional[float] = None
-    _intentional_stop: bool = False
+    _intentional_stop: bool = False  # True when stopped via editor_stop tool
 
     # Background task tracking
     _background_tasks: set[asyncio.Task] = field(default_factory=set, repr=False)
@@ -85,10 +83,8 @@ class EditorContext:
                 logger.debug(f"Cancelled background task: {task.get_name()}")
         self._background_tasks.clear()
 
-    def reset_restart_state(self) -> None:
-        """Reset restart tracking state for fresh launches."""
-        self._restart_count = 0
-        self._last_restart_time = None
+    def reset_monitor_state(self) -> None:
+        """Reset health monitor state for fresh launches."""
         self._intentional_stop = False
 
     # =========================================================================

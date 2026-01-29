@@ -37,6 +37,7 @@ from ..tracking.asset_tracker import (
 )
 from ..tools._helpers import build_env_injection_code
 from ..validation.code_inspector import inspect_code
+from .health_monitor import HealthMonitor
 
 if TYPE_CHECKING:
     from .context import EditorContext
@@ -44,6 +45,47 @@ if TYPE_CHECKING:
     from .types import NotifyCallback
 
 logger = logging.getLogger(__name__)
+
+
+def _build_crash_response(ctx: "EditorContext", details: dict[str, Any]) -> dict[str, Any]:
+    """
+    Build a detailed error response when editor crash is detected.
+
+    Checks the process exit code and provides detailed crash information.
+
+    Args:
+        ctx: Editor context to check process status
+        details: Original error details from remote client
+
+    Returns:
+        Error response with detailed crash information
+    """
+    ctx.editor.status = "stopped"
+
+    # Try to get exit code for detailed analysis
+    exit_info: dict[str, Any] | None = None
+    if ctx.editor and ctx.editor.process:
+        exit_code = ctx.editor.process.poll()
+        if exit_code is not None:
+            # Use HealthMonitor's analyze_exit for consistent analysis
+            # Create a temporary instance just for analysis
+            exit_info = HealthMonitor(ctx).analyze_exit(exit_code)
+
+    if exit_info:
+        return {
+            "success": False,
+            "error": f"{exit_info['description']}. Use 'editor_launch' to restart.",
+            "exit_type": exit_info["exit_type"],
+            "exit_code": exit_info["exit_code"],
+            "hex_code": exit_info.get("hex_code"),
+            "details": details,
+        }
+    else:
+        return {
+            "success": False,
+            "error": "Editor connection lost (process may have crashed). Use 'editor_launch' to restart.",
+            "details": details,
+        }
 
 
 class ExecutionManager:
@@ -278,12 +320,7 @@ class ExecutionManager:
 
         # Check for crash
         if result.get("crashed", False):
-            self._ctx.editor.status = "stopped"
-            return {
-                "success": False,
-                "error": "Editor connection lost (may have crashed)",
-                "details": result,
-            }
+            return _build_crash_response(self._ctx, result)
 
         return result
 
@@ -341,12 +378,7 @@ class ExecutionManager:
 
             # Check for crash
             if result.get("crashed", False):
-                self._ctx.editor.status = "stopped"
-                return {
-                    "success": False,
-                    "error": "Editor connection lost (may have crashed)",
-                    "details": result,
-                }
+                return _build_crash_response(self._ctx, result)
 
             # Wait for latent commands to complete if script contains them
             # This handles async scripts using @unreal.AutomationScheduler.add_latent_command

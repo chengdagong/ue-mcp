@@ -230,23 +230,20 @@ class LaunchManager:
         notify: Optional[NotifyCallback] = None,
         additional_paths: Optional[list[str]] = None,
         wait_timeout: float = 120.0,
-        reset_restart_state: bool = True,
     ) -> dict[str, Any]:
         """
-        Internal launch implementation shared by launch(), launch_async(), and restart.
+        Internal launch implementation shared by launch() and launch_async().
 
         Args:
             notify: Optional async callback to send notifications
             additional_paths: Optional list of additional Python paths
             wait_timeout: Maximum time to wait for editor connection
-            reset_restart_state: If True, reset restart counter (for fresh launches)
 
         Returns:
             Launch result dictionary
         """
-        # Reset restart state on fresh launch (not on auto-restart)
-        if reset_restart_state:
-            self._ctx.reset_restart_state()
+        # Reset monitor state on launch
+        self._ctx.reset_monitor_state()
 
         # Helper for null notify
         async def null_notify(level: str, message: str) -> None:
@@ -293,7 +290,6 @@ class LaunchManager:
             notify=notify,
             additional_paths=additional_paths,
             wait_timeout=wait_timeout,
-            reset_restart_state=True,
         )
 
     async def launch_async(
@@ -313,8 +309,8 @@ class LaunchManager:
         Returns:
             Initial launch result (editor starting in background)
         """
-        # Reset restart state on fresh launch
-        self._ctx.reset_restart_state()
+        # Reset monitor state on fresh launch
+        self._ctx.reset_monitor_state()
 
         prep_result = await self._prepare_launch(notify, additional_paths, wait_timeout)
         if isinstance(prep_result, dict):

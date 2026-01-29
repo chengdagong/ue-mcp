@@ -1,16 +1,15 @@
 """
-HealthMonitor - Monitors editor health and handles auto-restart.
+HealthMonitor - Monitors editor health and notifies on exit.
 
 This subsystem handles:
 - Periodic health checks of the editor process
-- Detecting editor crashes
-- Automatic restart with cooldown and attempt limits
+- Detecting editor exit (normal or crash)
+- Notifying MCP client with exit reason and details
 """
 
 import asyncio
 import logging
-import time
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
+from typing import TYPE_CHECKING, Any
 
 from .types import NotifyCallback
 
@@ -20,17 +19,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Windows NTSTATUS crash codes (converted to signed 32-bit integers)
+# Reference: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55
+WINDOWS_CRASH_CODES: dict[int, str] = {
+    -1073741819: "ACCESS_VIOLATION (0xC0000005)",
+    -1073741795: "ILLEGAL_INSTRUCTION (0xC000001D)",
+    -1073741571: "STACK_OVERFLOW (0xC00000FD)",
+    -1073740791: "HEAP_CORRUPTION (0xC0000374)",
+    -1073740940: "STATUS_STACK_BUFFER_OVERRUN (0xC0000409)",
+    -1073741676: "INTEGER_DIVIDE_BY_ZERO (0xC0000094)",
+    -1073741675: "INTEGER_OVERFLOW (0xC0000095)",
+    -1073741674: "PRIVILEGED_INSTRUCTION (0xC0000096)",
+    -1073741811: "INVALID_HANDLE (0xC0000008)",
+    -1073741801: "INVALID_PARAMETER (0xC000000D)",
+    -1073740777: "FATAL_APP_EXIT (0xC0000417)",
+}
+
+
 class HealthMonitor:
     """
-    Monitors editor health and handles automatic restart on crash.
+    Monitors editor health and notifies MCP client on exit.
 
     This subsystem runs a background task that periodically checks if the
-    editor process is still alive, and attempts to restart it if it crashes.
+    editor process is still alive. When the editor exits (for any reason),
+    it notifies the MCP client with exit details and stops monitoring.
     """
 
     # Configuration constants
-    MAX_RESTART_ATTEMPTS = 3
-    RESTART_COOLDOWN_SECONDS = 10.0
     HEALTH_CHECK_INTERVAL = 5.0
 
     def __init__(self, context: "EditorContext"):
@@ -41,20 +56,6 @@ class HealthMonitor:
             context: Shared editor context
         """
         self._ctx = context
-        self._restart_callback: Optional[Callable[..., Awaitable[dict[str, Any]]]] = None
-
-    def set_restart_callback(
-        self, callback: Callable[..., Awaitable[dict[str, Any]]]
-    ) -> None:
-        """
-        Set the callback to use for restart attempts.
-
-        This callback should be the _launch_internal method from LaunchManager.
-
-        Args:
-            callback: Async function to call for restart
-        """
-        self._restart_callback = callback
 
     def start(self, notify: NotifyCallback) -> None:
         """
@@ -82,12 +83,55 @@ class HealthMonitor:
         self._ctx._notify_callback = None
         logger.info("Health monitor stopped")
 
+    def analyze_exit(self, exit_code: int) -> dict[str, Any]:
+        """
+        Analyze process exit code and return detailed exit information.
+
+        Args:
+            exit_code: The process exit code
+
+        Returns:
+            Dictionary containing:
+            - exit_type: "normal", "error", or "crash"
+            - exit_code: The raw exit code
+            - description: Human-readable description
+            - hex_code: (for crashes) Hex representation of the code
+        """
+        if exit_code == 0:
+            return {
+                "exit_type": "normal",
+                "exit_code": 0,
+                "description": "Editor exited normally",
+            }
+        elif exit_code > 0:
+            return {
+                "exit_type": "error",
+                "exit_code": exit_code,
+                "description": f"Editor exited with error code {exit_code}",
+            }
+        else:
+            # Negative exit codes on Windows are NTSTATUS crash codes
+            crash_name = WINDOWS_CRASH_CODES.get(exit_code)
+            hex_code = hex(exit_code & 0xFFFFFFFF)
+
+            if crash_name:
+                description = f"Editor crashed: {crash_name}"
+            else:
+                description = f"Editor crashed with code {hex_code}"
+
+            return {
+                "exit_type": "crash",
+                "exit_code": exit_code,
+                "hex_code": hex_code,
+                "description": description,
+            }
+
     async def _monitor_loop(self) -> None:
         """
         Background coroutine that monitors editor health.
 
         Periodically checks if the editor process is alive.
-        If the process crashes, sends notification and attempts restart.
+        When the process exits, sends notification to MCP client with exit details.
         """
         logger.info("Health monitor loop started")
 
@@ -106,41 +150,56 @@ class HealthMonitor:
                     # Process has exited
                     self._ctx.editor.status = "stopped"
 
-                    # Check if this was an intentional stop
+                    # Analyze exit reason
+                    exit_info = self.analyze_exit(exit_code)
+                    exit_type = exit_info["exit_type"]
+                    description = exit_info["description"]
+
+                    # Check if this was an intentional stop (via editor_stop tool)
                     if self._ctx._intentional_stop:
-                        logger.info("Editor stopped intentionally, no restart needed")
-                        break
-
-                    # Editor crashed - notify and attempt restart
-                    logger.warning(f"Editor process exited unexpectedly (exit code: {exit_code})")
-
-                    if self._ctx._notify_callback:
-                        try:
-                            await self._ctx._notify_callback(
-                                "warning",
-                                f"Editor process crashed (exit code: {exit_code}). "
-                                f"Attempting automatic restart...",
-                            )
-                        except Exception as e:
-                            logger.error(f"Failed to send crash notification: {e}")
-
-                    # Attempt restart
-                    restart_success = await self._attempt_restart()
-
-                    if not restart_success:
-                        # Restart failed, exit monitor loop
+                        logger.info(f"Editor stopped intentionally: {description}")
+                        # Still notify but with info level
                         if self._ctx._notify_callback:
                             try:
                                 await self._ctx._notify_callback(
-                                    "error",
-                                    f"Failed to restart editor after {self._ctx._restart_count} attempts. "
-                                    f"Please restart manually using editor_launch.",
+                                    "info",
+                                    f"Editor stopped: {description}. "
+                                    f"Use 'editor_launch' to restart.",
                                 )
                             except Exception as e:
-                                logger.error(f"Failed to send restart failure notification: {e}")
+                                logger.error(f"Failed to send stop notification: {e}")
                         break
 
-                    # Restart succeeded, continue monitoring
+                    # Determine notification level based on exit type
+                    if exit_type == "normal":
+                        level = "info"
+                        logger.info(f"Editor exited normally (exit code: {exit_code})")
+                    elif exit_type == "error":
+                        level = "warning"
+                        logger.warning(f"Editor exited with error (exit code: {exit_code})")
+                    else:  # crash
+                        level = "error"
+                        logger.error(
+                            f"Editor crashed (exit code: {exit_code}, "
+                            f"hex: {exit_info.get('hex_code', 'N/A')})"
+                        )
+
+                    # Notify MCP client
+                    if self._ctx._notify_callback:
+                        try:
+                            await self._ctx._notify_callback(
+                                level,
+                                f"{description}. Use 'editor_launch' to restart.",
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to send exit notification: {e}")
+
+                    # Clean up remote client connection
+                    if self._ctx.editor and self._ctx.editor.remote_client:
+                        self._ctx.editor.remote_client._cleanup_sockets()
+
+                    # Exit monitor loop - no auto-restart
+                    break
 
         except asyncio.CancelledError:
             logger.info("Health monitor cancelled")
@@ -148,99 +207,3 @@ class HealthMonitor:
             logger.error(f"Health monitor error: {e}")
         finally:
             logger.info("Health monitor loop exited")
-
-    async def _attempt_restart(self) -> bool:
-        """
-        Attempt to restart the editor after a crash.
-
-        Implements:
-        - Restart count limiting (MAX_RESTART_ATTEMPTS)
-        - Cooldown period (RESTART_COOLDOWN_SECONDS)
-        - Uses saved launch parameters from EditorInstance
-
-        Returns:
-            True if restart succeeded, False if restart failed or not allowed
-        """
-        if self._restart_callback is None:
-            logger.error("No restart callback set, cannot restart")
-            return False
-
-        # Check restart count
-        if self._ctx._restart_count >= self.MAX_RESTART_ATTEMPTS:
-            logger.error(f"Maximum restart attempts ({self.MAX_RESTART_ATTEMPTS}) reached")
-            return False
-
-        # Check cooldown
-        current_time = time.time()
-        if self._ctx._last_restart_time is not None:
-            elapsed = current_time - self._ctx._last_restart_time
-            if elapsed < self.RESTART_COOLDOWN_SECONDS:
-                # Still in cooldown, wait for remaining time
-                remaining = self.RESTART_COOLDOWN_SECONDS - elapsed
-                logger.info(f"Restart cooldown: waiting {remaining:.1f}s")
-                await asyncio.sleep(remaining)
-
-        # Save launch parameters before cleanup
-        if self._ctx.editor is None:
-            logger.error("No editor instance to restart from")
-            return False
-
-        additional_paths = self._ctx.editor.additional_paths
-        wait_timeout = self._ctx.editor.wait_timeout
-
-        # Clean up old connection (but not the process - it's already dead)
-        if self._ctx.editor.remote_client:
-            self._ctx.editor.remote_client._cleanup_sockets()
-        self._ctx.editor = None
-
-        # Update restart tracking
-        self._ctx._restart_count += 1
-        self._ctx._last_restart_time = time.time()
-
-        logger.info(f"Attempting restart {self._ctx._restart_count}/{self.MAX_RESTART_ATTEMPTS}...")
-
-        # Send restart notification
-        if self._ctx._notify_callback:
-            try:
-                await self._ctx._notify_callback(
-                    "info",
-                    f"Restarting editor (attempt {self._ctx._restart_count}/{self.MAX_RESTART_ATTEMPTS})...",
-                )
-            except Exception as e:
-                logger.error(f"Failed to send restart notification: {e}")
-
-        # Attempt to launch (don't reset restart count here)
-        try:
-            result = await self._restart_callback(
-                notify=self._ctx._notify_callback,
-                additional_paths=additional_paths,
-                wait_timeout=wait_timeout,
-                reset_restart_state=False,  # Keep restart count
-            )
-
-            if result.get("success") or result.get("background_connecting"):
-                logger.info("Editor restart successful")
-                return True
-            else:
-                logger.error(f"Editor restart failed: {result.get('error')}")
-
-                # Check if requires_build - don't keep trying
-                if result.get("requires_build"):
-                    logger.error("Editor requires build. Cannot auto-restart until built.")
-                    if self._ctx._notify_callback:
-                        try:
-                            await self._ctx._notify_callback(
-                                "error",
-                                "Editor restart failed: project needs to be built. "
-                                "Run 'project_build' and then 'editor_launch' manually.",
-                            )
-                        except Exception:
-                            pass
-                    # Exhaust restart attempts to prevent further attempts
-                    self._ctx._restart_count = self.MAX_RESTART_ATTEMPTS
-
-                return False
-
-        except Exception as e:
-            logger.error(f"Exception during restart: {e}")
-            return False
