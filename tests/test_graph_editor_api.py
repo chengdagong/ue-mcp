@@ -625,3 +625,322 @@ print(json.dumps(result))
         assert "Compiled: True" in output_text, (
             f"Integration test failed - compilation failed. Output: {output_text}"
         )
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+class TestPhase4APIs:
+    """Test Phase 4 APIs: Branch nodes, Variables, and member variable creation."""
+
+    @pytest.mark.asyncio
+    async def test_add_branch_node(self, running_editor: ToolCaller):
+        """Test adding a Branch (if-then-else) node."""
+        code = """
+import unreal
+
+# Create a test Blueprint
+bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
+    "/Game/TestGraphEditor",
+    "BP_BranchTest",
+    unreal.Actor.static_class()
+)
+
+if bp:
+    # Add Branch node
+    branch_node = unreal.ExGraphEditorLibrary.add_branch_node(bp, 200, 100)
+
+    if branch_node:
+        title = unreal.ExGraphEditorLibrary.get_node_title(branch_node)
+        pins = unreal.ExGraphEditorLibrary.get_node_pin_names(branch_node)
+        print(f"Added branch node: {title}")
+        print(f"Pins: {[str(p) for p in pins]}")
+
+        # Compile to verify
+        compiled = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+        print(f"Compiled: {compiled}")
+
+        result = {"success": True, "title": title, "pin_count": len(pins), "compiled": compiled}
+    else:
+        result = {"success": False, "error": "Failed to add branch node"}
+else:
+    result = {"success": False, "error": "Blueprint not created"}
+
+import json
+print(json.dumps(result))
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": code},
+            timeout=60,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        assert "Added branch node:" in output_text, (
+            f"Failed to add branch node. Output: {output_text}"
+        )
+        assert "Compiled: True" in output_text, (
+            f"Branch node blueprint failed to compile. Output: {output_text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_add_member_variable(self, running_editor: ToolCaller):
+        """Test adding member variables to a Blueprint."""
+        code = """
+import unreal
+
+# Create a test Blueprint
+bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
+    "/Game/TestGraphEditor",
+    "BP_VariableTest",
+    unreal.Actor.static_class()
+)
+
+if bp:
+    # Check initial variables
+    vars_before = unreal.ExGraphEditorLibrary.get_blueprint_variables(bp)
+    print(f"Variables before: {[str(v) for v in vars_before]}")
+
+    # Add variables of different types
+    add_results = []
+    test_vars = [
+        ("TestInt", "int"),
+        ("TestFloat", "float"),
+        ("TestBool", "bool"),
+        ("TestString", "string"),
+        ("TestVector", "vector"),
+    ]
+
+    for var_name, var_type in test_vars:
+        success = unreal.ExGraphEditorLibrary.add_member_variable(
+            bp, unreal.Name(var_name), var_type
+        )
+        add_results.append((var_name, success))
+        print(f"Add {var_name} ({var_type}): {success}")
+
+    # Check variables after
+    vars_after = unreal.ExGraphEditorLibrary.get_blueprint_variables(bp)
+    print(f"Variables after: {[str(v) for v in vars_after]}")
+
+    # Compile to verify
+    compiled = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+    print(f"Compiled: {compiled}")
+
+    result = {
+        "success": len(vars_after) == len(test_vars),
+        "var_count": len(vars_after),
+        "compiled": compiled
+    }
+else:
+    result = {"success": False, "error": "Blueprint not created"}
+
+import json
+print(json.dumps(result))
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": code},
+            timeout=60,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        assert "Add TestInt (int): True" in output_text, (
+            f"Failed to add int variable. Output: {output_text}"
+        )
+        assert "Add TestVector (vector): True" in output_text, (
+            f"Failed to add vector variable. Output: {output_text}"
+        )
+        assert "Compiled: True" in output_text, (
+            f"Variable test blueprint failed to compile. Output: {output_text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_variable_get_set_nodes(self, running_editor: ToolCaller):
+        """Test adding VariableGet and VariableSet nodes."""
+        code = """
+import unreal
+
+# Load the variable test Blueprint we created in previous test
+bp = unreal.load_asset("/Game/TestGraphEditor/BP_VariableTest")
+if not bp:
+    # Create it if not found
+    bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
+        "/Game/TestGraphEditor",
+        "BP_VariableTest2",
+        unreal.Actor.static_class()
+    )
+    # Add a variable
+    unreal.ExGraphEditorLibrary.add_member_variable(bp, unreal.Name("TestVar"), "int")
+    unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+
+if bp:
+    # Get variables
+    variables = unreal.ExGraphEditorLibrary.get_blueprint_variables(bp)
+    print(f"Variables: {[str(v) for v in variables]}")
+
+    if len(variables) > 0:
+        test_var = variables[0]
+
+        # Add VariableGet node
+        get_node = unreal.ExGraphEditorLibrary.add_variable_get_node(
+            bp, test_var, 400, 0
+        )
+
+        if get_node:
+            get_title = unreal.ExGraphEditorLibrary.get_node_title(get_node)
+            get_pins = unreal.ExGraphEditorLibrary.get_node_pin_names(get_node)
+            print(f"VariableGet: {get_title}, pins: {[str(p) for p in get_pins]}")
+        else:
+            print("VariableGet: Failed")
+
+        # Add VariableSet node
+        set_node = unreal.ExGraphEditorLibrary.add_variable_set_node(
+            bp, test_var, 400, 150
+        )
+
+        if set_node:
+            set_title = unreal.ExGraphEditorLibrary.get_node_title(set_node)
+            set_pins = unreal.ExGraphEditorLibrary.get_node_pin_names(set_node)
+            print(f"VariableSet: {set_title}, pins: {[str(p) for p in set_pins]}")
+        else:
+            print("VariableSet: Failed")
+
+        # Compile to verify
+        compiled = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+        print(f"Compiled: {compiled}")
+
+        result = {
+            "success": get_node is not None and set_node is not None and compiled,
+            "get_node": get_node is not None,
+            "set_node": set_node is not None,
+            "compiled": compiled
+        }
+    else:
+        result = {"success": False, "error": "No variables in Blueprint"}
+else:
+    result = {"success": False, "error": "Blueprint not found"}
+
+import json
+print(json.dumps(result))
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": code},
+            timeout=60,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        assert "VariableGet:" in output_text and "pins:" in output_text, (
+            f"Failed to add VariableGet node. Output: {output_text}"
+        )
+        assert "VariableSet:" in output_text and "pins:" in output_text, (
+            f"Failed to add VariableSet node. Output: {output_text}"
+        )
+        assert "Compiled: True" in output_text, (
+            f"Variable node test blueprint failed to compile. Output: {output_text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_branch_with_variable_condition(self, running_editor: ToolCaller):
+        """
+        Integration test: Create logic with Branch node using variable as condition.
+        BeginPlay -> Get variable -> Branch -> (true/false paths)
+        """
+        code = """
+import unreal
+
+# Create a test Blueprint
+bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
+    "/Game/TestGraphEditor",
+    "BP_BranchWithVariable",
+    unreal.Actor.static_class()
+)
+
+if bp:
+    # Add a bool variable
+    var_added = unreal.ExGraphEditorLibrary.add_member_variable(
+        bp, unreal.Name("bShouldDestroy"), "bool"
+    )
+    print(f"Variable added: {var_added}")
+
+    # Compile to create the property
+    unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+
+    # Get BeginPlay event node (auto-created)
+    nodes = unreal.ExGraphEditorLibrary.get_all_nodes(bp)
+    begin_play = None
+    for node in nodes:
+        title = unreal.ExGraphEditorLibrary.get_node_title(node)
+        if "BeginPlay" in title or "开始运行" in title:
+            begin_play = node
+            break
+
+    # Add nodes
+    get_var = unreal.ExGraphEditorLibrary.add_variable_get_node(
+        bp, unreal.Name("bShouldDestroy"), 200, 0
+    )
+    branch = unreal.ExGraphEditorLibrary.add_branch_node(bp, 400, 0)
+
+    print(f"BeginPlay: {begin_play is not None}")
+    print(f"Get variable: {get_var is not None}")
+    print(f"Branch: {branch is not None}")
+
+    # Connect: BeginPlay -> Branch exec
+    if begin_play and branch:
+        exec_connected = unreal.ExGraphEditorLibrary.connect_nodes(
+            begin_play, "then",
+            branch, "execute"
+        )
+        print(f"Exec connected: {exec_connected}")
+
+    # Connect: Variable -> Branch condition
+    if get_var and branch:
+        cond_connected = unreal.ExGraphEditorLibrary.connect_nodes(
+            get_var, "bShouldDestroy",  # Output pin name is the variable name
+            branch, "Condition"
+        )
+        print(f"Condition connected: {cond_connected}")
+
+    # Final compile
+    compiled = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+    print(f"Final compile: {compiled}")
+
+    result = {
+        "success": compiled,
+        "var_added": var_added,
+        "nodes_created": all([begin_play, get_var, branch]),
+        "compiled": compiled
+    }
+else:
+    result = {"success": False, "error": "Blueprint not created"}
+
+import json
+print(json.dumps(result))
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": code},
+            timeout=120,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        assert "Variable added: True" in output_text, (
+            f"Failed to add variable. Output: {output_text}"
+        )
+        assert "Branch: True" in output_text, (
+            f"Failed to create branch node. Output: {output_text}"
+        )
+        assert "Final compile: True" in output_text, (
+            f"Integration test failed - compilation failed. Output: {output_text}"
+        )

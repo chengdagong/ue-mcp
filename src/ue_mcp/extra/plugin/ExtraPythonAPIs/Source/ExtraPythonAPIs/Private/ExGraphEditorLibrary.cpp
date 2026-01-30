@@ -6,6 +6,9 @@
 #include "EdGraphSchema_K2.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_Event.h"
+#include "K2Node_IfThenElse.h"
+#include "K2Node_VariableGet.h"
+#include "K2Node_VariableSet.h"
 #include "Factories/BlueprintFactory.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogExGraphEditor, Log, All);
@@ -203,6 +206,162 @@ UEdGraphNode* UExGraphEditorLibrary::AddEventNode(
     return EventNode;
 }
 
+UEdGraphNode* UExGraphEditorLibrary::AddBranchNode(
+    UBlueprint* TargetBlueprint,
+    int32 NodePosX,
+    int32 NodePosY)
+{
+    if (!TargetBlueprint)
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("AddBranchNode: TargetBlueprint is null"));
+        return nullptr;
+    }
+
+    UEdGraph* Graph = GetEventGraph(TargetBlueprint);
+    if (!Graph)
+    {
+        return nullptr;
+    }
+
+    // Create the Branch (IfThenElse) node
+    UK2Node_IfThenElse* NewNode = NewObject<UK2Node_IfThenElse>(Graph);
+    NewNode->CreateNewGuid();
+    NewNode->NodePosX = NodePosX;
+    NewNode->NodePosY = NodePosY;
+
+    // Add to graph and create pins
+    Graph->AddNode(NewNode, false, false);
+    NewNode->AllocateDefaultPins();
+
+    // Notify changes
+    Graph->NotifyGraphChanged();
+    FBlueprintEditorUtils::MarkBlueprintAsModified(TargetBlueprint);
+
+    UE_LOG(LogExGraphEditor, Log, TEXT("AddBranchNode: Added Branch node at (%d, %d)"), NodePosX, NodePosY);
+
+    return NewNode;
+}
+
+UEdGraphNode* UExGraphEditorLibrary::AddVariableGetNode(
+    UBlueprint* TargetBlueprint,
+    FName VariableName,
+    int32 NodePosX,
+    int32 NodePosY)
+{
+    if (!TargetBlueprint)
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("AddVariableGetNode: TargetBlueprint is null"));
+        return nullptr;
+    }
+
+    UEdGraph* Graph = GetEventGraph(TargetBlueprint);
+    if (!Graph)
+    {
+        return nullptr;
+    }
+
+    // Verify the variable exists in the Blueprint
+    FProperty* VarProperty = nullptr;
+    for (FBPVariableDescription& Var : TargetBlueprint->NewVariables)
+    {
+        if (Var.VarName == VariableName)
+        {
+            VarProperty = TargetBlueprint->GeneratedClass ?
+                TargetBlueprint->GeneratedClass->FindPropertyByName(VariableName) : nullptr;
+            break;
+        }
+    }
+
+    if (!VarProperty)
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("AddVariableGetNode: Variable '%s' not found in Blueprint '%s'"),
+            *VariableName.ToString(), *TargetBlueprint->GetName());
+        return nullptr;
+    }
+
+    // Create the VariableGet node
+    UK2Node_VariableGet* NewNode = NewObject<UK2Node_VariableGet>(Graph);
+    NewNode->CreateNewGuid();
+    NewNode->NodePosX = NodePosX;
+    NewNode->NodePosY = NodePosY;
+
+    // Set up the variable reference
+    NewNode->VariableReference.SetSelfMember(VariableName);
+
+    // Add to graph and create pins
+    Graph->AddNode(NewNode, false, false);
+    NewNode->AllocateDefaultPins();
+
+    // Notify changes
+    Graph->NotifyGraphChanged();
+    FBlueprintEditorUtils::MarkBlueprintAsModified(TargetBlueprint);
+
+    UE_LOG(LogExGraphEditor, Log, TEXT("AddVariableGetNode: Added getter for '%s' at (%d, %d)"),
+        *VariableName.ToString(), NodePosX, NodePosY);
+
+    return NewNode;
+}
+
+UEdGraphNode* UExGraphEditorLibrary::AddVariableSetNode(
+    UBlueprint* TargetBlueprint,
+    FName VariableName,
+    int32 NodePosX,
+    int32 NodePosY)
+{
+    if (!TargetBlueprint)
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("AddVariableSetNode: TargetBlueprint is null"));
+        return nullptr;
+    }
+
+    UEdGraph* Graph = GetEventGraph(TargetBlueprint);
+    if (!Graph)
+    {
+        return nullptr;
+    }
+
+    // Verify the variable exists in the Blueprint
+    FProperty* VarProperty = nullptr;
+    for (FBPVariableDescription& Var : TargetBlueprint->NewVariables)
+    {
+        if (Var.VarName == VariableName)
+        {
+            VarProperty = TargetBlueprint->GeneratedClass ?
+                TargetBlueprint->GeneratedClass->FindPropertyByName(VariableName) : nullptr;
+            break;
+        }
+    }
+
+    if (!VarProperty)
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("AddVariableSetNode: Variable '%s' not found in Blueprint '%s'"),
+            *VariableName.ToString(), *TargetBlueprint->GetName());
+        return nullptr;
+    }
+
+    // Create the VariableSet node
+    UK2Node_VariableSet* NewNode = NewObject<UK2Node_VariableSet>(Graph);
+    NewNode->CreateNewGuid();
+    NewNode->NodePosX = NodePosX;
+    NewNode->NodePosY = NodePosY;
+
+    // Set up the variable reference
+    NewNode->VariableReference.SetSelfMember(VariableName);
+
+    // Add to graph and create pins
+    Graph->AddNode(NewNode, false, false);
+    NewNode->AllocateDefaultPins();
+
+    // Notify changes
+    Graph->NotifyGraphChanged();
+    FBlueprintEditorUtils::MarkBlueprintAsModified(TargetBlueprint);
+
+    UE_LOG(LogExGraphEditor, Log, TEXT("AddVariableSetNode: Added setter for '%s' at (%d, %d)"),
+        *VariableName.ToString(), NodePosX, NodePosY);
+
+    return NewNode;
+}
+
 // ============================================================================
 // UPDATE Operations
 // ============================================================================
@@ -365,6 +524,28 @@ FString UExGraphEditorLibrary::GetNodeTitle(UEdGraphNode* Node)
     return Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
 }
 
+TArray<FName> UExGraphEditorLibrary::GetBlueprintVariables(UBlueprint* Blueprint)
+{
+    TArray<FName> Result;
+
+    if (!Blueprint)
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("GetBlueprintVariables: Blueprint is null"));
+        return Result;
+    }
+
+    // Get variables from the Blueprint's NewVariables array
+    for (const FBPVariableDescription& Var : Blueprint->NewVariables)
+    {
+        Result.Add(Var.VarName);
+    }
+
+    UE_LOG(LogExGraphEditor, Log, TEXT("GetBlueprintVariables: Found %d variables in '%s'"),
+        Result.Num(), *Blueprint->GetName());
+
+    return Result;
+}
+
 // ============================================================================
 // DELETE Operations
 // ============================================================================
@@ -429,4 +610,120 @@ bool UExGraphEditorLibrary::DisconnectPin(UEdGraphNode* Node, const FString& Pin
     UE_LOG(LogExGraphEditor, Log, TEXT("DisconnectPin: Broke %d links from '%s'"), NumLinks, *Pin->PinName.ToString());
 
     return true;
+}
+
+bool UExGraphEditorLibrary::AddMemberVariable(
+    UBlueprint* Blueprint,
+    FName VariableName,
+    const FString& VariableType)
+{
+    if (!Blueprint)
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("AddMemberVariable: Blueprint is null"));
+        return false;
+    }
+
+    if (VariableName == NAME_None)
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("AddMemberVariable: VariableName is empty"));
+        return false;
+    }
+
+    // Check if variable already exists
+    for (const FBPVariableDescription& Var : Blueprint->NewVariables)
+    {
+        if (Var.VarName == VariableName)
+        {
+            UE_LOG(LogExGraphEditor, Warning, TEXT("AddMemberVariable: Variable '%s' already exists in Blueprint '%s'"),
+                *VariableName.ToString(), *Blueprint->GetName());
+            return false;
+        }
+    }
+
+    // Determine the pin type based on VariableType string
+    FEdGraphPinType PinType;
+    FString TypeLower = VariableType.ToLower();
+
+    if (TypeLower == TEXT("bool") || TypeLower == TEXT("boolean"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+    }
+    else if (TypeLower == TEXT("int") || TypeLower == TEXT("int32") || TypeLower == TEXT("integer"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Int;
+    }
+    else if (TypeLower == TEXT("int64"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Int64;
+    }
+    else if (TypeLower == TEXT("float") || TypeLower == TEXT("real"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Real;
+        PinType.PinSubCategory = UEdGraphSchema_K2::PC_Float;
+    }
+    else if (TypeLower == TEXT("double"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Real;
+        PinType.PinSubCategory = UEdGraphSchema_K2::PC_Double;
+    }
+    else if (TypeLower == TEXT("string") || TypeLower == TEXT("fstring"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_String;
+    }
+    else if (TypeLower == TEXT("name") || TypeLower == TEXT("fname"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Name;
+    }
+    else if (TypeLower == TEXT("text") || TypeLower == TEXT("ftext"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Text;
+    }
+    else if (TypeLower == TEXT("vector") || TypeLower == TEXT("fvector"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+        PinType.PinSubCategoryObject = TBaseStructure<FVector>::Get();
+    }
+    else if (TypeLower == TEXT("rotator") || TypeLower == TEXT("frotator"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+        PinType.PinSubCategoryObject = TBaseStructure<FRotator>::Get();
+    }
+    else if (TypeLower == TEXT("transform") || TypeLower == TEXT("ftransform"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+        PinType.PinSubCategoryObject = TBaseStructure<FTransform>::Get();
+    }
+    else if (TypeLower == TEXT("vector2d") || TypeLower == TEXT("fvector2d"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+        PinType.PinSubCategoryObject = TBaseStructure<FVector2D>::Get();
+    }
+    else if (TypeLower == TEXT("linearcolor") || TypeLower == TEXT("flinearcolor") || TypeLower == TEXT("color"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+        PinType.PinSubCategoryObject = TBaseStructure<FLinearColor>::Get();
+    }
+    else
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("AddMemberVariable: Unknown type '%s'. Supported types: bool, int, int64, float, double, string, name, text, vector, rotator, transform, vector2d, color"),
+            *VariableType);
+        return false;
+    }
+
+    // Add the variable using FBlueprintEditorUtils
+    bool bSuccess = FBlueprintEditorUtils::AddMemberVariable(Blueprint, VariableName, PinType);
+
+    if (bSuccess)
+    {
+        FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+        UE_LOG(LogExGraphEditor, Log, TEXT("AddMemberVariable: Added '%s' (%s) to Blueprint '%s'"),
+            *VariableName.ToString(), *VariableType, *Blueprint->GetName());
+    }
+    else
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("AddMemberVariable: Failed to add '%s' to Blueprint '%s'"),
+            *VariableName.ToString(), *Blueprint->GetName());
+    }
+
+    return bSuccess;
 }

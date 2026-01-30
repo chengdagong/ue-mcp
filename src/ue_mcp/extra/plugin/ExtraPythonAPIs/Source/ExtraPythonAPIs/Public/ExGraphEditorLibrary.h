@@ -76,6 +76,53 @@ public:
         int32 NodePosY = 0
     );
 
+    /**
+     * Add a Branch (If) node to the Blueprint.
+     * The Branch node has one input bool pin "Condition" and two output exec pins "True" and "False".
+     * @param TargetBlueprint The Blueprint to modify
+     * @param NodePosX X position in graph
+     * @param NodePosY Y position in graph
+     * @return The created Branch node, or nullptr on failure
+     */
+    UFUNCTION(BlueprintCallable, Category = "ExtraPythonAPIs|Graph", meta = (DevelopmentOnly))
+    static UEdGraphNode* AddBranchNode(
+        UBlueprint* TargetBlueprint,
+        int32 NodePosX = 0,
+        int32 NodePosY = 0
+    );
+
+    /**
+     * Add a Variable Get node to read a Blueprint variable.
+     * @param TargetBlueprint The Blueprint to modify
+     * @param VariableName Name of the variable to get (must exist in Blueprint)
+     * @param NodePosX X position in graph
+     * @param NodePosY Y position in graph
+     * @return The created VariableGet node, or nullptr on failure
+     */
+    UFUNCTION(BlueprintCallable, Category = "ExtraPythonAPIs|Graph", meta = (DevelopmentOnly))
+    static UEdGraphNode* AddVariableGetNode(
+        UBlueprint* TargetBlueprint,
+        FName VariableName,
+        int32 NodePosX = 0,
+        int32 NodePosY = 0
+    );
+
+    /**
+     * Add a Variable Set node to write a Blueprint variable.
+     * @param TargetBlueprint The Blueprint to modify
+     * @param VariableName Name of the variable to set (must exist in Blueprint)
+     * @param NodePosX X position in graph
+     * @param NodePosY Y position in graph
+     * @return The created VariableSet node, or nullptr on failure
+     */
+    UFUNCTION(BlueprintCallable, Category = "ExtraPythonAPIs|Graph", meta = (DevelopmentOnly))
+    static UEdGraphNode* AddVariableSetNode(
+        UBlueprint* TargetBlueprint,
+        FName VariableName,
+        int32 NodePosX = 0,
+        int32 NodePosY = 0
+    );
+
     // ========================================================================
     // UPDATE Operations
     // ========================================================================
@@ -147,6 +194,29 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "ExtraPythonAPIs|Graph", meta = (DevelopmentOnly))
     static FString GetNodeTitle(UEdGraphNode* Node);
+
+    /**
+     * Get all variable names defined in a Blueprint.
+     * @param Blueprint The Blueprint to query
+     * @return Array of variable names
+     */
+    UFUNCTION(BlueprintCallable, Category = "ExtraPythonAPIs|Graph", meta = (DevelopmentOnly))
+    static TArray<FName> GetBlueprintVariables(UBlueprint* Blueprint);
+
+    /**
+     * Add a member variable to a Blueprint.
+     * Supported types: "bool", "int", "float", "string", "vector", "rotator", "transform"
+     * @param Blueprint The Blueprint to modify
+     * @param VariableName Name for the new variable
+     * @param VariableType Type of the variable (e.g., "bool", "int", "float")
+     * @return True if variable was added successfully
+     */
+    UFUNCTION(BlueprintCallable, Category = "ExtraPythonAPIs|Graph", meta = (DevelopmentOnly))
+    static bool AddMemberVariable(
+        UBlueprint* Blueprint,
+        FName VariableName,
+        const FString& VariableType
+    );
 
     // ========================================================================
     // DELETE Operations
