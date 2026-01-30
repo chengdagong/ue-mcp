@@ -5,6 +5,7 @@ Unit tests for code_inspector module.
 import pytest
 
 from ue_mcp.validation.code_inspector import (
+    APIPitfallsChecker,
     BaseChecker,
     BlockingCallChecker,
     CodeInspector,
@@ -625,3 +626,114 @@ def test_func():
             if i.checker == "UnrealAPIChecker" and "NonExistentAPI" in i.message
         ]
         assert len(unreal_errors) >= 1
+
+
+class TestAPIPitfallsChecker:
+    """Tests for APIPitfallsChecker."""
+
+    def test_detects_rotator_positional_args(self):
+        """Detects unreal.Rotator() with positional arguments as ERROR."""
+        code = """
+import unreal
+rot = unreal.Rotator(0, 90, 0)
+"""
+        result = inspect_code(code)
+        assert not result.allowed  # ERROR blocks execution
+        assert result.error_count >= 1
+        pitfall_issues = [i for i in result.issues if i.checker == "APIPitfallsChecker"]
+        assert len(pitfall_issues) >= 1
+        assert "Rotator" in pitfall_issues[0].message
+        assert "roll, pitch, yaw" in pitfall_issues[0].message
+
+    def test_detects_rotator_single_positional_arg(self):
+        """Detects unreal.Rotator() with even a single positional argument as ERROR."""
+        code = """
+import unreal
+rot = unreal.Rotator(90)
+"""
+        result = inspect_code(code)
+        assert not result.allowed
+        pitfall_issues = [i for i in result.issues if i.checker == "APIPitfallsChecker"]
+        assert len(pitfall_issues) >= 1
+
+    def test_allows_rotator_keyword_args(self):
+        """Allows unreal.Rotator() with keyword arguments."""
+        code = """
+import unreal
+rot = unreal.Rotator(roll=0, pitch=90, yaw=0)
+"""
+        result = inspect_code(code)
+        pitfall_issues = [i for i in result.issues if i.checker == "APIPitfallsChecker"]
+        assert len(pitfall_issues) == 0
+
+    def test_allows_rotator_no_args(self):
+        """Allows unreal.Rotator() with no arguments (default constructor)."""
+        code = """
+import unreal
+rot = unreal.Rotator()
+"""
+        result = inspect_code(code)
+        pitfall_issues = [i for i in result.issues if i.checker == "APIPitfallsChecker"]
+        assert len(pitfall_issues) == 0
+
+    def test_handles_unreal_alias(self):
+        """Detects Rotator pitfall with unreal module alias."""
+        code = """
+import unreal as ue
+rot = ue.Rotator(0, 90, 0)
+"""
+        result = inspect_code(code)
+        assert not result.allowed
+        pitfall_issues = [i for i in result.issues if i.checker == "APIPitfallsChecker"]
+        assert len(pitfall_issues) >= 1
+
+    def test_line_number_tracking(self):
+        """Correctly tracks line numbers of pitfall calls."""
+        code = """import unreal
+# comment
+rot = unreal.Rotator(0, 90, 0)
+"""
+        result = inspect_code(code)
+        pitfall_issues = [i for i in result.issues if i.checker == "APIPitfallsChecker"]
+        assert len(pitfall_issues) >= 1
+        assert pitfall_issues[0].line_number == 3
+
+    def test_provides_suggestion(self):
+        """Provides helpful suggestion for Rotator pitfall."""
+        code = """
+import unreal
+rot = unreal.Rotator(0, 90, 0)
+"""
+        result = inspect_code(code)
+        pitfall_issues = [i for i in result.issues if i.checker == "APIPitfallsChecker"]
+        assert len(pitfall_issues) >= 1
+        assert pitfall_issues[0].suggestion is not None
+        assert "keyword" in pitfall_issues[0].suggestion.lower()
+
+    def test_checker_registered_by_default(self):
+        """APIPitfallsChecker is registered by default in CodeInspector."""
+        inspector = CodeInspector()
+        checkers = inspector.get_checkers()
+        checker_names = [c.name for c in checkers]
+        assert "APIPitfallsChecker" in checker_names
+
+    def test_detects_multiple_rotator_calls(self):
+        """Detects multiple Rotator calls with positional args."""
+        code = """
+import unreal
+rot1 = unreal.Rotator(0, 90, 0)
+rot2 = unreal.Rotator(45, 0, 0)
+"""
+        result = inspect_code(code)
+        pitfall_issues = [i for i in result.issues if i.checker == "APIPitfallsChecker"]
+        assert len(pitfall_issues) == 2
+
+    def test_ignores_other_classes(self):
+        """Ignores other unreal classes with positional args."""
+        code = """
+import unreal
+vec = unreal.Vector(1, 2, 3)
+"""
+        result = inspect_code(code)
+        pitfall_issues = [i for i in result.issues if i.checker == "APIPitfallsChecker"]
+        assert len(pitfall_issues) == 0

@@ -607,6 +607,88 @@ class UnrealAPIChecker(BaseChecker):
         return True, None, current
 
 
+class APIPitfallsChecker(BaseChecker):
+    """
+    Detects common API usage pitfalls in UE5 Python code.
+
+    Currently detects:
+    - unreal.Rotator() called with positional arguments (parameter order is roll, pitch, yaw)
+    """
+
+    @property
+    def name(self) -> str:
+        return "APIPitfallsChecker"
+
+    @property
+    def description(self) -> str:
+        return "Detects common API usage pitfalls in UE5 Python code"
+
+    def check(self, tree: ast.AST, code: str) -> List[InspectionIssue]:
+        """Check for API pitfalls."""
+        issues: List[InspectionIssue] = []
+
+        # Track unreal module aliases
+        unreal_aliases: Set[str] = set()
+
+        # First pass: collect import information
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "unreal":
+                        name = alias.asname if alias.asname else alias.name
+                        unreal_aliases.add(name)
+
+        # Second pass: find Rotator calls with positional arguments
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                rotator_issue = self._check_rotator_positional_args(node, unreal_aliases)
+                if rotator_issue:
+                    issues.append(rotator_issue)
+
+        return issues
+
+    def _check_rotator_positional_args(
+        self, node: ast.Call, unreal_aliases: Set[str]
+    ) -> Optional[InspectionIssue]:
+        """
+        Check if a Call node is unreal.Rotator() with positional arguments.
+
+        Args:
+            node: AST Call node
+            unreal_aliases: Set of names that refer to the unreal module
+
+        Returns:
+            InspectionIssue if pitfall detected, None otherwise
+        """
+        # Pattern: unreal.Rotator(...)
+        if not isinstance(node.func, ast.Attribute):
+            return None
+
+        if node.func.attr != "Rotator":
+            return None
+
+        if not isinstance(node.func.value, ast.Name):
+            return None
+
+        if node.func.value.id not in unreal_aliases:
+            return None
+
+        # Check if there are positional arguments
+        if len(node.args) > 0:
+            return InspectionIssue(
+                severity=IssueSeverity.ERROR,
+                checker=self.name,
+                message=(
+                    "unreal.Rotator() called with positional arguments. "
+                    "Parameter order is (roll, pitch, yaw), which is counterintuitive and error-prone."
+                ),
+                line_number=node.lineno,
+                suggestion="Use keyword arguments for clarity: unreal.Rotator(roll=0, pitch=90, yaw=0)",
+            )
+
+        return None
+
+
 class CodeInspector:
     """
     Main code inspector that runs all registered checkers.
@@ -627,6 +709,7 @@ class CodeInspector:
         self.register_checker(BlockingCallChecker())
         self.register_checker(DeprecatedAPIChecker())
         self.register_checker(UnrealAPIChecker())
+        self.register_checker(APIPitfallsChecker())
 
     def register_checker(self, checker: BaseChecker):
         """
