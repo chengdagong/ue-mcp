@@ -3,8 +3,32 @@
 #include "ExBlueprintComponentLibrary.h"
 #include "SubobjectData.h"
 #include "SubobjectDataSubsystem.h"
+#include "Kismet2/BlueprintEditorUtils.h"
+#include "Engine/SCS_Node.h"
+#include "Engine/SimpleConstructionScript.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogExtraPythonAPIs, Log, All);
+
+// Helper function to refresh Blueprint editors after component modifications
+static void RefreshBlueprintEditorFromSubobjectData(FSubobjectData* Data)
+{
+	if (!Data)
+	{
+		return;
+	}
+
+	// Try to get the Blueprint from the SCS node
+	if (USCS_Node* SCSNode = Data->GetSCSNode())
+	{
+		if (USimpleConstructionScript* SCS = SCSNode->GetSCS())
+		{
+			if (UBlueprint* Blueprint = SCS->GetBlueprint())
+			{
+				FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+			}
+		}
+	}
+}
 
 bool UExBlueprintComponentLibrary::SetComponentSocketAttachment(const FSubobjectDataHandle& Handle, FName SocketName)
 {
@@ -18,6 +42,9 @@ bool UExBlueprintComponentLibrary::SetComponentSocketAttachment(const FSubobject
 
 	// Use the public SetSocketName method which properly sets SCS_Node->AttachToName
 	Data->SetSocketName(SocketName);
+
+	// Refresh Blueprint editor
+	RefreshBlueprintEditorFromSubobjectData(Data);
 
 	UE_LOG(LogExtraPythonAPIs, Log, TEXT("SetComponentSocketAttachment: Set socket to '%s'"), *SocketName.ToString());
 	return true;
@@ -65,6 +92,9 @@ bool UExBlueprintComponentLibrary::SetupComponentAttachment(
 
 	// Then set the socket name separately (this properly sets SCS_Node->AttachToName)
 	ChildData->SetSocketName(SocketName);
+
+	// Refresh Blueprint editor
+	RefreshBlueprintEditorFromSubobjectData(ChildData);
 
 	UE_LOG(LogExtraPythonAPIs, Log, TEXT("SetupComponentAttachment: Attached to socket '%s'"), *SocketName.ToString());
 	return true;
