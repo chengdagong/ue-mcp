@@ -1,0 +1,627 @@
+"""
+ExGraphEditorLibrary API Tests using mcp-pytest fixtures.
+
+Tests the Blueprint graph editing functionality in ExtraPythonAPIs plugin.
+Uses ThirdPersonTemplate project for testing.
+
+Tests:
+1. Check if ExGraphEditorLibrary is available
+2. Create Blueprint assets
+3. Add function call and event nodes
+4. Connect nodes and set pin values
+5. Read node information
+6. Delete nodes and disconnect pins
+7. Compile blueprints
+
+Usage:
+    pytest tests/test_graph_editor_api.py -v -s
+
+Requirements:
+    - ThirdPersonTemplate project in tests/fixtures/
+    - ExtraPythonAPIs plugin must be compiled and installed in the project
+"""
+
+import json
+import asyncio
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from mcp_pytest import ToolCaller, ToolCallResult
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+
+def parse_tool_result(result: ToolCallResult) -> dict[str, Any]:
+    """Parse tool result text content as JSON."""
+    text = result.text_content
+    if not text:
+        return {"is_error": result.is_error, "content": str(result.result.content)}
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {"raw_text": text}
+
+
+def extract_output_text(output: Any) -> str:
+    """Extract text from output field which can be in different formats."""
+    if output is None:
+        return ""
+
+    if isinstance(output, str):
+        return output
+
+    if isinstance(output, list):
+        lines = []
+        for item in output:
+            if isinstance(item, str):
+                lines.append(item)
+            elif isinstance(item, dict):
+                if "output" in item:
+                    lines.append(str(item["output"]))
+                else:
+                    lines.append(str(item))
+            else:
+                lines.append(str(item))
+        return "\n".join(lines)
+
+    return str(output)
+
+
+# =============================================================================
+# Fixtures
+# =============================================================================
+
+
+@pytest.fixture(scope="module")
+def thirdperson_template_path() -> Path:
+    """Return the path to ThirdPersonTemplate fixture."""
+    return Path(__file__).parent / "fixtures" / "ThirdPersonTemplate"
+
+
+@pytest.fixture(scope="module")
+def test_blueprint_path() -> str:
+    """Return the asset path for test blueprints."""
+    return "/Game/TestGraphEditor"
+
+
+# =============================================================================
+# Test Classes
+# =============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+class TestGraphEditorAPIAvailability:
+    """Test that ExGraphEditorLibrary is available."""
+
+    @pytest.mark.asyncio
+    async def test_check_library_available(self, running_editor: ToolCaller):
+        """Test that ExGraphEditorLibrary is available in UE Python."""
+        await asyncio.sleep(2)
+
+        check_code = """
+import unreal
+
+# Check if ExGraphEditorLibrary class exists
+try:
+    lib = unreal.ExGraphEditorLibrary
+    print("ExGraphEditorLibrary is available")
+
+    # List available methods
+    methods = [m for m in dir(lib) if not m.startswith('_')]
+    print(f"Available methods: {methods}")
+
+    result = {"available": True, "methods": methods}
+except AttributeError as e:
+    print(f"ExGraphEditorLibrary not found: {e}")
+    result = {"available": False, "error": str(e)}
+
+print(f"RESULT: {result}")
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": check_code},
+            timeout=60,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        assert "ExGraphEditorLibrary is available" in output_text, (
+            f"ExGraphEditorLibrary not available. Output: {output_text}"
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+class TestGraphEditorCRUD:
+    """Test CRUD operations for Blueprint graph editing."""
+
+    @pytest.mark.asyncio
+    async def test_create_blueprint_asset(self, running_editor: ToolCaller, test_blueprint_path: str):
+        """Test creating a new Blueprint asset."""
+        code = f"""
+import unreal
+
+# Create a new Blueprint
+bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
+    "{test_blueprint_path}",
+    "BP_TestActor",
+    unreal.Actor.static_class()
+)
+
+if bp:
+    print(f"Created Blueprint: {{bp.get_name()}}")
+    result = {{"success": True, "name": bp.get_name()}}
+else:
+    print("Failed to create Blueprint")
+    result = {{"success": False}}
+
+import json
+print(json.dumps(result))
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": code},
+            timeout=60,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        assert "Created Blueprint:" in output_text or '"success": true' in output_text.lower(), (
+            f"Failed to create Blueprint. Output: {output_text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_add_event_node(self, running_editor: ToolCaller, test_blueprint_path: str):
+        """Test adding an event node (BeginPlay)."""
+        code = f"""
+import unreal
+
+# Load the test Blueprint
+bp = unreal.load_asset("{test_blueprint_path}/BP_TestActor")
+if not bp:
+    print("Blueprint not found, creating new one")
+    bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
+        "{test_blueprint_path}",
+        "BP_TestActor",
+        unreal.Actor.static_class()
+    )
+
+if bp:
+    # Add BeginPlay event
+    event_node = unreal.ExGraphEditorLibrary.add_event_node(
+        bp,
+        unreal.Actor.static_class(),
+        "ReceiveBeginPlay",
+        0, 0
+    )
+
+    if event_node:
+        title = unreal.ExGraphEditorLibrary.get_node_title(event_node)
+        pins = unreal.ExGraphEditorLibrary.get_node_pin_names(event_node)
+        print(f"Added event node: {{title}}")
+        print(f"Pins: {{[str(p) for p in pins]}}")
+        result = {{"success": True, "title": title, "pin_count": len(pins)}}
+    else:
+        print("Failed to add event node")
+        result = {{"success": False, "error": "add_event_node returned None"}}
+else:
+    result = {{"success": False, "error": "Blueprint not found"}}
+
+import json
+print(json.dumps(result))
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": code},
+            timeout=60,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        assert "Added event node:" in output_text or '"success": true' in output_text.lower(), (
+            f"Failed to add event node. Output: {output_text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_add_call_function_node(self, running_editor: ToolCaller, test_blueprint_path: str):
+        """Test adding a function call node (GetTimeSeconds from GameplayStatics)."""
+        code = f"""
+import unreal
+
+bp = unreal.load_asset("{test_blueprint_path}/BP_TestActor")
+if bp:
+    # Add GetTimeSeconds function call (GameplayStatics is exposed to Python)
+    func_node = unreal.ExGraphEditorLibrary.add_call_function_node(
+        bp,
+        unreal.GameplayStatics.static_class(),
+        "GetTimeSeconds",
+        300, 0
+    )
+
+    if func_node:
+        title = unreal.ExGraphEditorLibrary.get_node_title(func_node)
+        pins = unreal.ExGraphEditorLibrary.get_node_pin_names(func_node)
+        print(f"Added function node: {{title}}")
+        print(f"Pins: {{[str(p) for p in pins]}}")
+        result = {{"success": True, "title": title, "pin_count": len(pins)}}
+    else:
+        print("Failed to add function node")
+        result = {{"success": False, "error": "add_call_function_node returned None"}}
+else:
+    result = {{"success": False, "error": "Blueprint not found"}}
+
+import json
+print(json.dumps(result))
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": code},
+            timeout=60,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        assert "Added function node:" in output_text or '"success": true' in output_text.lower(), (
+            f"Failed to add function node. Output: {output_text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_connect_nodes(self, running_editor: ToolCaller, test_blueprint_path: str):
+        """Test connecting two nodes."""
+        code = f"""
+import unreal
+
+bp = unreal.load_asset("{test_blueprint_path}/BP_TestActor")
+if bp:
+    # Add a function node to connect to
+    func_node = unreal.ExGraphEditorLibrary.add_call_function_node(
+        bp, unreal.Actor.static_class(), "K2_DestroyActor", 400, 0
+    )
+
+    # Get all nodes and find the BeginPlay event
+    nodes = unreal.ExGraphEditorLibrary.get_all_nodes(bp)
+    print(f"Found {{len(nodes)}} nodes")
+
+    event_node = None
+    for node in nodes:
+        title = unreal.ExGraphEditorLibrary.get_node_title(node)
+        if "BeginPlay" in title or "\u5f00\u59cb\u8fd0\u884c" in title:  # Chinese: 开始运行
+            event_node = node
+            break
+
+    if event_node and func_node:
+        # Connect event's exec pin to function's exec pin
+        success = unreal.ExGraphEditorLibrary.connect_nodes(
+            event_node, "then",
+            func_node, "execute"
+        )
+        print(f"Connection result: {{success}}")
+        result = {{"success": success}}
+    else:
+        print(f"Could not find both nodes. Event: {{event_node}}, Func: {{func_node}}")
+        result = {{"success": False, "error": "Nodes not found"}}
+else:
+    result = {{"success": False, "error": "Blueprint not found"}}
+
+import json
+print(json.dumps(result))
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": code},
+            timeout=60,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        assert "Connection result: True" in output_text or '"success": true' in output_text.lower(), (
+            f"Failed to connect nodes. Output: {output_text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_pin_default_value(self, running_editor: ToolCaller, test_blueprint_path: str):
+        """Test setting a pin's default value."""
+        code = f"""
+import unreal
+
+bp = unreal.load_asset("{test_blueprint_path}/BP_TestActor")
+if bp:
+    # Add a SetGamePaused node which has a bool pin we can set
+    func_node = unreal.ExGraphEditorLibrary.add_call_function_node(
+        bp, unreal.GameplayStatics.static_class(), "SetGamePaused", 500, 0
+    )
+
+    if func_node:
+        # Set the bPaused pin value to true
+        success = unreal.ExGraphEditorLibrary.set_pin_default_value(
+            func_node, "bPaused", "true"
+        )
+        print(f"Set pin value result: {{success}}")
+        result = {{"success": success}}
+    else:
+        result = {{"success": False, "error": "Failed to add function node"}}
+else:
+    result = {{"success": False, "error": "Blueprint not found"}}
+
+import json
+print(json.dumps(result))
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": code},
+            timeout=60,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        assert "Set pin value result: True" in output_text or '"success": true' in output_text.lower(), (
+            f"Failed to set pin value. Output: {output_text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_compile_blueprint(self, running_editor: ToolCaller, test_blueprint_path: str):
+        """Test compiling a Blueprint."""
+        code = f"""
+import unreal
+
+bp = unreal.load_asset("{test_blueprint_path}/BP_TestActor")
+if bp:
+    success = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+    print(f"Compile result: {{success}}")
+    result = {{"success": success}}
+else:
+    result = {{"success": False, "error": "Blueprint not found"}}
+
+import json
+print(json.dumps(result))
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": code},
+            timeout=60,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        assert "Compile result: True" in output_text or '"success": true' in output_text.lower(), (
+            f"Failed to compile Blueprint. Output: {output_text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_all_nodes(self, running_editor: ToolCaller, test_blueprint_path: str):
+        """Test getting all nodes from a Blueprint."""
+        code = f"""
+import unreal
+
+bp = unreal.load_asset("{test_blueprint_path}/BP_TestActor")
+if bp:
+    nodes = unreal.ExGraphEditorLibrary.get_all_nodes(bp)
+    print(f"Found {{len(nodes)}} nodes")
+
+    for i, node in enumerate(nodes):
+        title = unreal.ExGraphEditorLibrary.get_node_title(node)
+        pins = unreal.ExGraphEditorLibrary.get_node_pin_names(node)
+        print(f"Node {{i}}: {{title}} ({{len(pins)}} pins)")
+
+    result = {{"success": True, "node_count": len(nodes)}}
+else:
+    result = {{"success": False, "error": "Blueprint not found"}}
+
+import json
+print(json.dumps(result))
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": code},
+            timeout=60,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        assert "Found" in output_text and "nodes" in output_text, (
+            f"Failed to get nodes. Output: {output_text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_disconnect_pin(self, running_editor: ToolCaller, test_blueprint_path: str):
+        """Test disconnecting a pin."""
+        code = f"""
+import unreal
+
+bp = unreal.load_asset("{test_blueprint_path}/BP_TestActor")
+if bp:
+    # Add and connect two nodes first
+    event = unreal.ExGraphEditorLibrary.add_event_node(
+        bp, unreal.Actor.static_class(), "ReceiveTick", 0, 200
+    )
+    func = unreal.ExGraphEditorLibrary.add_call_function_node(
+        bp, unreal.Actor.static_class(), "K2_DestroyActor", 300, 200
+    )
+
+    if event and func:
+        # Connect them first
+        unreal.ExGraphEditorLibrary.connect_nodes(event, "then", func, "execute")
+
+        # Now disconnect
+        success = unreal.ExGraphEditorLibrary.disconnect_pin(func, "execute")
+        print(f"Disconnect result: {{success}}")
+        result = {{"success": success}}
+    else:
+        result = {{"success": False, "error": "Failed to create test nodes"}}
+else:
+    result = {{"success": False, "error": "Blueprint not found"}}
+
+import json
+print(json.dumps(result))
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": code},
+            timeout=60,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        assert "Disconnect result: True" in output_text or '"success": true' in output_text.lower(), (
+            f"Failed to disconnect pin. Output: {output_text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_delete_node(self, running_editor: ToolCaller, test_blueprint_path: str):
+        """Test deleting a node."""
+        code = f"""
+import unreal
+
+bp = unreal.load_asset("{test_blueprint_path}/BP_TestActor")
+if bp:
+    # Add a node specifically to delete
+    func_node = unreal.ExGraphEditorLibrary.add_call_function_node(
+        bp, unreal.GameplayStatics.static_class(), "GetTimeSeconds", 600, 200
+    )
+
+    nodes_before = unreal.ExGraphEditorLibrary.get_all_nodes(bp)
+    initial_count = len(nodes_before)
+    print(f"Initial node count: {{initial_count}}")
+
+    if func_node:
+        success = unreal.ExGraphEditorLibrary.delete_node(bp, func_node)
+        print(f"Delete result: {{success}}")
+
+        # Verify node was deleted
+        nodes_after = unreal.ExGraphEditorLibrary.get_all_nodes(bp)
+        print(f"Node count after delete: {{len(nodes_after)}}")
+
+        result = {{
+            "success": success,
+            "initial_count": initial_count,
+            "final_count": len(nodes_after)
+        }}
+    else:
+        result = {{"success": False, "error": "Failed to add test node"}}
+else:
+    result = {{"success": False, "error": "Blueprint not found"}}
+
+import json
+print(json.dumps(result))
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": code},
+            timeout=60,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        assert "Delete result: True" in output_text or '"success": true' in output_text.lower(), (
+            f"Failed to delete node. Output: {output_text}"
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+class TestGraphEditorIntegration:
+    """Integration tests for complete Blueprint creation workflow."""
+
+    @pytest.mark.asyncio
+    async def test_create_simple_blueprint_logic(self, running_editor: ToolCaller):
+        """
+        Integration test: Create a Blueprint with BeginPlay -> K2_DestroyActor logic.
+        """
+        code = """
+import unreal
+
+# Create a fresh test Blueprint
+bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
+    "/Game/TestGraphEditor",
+    "BP_IntegrationTest",
+    unreal.Actor.static_class()
+)
+
+if not bp:
+    print("Failed to create Blueprint")
+    result = {"success": False, "error": "Blueprint creation failed"}
+else:
+    print(f"Created Blueprint: {bp.get_name()}")
+
+    # Step 1: Add BeginPlay event
+    event_node = unreal.ExGraphEditorLibrary.add_event_node(
+        bp,
+        unreal.Actor.static_class(),
+        "ReceiveBeginPlay",
+        0, 0
+    )
+    print(f"Added event node: {event_node is not None}")
+
+    # Step 2: Add K2_DestroyActor function (has exec pins, good for testing connection)
+    func_node = unreal.ExGraphEditorLibrary.add_call_function_node(
+        bp,
+        unreal.Actor.static_class(),
+        "K2_DestroyActor",
+        300, 0
+    )
+    print(f"Added function node: {func_node is not None}")
+
+    # Step 3: Connect BeginPlay -> K2_DestroyActor
+    connected = unreal.ExGraphEditorLibrary.connect_nodes(
+        event_node, "then",
+        func_node, "execute"
+    )
+    print(f"Connected nodes: {connected}")
+
+    # Step 4: Compile
+    compiled = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+    print(f"Compiled: {compiled}")
+
+    result = {
+        "success": all([event_node, func_node, connected, compiled]),
+        "steps": {
+            "event_node": event_node is not None,
+            "func_node": func_node is not None,
+            "connected": connected,
+            "compiled": compiled
+        }
+    }
+
+import json
+print(json.dumps(result))
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": code},
+            timeout=120,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        # Verify compilation succeeded
+        assert "Compiled: True" in output_text, (
+            f"Integration test failed - compilation failed. Output: {output_text}"
+        )

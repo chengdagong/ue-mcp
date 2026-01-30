@@ -19,7 +19,11 @@ public class ExtraPythonAPIs : ModuleRules
 			"UnrealEd",
 			"Slate",
 			"SlateCore",
-			"Kismet"
+			"Kismet",
+			// For Blueprint graph editing
+			"BlueprintGraph",
+			"GraphEditor",
+			"AssetTools"
 		});
 	}
 }
