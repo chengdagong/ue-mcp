@@ -5,8 +5,12 @@
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Editor.h"
 #include "BlueprintEditorTabs.h"
+#include "BlueprintEditor.h"
+#include "BlueprintEditorModes.h"
 #include "Framework/Docking/TabManager.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Kismet2/KismetEditorUtilities.h"
+#include "EdGraph/EdGraph.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogExSlateTab, Log, All);
 
@@ -94,12 +98,87 @@ TArray<FName> UExSlateTabLibrary::GetBlueprintEditorTabIds()
 
 bool UExSlateTabLibrary::SwitchToViewportMode(UBlueprint* Blueprint)
 {
-	return InvokeBlueprintEditorTab(Blueprint, FBlueprintEditorTabs::SCSViewportID);
+	if (!Blueprint)
+	{
+		UE_LOG(LogExSlateTab, Warning, TEXT("SwitchToViewportMode: Blueprint is null"));
+		return false;
+	}
+
+	if (!GEditor)
+	{
+		UE_LOG(LogExSlateTab, Warning, TEXT("SwitchToViewportMode: GEditor is null"));
+		return false;
+	}
+
+	UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+	if (!AssetEditorSubsystem)
+	{
+		UE_LOG(LogExSlateTab, Warning, TEXT("SwitchToViewportMode: AssetEditorSubsystem is null"));
+		return false;
+	}
+
+	IAssetEditorInstance* EditorInstance = AssetEditorSubsystem->FindEditorForAsset(Blueprint, false);
+	if (!EditorInstance)
+	{
+		UE_LOG(LogExSlateTab, Warning, TEXT("SwitchToViewportMode: No editor found for Blueprint '%s'"), *Blueprint->GetName());
+		return false;
+	}
+
+	// Cast to FBlueprintEditor to access SetCurrentMode
+	FBlueprintEditor* BlueprintEditor = static_cast<FBlueprintEditor*>(EditorInstance);
+	if (!BlueprintEditor)
+	{
+		UE_LOG(LogExSlateTab, Warning, TEXT("SwitchToViewportMode: Failed to cast to FBlueprintEditor"));
+		return false;
+	}
+
+	// Switch to Components mode
+	BlueprintEditor->SetCurrentMode(FBlueprintEditorApplicationModes::BlueprintComponentsMode);
+
+	// Also invoke the SCSViewport tab to ensure UI updates
+	InvokeBlueprintEditorTab(Blueprint, FBlueprintEditorTabs::SCSViewportID);
+
+	UE_LOG(LogExSlateTab, Log, TEXT("SwitchToViewportMode: Switched to Components mode for Blueprint '%s'"), *Blueprint->GetName());
+	return true;
 }
 
 bool UExSlateTabLibrary::SwitchToGraphMode(UBlueprint* Blueprint)
 {
-	return InvokeBlueprintEditorTab(Blueprint, FBlueprintEditorTabs::GraphEditorID);
+	if (!Blueprint)
+	{
+		UE_LOG(LogExSlateTab, Warning, TEXT("SwitchToGraphMode: Blueprint is null"));
+		return false;
+	}
+
+	// Find the EventGraph in UbergraphPages
+	UEdGraph* TargetGraph = nullptr;
+	for (UEdGraph* Graph : Blueprint->UbergraphPages)
+	{
+		if (Graph && Graph->GetName() == TEXT("EventGraph"))
+		{
+			TargetGraph = Graph;
+			break;
+		}
+	}
+
+	// If no EventGraph found, try the first UbergraphPage
+	if (!TargetGraph && Blueprint->UbergraphPages.Num() > 0)
+	{
+		TargetGraph = Blueprint->UbergraphPages[0];
+	}
+
+	if (!TargetGraph)
+	{
+		UE_LOG(LogExSlateTab, Warning, TEXT("SwitchToGraphMode: No EventGraph found for Blueprint '%s'"), *Blueprint->GetName());
+		return false;
+	}
+
+	// Use FKismetEditorUtilities to open and focus on the graph
+	FKismetEditorUtilities::BringKismetToFocusAttentionOnObject(TargetGraph);
+
+	UE_LOG(LogExSlateTab, Log, TEXT("SwitchToGraphMode: Switched to Graph mode for Blueprint '%s' (Graph: %s)"),
+		*Blueprint->GetName(), *TargetGraph->GetName());
+	return true;
 }
 
 bool UExSlateTabLibrary::FocusDetailsPanel(UBlueprint* Blueprint)
