@@ -152,23 +152,30 @@ UEdGraphNode* UExGraphEditorLibrary::AddEventNode(
         return nullptr;
     }
 
-    // Create the event node
-    UK2Node_Event* EventNode = NewObject<UK2Node_Event>(Graph);
-    EventNode->CreateNewGuid();
-    EventNode->EventReference.SetExternalMember(EventName, EventSignatureClass);
-    EventNode->NodePosX = NodePosX;
-    EventNode->NodePosY = NodePosY;
+    // Use FKismetEditorUtilities::AddDefaultEventNode for simpler event node creation
+    // Note: NodePosY is passed by reference and will be updated
+    int32 OutNodePosY = NodePosY;
+    UK2Node_Event* EventNode = FKismetEditorUtilities::AddDefaultEventNode(
+        TargetBlueprint,
+        Graph,
+        EventName,
+        EventSignatureClass,
+        OutNodePosY
+    );
 
-    // Add to graph and create pins
-    Graph->AddNode(EventNode, false, false);
-    EventNode->AllocateDefaultPins();
+    if (EventNode)
+    {
+        // Set X position (AddDefaultEventNode doesn't take X position)
+        EventNode->NodePosX = NodePosX;
 
-    // Notify changes
-    Graph->NotifyGraphChanged();
-    FBlueprintEditorUtils::MarkBlueprintAsModified(TargetBlueprint);
-
-    UE_LOG(LogExGraphEditor, Log, TEXT("AddEventNode: Added '%s::%s' at (%d, %d)"),
-        *EventSignatureClass->GetName(), *EventName.ToString(), NodePosX, NodePosY);
+        UE_LOG(LogExGraphEditor, Log, TEXT("AddEventNode: Added '%s::%s' at (%d, %d)"),
+            *EventSignatureClass->GetName(), *EventName.ToString(), NodePosX, NodePosY);
+    }
+    else
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("AddEventNode: Failed to add '%s::%s'"),
+            *EventSignatureClass->GetName(), *EventName.ToString());
+    }
 
     return EventNode;
 }
