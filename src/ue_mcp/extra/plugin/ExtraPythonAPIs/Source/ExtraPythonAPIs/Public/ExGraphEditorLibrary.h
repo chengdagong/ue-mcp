@@ -47,6 +47,8 @@ public:
 
     /**
      * Add an event node (e.g., BeginPlay, Tick) to the Blueprint.
+     * This is for overridable events defined in parent classes (BlueprintImplementableEvent).
+     * For user-defined custom events, use AddCustomEventNode instead.
      * @param TargetBlueprint The Blueprint to modify
      * @param EventSignatureClass Class defining the event (e.g., AActor for BeginPlay)
      * @param EventName Event name (e.g., "ReceiveBeginPlay")
@@ -58,6 +60,23 @@ public:
     static UEdGraphNode* AddEventNode(
         UBlueprint* TargetBlueprint,
         UClass* EventSignatureClass,
+        FName EventName,
+        int32 NodePosX = 0,
+        int32 NodePosY = 0
+    );
+
+    /**
+     * Add a custom event node to the Blueprint.
+     * Custom events are user-defined events (red nodes) that can be called from other parts of the graph.
+     * @param TargetBlueprint The Blueprint to modify
+     * @param EventName Custom event name (e.g., "MyCustomEvent")
+     * @param NodePosX X position in graph
+     * @param NodePosY Y position in graph
+     * @return The created custom event node, or nullptr on failure
+     */
+    UFUNCTION(BlueprintCallable, Category = "ExtraPythonAPIs|Graph", meta = (DevelopmentOnly))
+    static UEdGraphNode* AddCustomEventNode(
+        UBlueprint* TargetBlueprint,
         FName EventName,
         int32 NodePosX = 0,
         int32 NodePosY = 0

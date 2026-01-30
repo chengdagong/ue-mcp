@@ -6,6 +6,7 @@
 #include "EdGraphSchema_K2.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_Event.h"
+#include "K2Node_CustomEvent.h"
 #include "K2Node_IfThenElse.h"
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
@@ -178,6 +179,51 @@ UEdGraphNode* UExGraphEditorLibrary::AddEventNode(
     }
 
     return EventNode;
+}
+
+UEdGraphNode* UExGraphEditorLibrary::AddCustomEventNode(
+    UBlueprint* TargetBlueprint,
+    FName EventName,
+    int32 NodePosX,
+    int32 NodePosY)
+{
+    if (!TargetBlueprint)
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("AddCustomEventNode: TargetBlueprint is null"));
+        return nullptr;
+    }
+
+    if (EventName.IsNone())
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("AddCustomEventNode: EventName is empty"));
+        return nullptr;
+    }
+
+    UEdGraph* Graph = GetEventGraph(TargetBlueprint);
+    if (!Graph)
+    {
+        return nullptr;
+    }
+
+    // Create custom event node
+    UK2Node_CustomEvent* CustomEventNode = NewObject<UK2Node_CustomEvent>(Graph);
+    CustomEventNode->CreateNewGuid();
+    CustomEventNode->CustomFunctionName = EventName;
+    CustomEventNode->NodePosX = NodePosX;
+    CustomEventNode->NodePosY = NodePosY;
+
+    // Add to graph and create pins
+    Graph->AddNode(CustomEventNode, false, false);
+    CustomEventNode->AllocateDefaultPins();
+
+    // Notify changes
+    Graph->NotifyGraphChanged();
+    FBlueprintEditorUtils::MarkBlueprintAsModified(TargetBlueprint);
+
+    UE_LOG(LogExGraphEditor, Log, TEXT("AddCustomEventNode: Added custom event '%s' at (%d, %d)"),
+        *EventName.ToString(), NodePosX, NodePosY);
+
+    return CustomEventNode;
 }
 
 UEdGraphNode* UExGraphEditorLibrary::AddBranchNode(
