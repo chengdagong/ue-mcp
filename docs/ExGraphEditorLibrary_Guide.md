@@ -1,6 +1,12 @@
 # ExGraphEditorLibrary Python API Guide
 
-ExGraphEditorLibrary 是 UE-MCP 的 ExtraPythonAPIs 插件提供的 Blueprint 图表编辑 API，支持通过 Python 脚本创建、修改、查询和删除 Blueprint 节点。
+ExGraphEditorLibrary 是 UE-MCP 的 ExtraPythonAPIs 插件提供的 Blueprint **图表节点**编辑 API，支持通过 Python 脚本创建、修改、查询和删除 Blueprint 节点。
+
+> **注意**: ExGraphEditorLibrary 专注于**图表节点操作**。对于蓝图资产的创建、编译、变量管理，请使用 UE5 内置的 `BlueprintEditorLibrary`：
+> - 创建蓝图: `BlueprintEditorLibrary.create_blueprint_asset_with_parent()`
+> - 编译蓝图: `BlueprintEditorLibrary.compile_blueprint()`
+> - 添加变量: `BlueprintEditorLibrary.add_member_variable()`
+> - 获取变量: 直接访问 `Blueprint.new_variables` 属性
 
 ## 概述
 
@@ -8,9 +14,9 @@ ExGraphEditorLibrary 是 UE-MCP 的 ExtraPythonAPIs 插件提供的 Blueprint �
 
 | 操作类型 | 功能 |
 |---------|------|
-| **CREATE** | 创建蓝图、添加节点（函数、事件、变量等） |
+| **CREATE** | 添加节点（函数、事件、分支、变量 Get/Set 等） |
 | **READ** | 查询节点、引脚、连接 |
-| **UPDATE** | 连接节点、设置引脚默认值、编译 |
+| **UPDATE** | 连接节点、设置引脚默认值 |
 | **DELETE** | 删除节点、断开引脚连接 |
 
 ### 前置条件
@@ -22,38 +28,25 @@ ExGraphEditorLibrary 是 UE-MCP 的 ExtraPythonAPIs 插件提供的 Blueprint �
 
 ## CREATE 操作
 
-### CreateBlueprintAsset - 创建蓝图资产
+### 创建蓝图资产（使用 BlueprintEditorLibrary）
 
-创建一个新的 Blueprint 资产。
+> **注意**: 蓝图资产创建功能已移至 UE5 内置的 `BlueprintEditorLibrary`。
 
 ```python
 import unreal
 
-# 创建继承自 AActor 的蓝图（默认）
-bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
-    "/Game/Blueprints",  # 资产目录
-    "BP_MyActor"         # 资产名称
-)
-
-# 创建继承自特定类的蓝图
-bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
-    "/Game/Blueprints",
-    "BP_MyPawn",
-    unreal.Pawn.static_class()  # 父类
+# 创建继承自 AActor 的蓝图
+bp = unreal.BlueprintEditorLibrary.create_blueprint_asset_with_parent(
+    "/Game/Blueprints/BP_MyActor",  # 完整资产路径
+    unreal.Actor.static_class()     # 父类
 )
 
 # 创建继承自 Character 的蓝图
-bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
-    "/Game/Blueprints",
-    "BP_MyCharacter",
+bp = unreal.BlueprintEditorLibrary.create_blueprint_asset_with_parent(
+    "/Game/Blueprints/BP_MyCharacter",
     unreal.Character.static_class()
 )
 ```
-
-**参数说明：**
-- `asset_path`: 资产目录路径（如 `/Game/Blueprints`）
-- `asset_name`: 资产名称（如 `BP_MyActor`）
-- `parent_class`: 父类（可选，默认为 `AActor`）
 
 ---
 
@@ -228,12 +221,12 @@ import unreal
 
 bp = unreal.load_asset("/Game/Blueprints/BP_MyActor")
 
-# 首先添加成员变量
-unreal.ExGraphEditorLibrary.add_member_variable(bp, "Health", "float")
-unreal.ExGraphEditorLibrary.add_member_variable(bp, "IsAlive", "bool")
+# 首先使用 BlueprintEditorLibrary 添加成员变量
+unreal.BlueprintEditorLibrary.add_member_variable(bp, "Health", "float")
+unreal.BlueprintEditorLibrary.add_member_variable(bp, "IsAlive", "bool")
 
 # 编译以使变量生效
-unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+unreal.BlueprintEditorLibrary.compile_blueprint(bp)
 
 # 添加 Variable Get 节点（读取变量）
 get_health = unreal.ExGraphEditorLibrary.add_variable_get_node(
@@ -248,9 +241,9 @@ set_health = unreal.ExGraphEditorLibrary.add_variable_set_node(
 
 ---
 
-### AddMemberVariable - 添加成员变量
+### 添加成员变量（使用 BlueprintEditorLibrary）
 
-为蓝图添加新的成员变量。
+> **注意**: 成员变量添加功能已移至 UE5 内置的 `BlueprintEditorLibrary`。
 
 ```python
 import unreal
@@ -258,15 +251,15 @@ import unreal
 bp = unreal.load_asset("/Game/Blueprints/BP_MyActor")
 
 # 添加各种类型的变量
-unreal.ExGraphEditorLibrary.add_member_variable(bp, "Health", "float")
-unreal.ExGraphEditorLibrary.add_member_variable(bp, "MaxHealth", "float")
-unreal.ExGraphEditorLibrary.add_member_variable(bp, "IsAlive", "bool")
-unreal.ExGraphEditorLibrary.add_member_variable(bp, "PlayerName", "string")
-unreal.ExGraphEditorLibrary.add_member_variable(bp, "SpawnLocation", "vector")
-unreal.ExGraphEditorLibrary.add_member_variable(bp, "SpawnRotation", "rotator")
+unreal.BlueprintEditorLibrary.add_member_variable(bp, "Health", "float")
+unreal.BlueprintEditorLibrary.add_member_variable(bp, "MaxHealth", "float")
+unreal.BlueprintEditorLibrary.add_member_variable(bp, "IsAlive", "bool")
+unreal.BlueprintEditorLibrary.add_member_variable(bp, "PlayerName", "string")
+unreal.BlueprintEditorLibrary.add_member_variable(bp, "SpawnLocation", "vector")
+unreal.BlueprintEditorLibrary.add_member_variable(bp, "SpawnRotation", "rotator")
 
 # 编译使变量生效
-unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+unreal.BlueprintEditorLibrary.compile_blueprint(bp)
 ```
 
 **支持的变量类型：**
@@ -367,7 +360,9 @@ unreal.ExGraphEditorLibrary.set_pin_default_value(
 
 ---
 
-### CompileBlueprint - 编译蓝图
+### 编译蓝图（使用 BlueprintEditorLibrary）
+
+> **注意**: 蓝图编译功能已移至 UE5 内置的 `BlueprintEditorLibrary`。
 
 编译蓝图使修改生效。**修改完成后必须调用！**
 
@@ -379,7 +374,7 @@ bp = unreal.load_asset("/Game/Blueprints/BP_MyActor")
 # ... 进行各种修改 ...
 
 # 编译蓝图
-success = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+success = unreal.BlueprintEditorLibrary.compile_blueprint(bp)
 
 if success:
     print("Blueprint compiled successfully!")
@@ -447,19 +442,18 @@ for node in nodes:
 
 ---
 
-### GetBlueprintVariables - 获取蓝图变量
+### 获取蓝图变量
 
-获取蓝图中定义的所有成员变量名称。
+直接访问蓝图的 `new_variables` 属性获取所有成员变量。
 
 ```python
 import unreal
 
 bp = unreal.load_asset("/Game/Blueprints/BP_MyActor")
 
-variables = unreal.ExGraphEditorLibrary.get_blueprint_variables(bp)
-
-for var_name in variables:
-    print(f"Variable: {var_name}")
+# 直接访问 new_variables 属性
+for var in bp.new_variables:
+    print(f"Variable: {var.var_name}")
 ```
 
 ---
@@ -486,8 +480,8 @@ for node in nodes:
         print(f"Deleted node: {title}")
         break
 
-# 编译以应用更改
-unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+# 编译以应用更改（使用 BlueprintEditorLibrary）
+unreal.BlueprintEditorLibrary.compile_blueprint(bp)
 ```
 
 ---
@@ -521,10 +515,10 @@ for node in nodes:
 ```python
 import unreal
 
-# 1. 创建蓝图
-bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
-    "/Game/Blueprints",
-    "BP_HelloWorld"
+# 1. 创建蓝图（使用 BlueprintEditorLibrary）
+bp = unreal.BlueprintEditorLibrary.create_blueprint_asset_with_parent(
+    "/Game/Blueprints/BP_HelloWorld",
+    unreal.Actor.static_class()
 )
 
 if not bp:
@@ -559,8 +553,8 @@ else:
         print_node, "execute"
     )
 
-    # 6. 编译
-    if unreal.ExGraphEditorLibrary.compile_blueprint(bp):
+    # 6. 编译（使用 BlueprintEditorLibrary）
+    if unreal.BlueprintEditorLibrary.compile_blueprint(bp):
         print("Blueprint created and compiled successfully!")
 
     # 7. 保存
@@ -574,9 +568,9 @@ import unreal
 
 bp = unreal.load_asset("/Game/Blueprints/BP_MyActor")
 
-# 添加布尔变量
-unreal.ExGraphEditorLibrary.add_member_variable(bp, "bShouldPrint", "bool")
-unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+# 添加布尔变量（使用 BlueprintEditorLibrary）
+unreal.BlueprintEditorLibrary.add_member_variable(bp, "bShouldPrint", "bool")
+unreal.BlueprintEditorLibrary.compile_blueprint(bp)
 
 # 添加节点
 begin_play = unreal.ExGraphEditorLibrary.add_event_node(
@@ -609,8 +603,8 @@ unreal.ExGraphEditorLibrary.connect_nodes(get_var, "bShouldPrint", branch, "Cond
 unreal.ExGraphEditorLibrary.connect_nodes(branch, "then", print_true, "execute")
 unreal.ExGraphEditorLibrary.connect_nodes(branch, "else", print_false, "execute")
 
-# 编译
-unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+# 编译（使用 BlueprintEditorLibrary）
+unreal.BlueprintEditorLibrary.compile_blueprint(bp)
 ```
 
 ### 示例 3：修改现有蓝图
@@ -656,7 +650,8 @@ if begin_play_node:
         new_print, "execute"
     )
 
-    unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+    # 编译（使用 BlueprintEditorLibrary）
+    unreal.BlueprintEditorLibrary.compile_blueprint(bp)
     print("Blueprint modified successfully!")
 ```
 
@@ -667,18 +662,18 @@ if begin_play_node:
 ### 1. 始终编译修改后的蓝图
 
 ```python
-# 所有修改完成后
-unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+# 所有修改完成后（使用 BlueprintEditorLibrary）
+unreal.BlueprintEditorLibrary.compile_blueprint(bp)
 ```
 
 ### 2. 添加变量后先编译再使用
 
 ```python
-# 添加变量
-unreal.ExGraphEditorLibrary.add_member_variable(bp, "MyVar", "float")
+# 添加变量（使用 BlueprintEditorLibrary）
+unreal.BlueprintEditorLibrary.add_member_variable(bp, "MyVar", "float")
 
 # 必须编译才能使用变量节点
-unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+unreal.BlueprintEditorLibrary.compile_blueprint(bp)
 
 # 现在可以添加变量节点了
 get_node = unreal.ExGraphEditorLibrary.add_variable_get_node(bp, "MyVar", 0, 0)
@@ -724,22 +719,34 @@ unreal.EditorAssetLibrary.save_asset(bp.get_path_name())
 
 ## API 参考速查表
 
+### ExGraphEditorLibrary（图表节点操作）
+
 | 函数 | 用途 |
 |-----|------|
-| `create_blueprint_asset(path, name, parent)` | 创建蓝图 |
 | `add_event_node(bp, class, name, x, y)` | 添加事件节点 |
 | `add_call_function_node(bp, class, name, x, y)` | 添加函数节点（精确） |
 | `add_function_node_by_name(bp, name, class, x, y)` | 添加函数节点（按名称） |
 | `add_branch_node(bp, x, y)` | 添加分支节点 |
-| `add_member_variable(bp, name, type)` | 添加成员变量 |
 | `add_variable_get_node(bp, name, x, y)` | 添加变量 Getter |
 | `add_variable_set_node(bp, name, x, y)` | 添加变量 Setter |
 | `connect_nodes(nodeA, pinA, nodeB, pinB)` | 连接节点 |
 | `set_pin_default_value(node, pin, value)` | 设置引脚默认值 |
-| `compile_blueprint(bp)` | 编译蓝图 |
 | `get_all_nodes(bp)` | 获取所有节点 |
 | `get_node_pin_names(node)` | 获取节点引脚 |
 | `get_node_title(node)` | 获取节点标题 |
-| `get_blueprint_variables(bp)` | 获取变量列表 |
 | `delete_node(bp, node)` | 删除节点 |
 | `disconnect_pin(node, pin)` | 断开引脚连接 |
+
+### BlueprintEditorLibrary（蓝图资产操作）
+
+| 函数 | 用途 |
+|-----|------|
+| `create_blueprint_asset_with_parent(path, parent)` | 创建蓝图 |
+| `add_member_variable(bp, name, type)` | 添加成员变量 |
+| `compile_blueprint(bp)` | 编译蓝图 |
+
+### Blueprint 属性
+
+| 属性 | 用途 |
+|-----|------|
+| `bp.new_variables` | 获取变量列表 |
