@@ -66,48 +66,9 @@ UEdGraphPin* UExGraphEditorLibrary::FindPinByName(UEdGraphNode* Node, const FStr
 }
 
 // ============================================================================
-// CREATE Operations
+// CREATE Operations (Graph Nodes)
+// For Blueprint creation, use BlueprintEditorLibrary.create_blueprint_asset_with_parent()
 // ============================================================================
-
-UBlueprint* UExGraphEditorLibrary::CreateBlueprintAsset(
-    const FString& AssetPath,
-    const FString& AssetName,
-    UClass* ParentClass)
-{
-    if (AssetPath.IsEmpty() || AssetName.IsEmpty())
-    {
-        UE_LOG(LogExGraphEditor, Warning, TEXT("CreateBlueprintAsset: AssetPath or AssetName is empty"));
-        return nullptr;
-    }
-
-    IAssetTools& AssetTools = FModuleManager::GetModuleChecked<FAssetToolsModule>("AssetTools").Get();
-    UBlueprintFactory* Factory = NewObject<UBlueprintFactory>();
-
-    // Default to AActor if no parent class specified
-    if (ParentClass == nullptr)
-    {
-        ParentClass = AActor::StaticClass();
-    }
-
-    Factory->ParentClass = ParentClass;
-
-    UObject* NewAsset = AssetTools.CreateAsset(AssetName, AssetPath, UBlueprint::StaticClass(), Factory);
-
-    UBlueprint* NewBP = Cast<UBlueprint>(NewAsset);
-    if (NewBP)
-    {
-        UE_LOG(LogExGraphEditor, Log, TEXT("CreateBlueprintAsset: Created '%s/%s' with parent '%s'"),
-            *AssetPath, *AssetName, *ParentClass->GetName());
-        FBlueprintEditorUtils::MarkBlueprintAsModified(NewBP);
-    }
-    else
-    {
-        UE_LOG(LogExGraphEditor, Warning, TEXT("CreateBlueprintAsset: Failed to create Blueprint at '%s/%s'"),
-            *AssetPath, *AssetName);
-    }
-
-    return NewBP;
-}
 
 UEdGraphNode* UExGraphEditorLibrary::AddCallFunctionNode(
     UBlueprint* TargetBlueprint,
@@ -550,32 +511,10 @@ bool UExGraphEditorLibrary::SetPinDefaultValue(
     return true;
 }
 
-bool UExGraphEditorLibrary::CompileBlueprint(UBlueprint* Blueprint)
-{
-    if (!Blueprint)
-    {
-        UE_LOG(LogExGraphEditor, Warning, TEXT("CompileBlueprint: Blueprint is null"));
-        return false;
-    }
-
-    FKismetEditorUtilities::CompileBlueprint(Blueprint);
-
-    // Check for compilation errors
-    bool bHasErrors = (Blueprint->Status == BS_Error);
-    if (bHasErrors)
-    {
-        UE_LOG(LogExGraphEditor, Warning, TEXT("CompileBlueprint: '%s' compiled with errors"), *Blueprint->GetName());
-    }
-    else
-    {
-        UE_LOG(LogExGraphEditor, Log, TEXT("CompileBlueprint: '%s' compiled successfully"), *Blueprint->GetName());
-    }
-
-    return !bHasErrors;
-}
+// For Blueprint compilation, use BlueprintEditorLibrary.compile_blueprint()
 
 // ============================================================================
-// READ Operations
+// READ Operations (Graph Node Queries)
 // ============================================================================
 
 TArray<UEdGraphNode*> UExGraphEditorLibrary::GetAllNodes(UBlueprint* Blueprint)
@@ -631,27 +570,7 @@ FString UExGraphEditorLibrary::GetNodeTitle(UEdGraphNode* Node)
     return Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
 }
 
-TArray<FName> UExGraphEditorLibrary::GetBlueprintVariables(UBlueprint* Blueprint)
-{
-    TArray<FName> Result;
-
-    if (!Blueprint)
-    {
-        UE_LOG(LogExGraphEditor, Warning, TEXT("GetBlueprintVariables: Blueprint is null"));
-        return Result;
-    }
-
-    // Get variables from the Blueprint's NewVariables array
-    for (const FBPVariableDescription& Var : Blueprint->NewVariables)
-    {
-        Result.Add(Var.VarName);
-    }
-
-    UE_LOG(LogExGraphEditor, Log, TEXT("GetBlueprintVariables: Found %d variables in '%s'"),
-        Result.Num(), *Blueprint->GetName());
-
-    return Result;
-}
+// For Blueprint variables, use BlueprintEditorLibrary.add_member_variable()
 
 // ============================================================================
 // DELETE Operations
@@ -717,120 +636,4 @@ bool UExGraphEditorLibrary::DisconnectPin(UEdGraphNode* Node, const FString& Pin
     UE_LOG(LogExGraphEditor, Log, TEXT("DisconnectPin: Broke %d links from '%s'"), NumLinks, *Pin->PinName.ToString());
 
     return true;
-}
-
-bool UExGraphEditorLibrary::AddMemberVariable(
-    UBlueprint* Blueprint,
-    FName VariableName,
-    const FString& VariableType)
-{
-    if (!Blueprint)
-    {
-        UE_LOG(LogExGraphEditor, Warning, TEXT("AddMemberVariable: Blueprint is null"));
-        return false;
-    }
-
-    if (VariableName == NAME_None)
-    {
-        UE_LOG(LogExGraphEditor, Warning, TEXT("AddMemberVariable: VariableName is empty"));
-        return false;
-    }
-
-    // Check if variable already exists
-    for (const FBPVariableDescription& Var : Blueprint->NewVariables)
-    {
-        if (Var.VarName == VariableName)
-        {
-            UE_LOG(LogExGraphEditor, Warning, TEXT("AddMemberVariable: Variable '%s' already exists in Blueprint '%s'"),
-                *VariableName.ToString(), *Blueprint->GetName());
-            return false;
-        }
-    }
-
-    // Determine the pin type based on VariableType string
-    FEdGraphPinType PinType;
-    FString TypeLower = VariableType.ToLower();
-
-    if (TypeLower == TEXT("bool") || TypeLower == TEXT("boolean"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
-    }
-    else if (TypeLower == TEXT("int") || TypeLower == TEXT("int32") || TypeLower == TEXT("integer"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Int;
-    }
-    else if (TypeLower == TEXT("int64"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Int64;
-    }
-    else if (TypeLower == TEXT("float") || TypeLower == TEXT("real"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Real;
-        PinType.PinSubCategory = UEdGraphSchema_K2::PC_Float;
-    }
-    else if (TypeLower == TEXT("double"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Real;
-        PinType.PinSubCategory = UEdGraphSchema_K2::PC_Double;
-    }
-    else if (TypeLower == TEXT("string") || TypeLower == TEXT("fstring"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_String;
-    }
-    else if (TypeLower == TEXT("name") || TypeLower == TEXT("fname"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Name;
-    }
-    else if (TypeLower == TEXT("text") || TypeLower == TEXT("ftext"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Text;
-    }
-    else if (TypeLower == TEXT("vector") || TypeLower == TEXT("fvector"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
-        PinType.PinSubCategoryObject = TBaseStructure<FVector>::Get();
-    }
-    else if (TypeLower == TEXT("rotator") || TypeLower == TEXT("frotator"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
-        PinType.PinSubCategoryObject = TBaseStructure<FRotator>::Get();
-    }
-    else if (TypeLower == TEXT("transform") || TypeLower == TEXT("ftransform"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
-        PinType.PinSubCategoryObject = TBaseStructure<FTransform>::Get();
-    }
-    else if (TypeLower == TEXT("vector2d") || TypeLower == TEXT("fvector2d"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
-        PinType.PinSubCategoryObject = TBaseStructure<FVector2D>::Get();
-    }
-    else if (TypeLower == TEXT("linearcolor") || TypeLower == TEXT("flinearcolor") || TypeLower == TEXT("color"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
-        PinType.PinSubCategoryObject = TBaseStructure<FLinearColor>::Get();
-    }
-    else
-    {
-        UE_LOG(LogExGraphEditor, Warning, TEXT("AddMemberVariable: Unknown type '%s'. Supported types: bool, int, int64, float, double, string, name, text, vector, rotator, transform, vector2d, color"),
-            *VariableType);
-        return false;
-    }
-
-    // Add the variable using FBlueprintEditorUtils
-    bool bSuccess = FBlueprintEditorUtils::AddMemberVariable(Blueprint, VariableName, PinType);
-
-    if (bSuccess)
-    {
-        FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-        UE_LOG(LogExGraphEditor, Log, TEXT("AddMemberVariable: Added '%s' (%s) to Blueprint '%s'"),
-            *VariableName.ToString(), *VariableType, *Blueprint->GetName());
-    }
-    else
-    {
-        UE_LOG(LogExGraphEditor, Warning, TEXT("AddMemberVariable: Failed to add '%s' to Blueprint '%s'"),
-            *VariableName.ToString(), *Blueprint->GetName());
-    }
-
-    return bSuccess;
 }

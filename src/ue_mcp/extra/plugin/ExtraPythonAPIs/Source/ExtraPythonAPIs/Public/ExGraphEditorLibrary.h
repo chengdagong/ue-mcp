@@ -23,22 +23,9 @@ class UExGraphEditorLibrary : public UBlueprintFunctionLibrary
 
 public:
     // ========================================================================
-    // CREATE Operations
+    // CREATE Operations (Graph Node Creation)
+    // For Blueprint creation, use BlueprintEditorLibrary.create_blueprint_asset_with_parent()
     // ========================================================================
-
-    /**
-     * Create a new Blueprint asset.
-     * @param AssetPath Directory path (e.g., "/Game/Blueprints")
-     * @param AssetName Asset name (e.g., "BP_MyActor")
-     * @param ParentClass Parent class (defaults to AActor if nullptr)
-     * @return The created Blueprint, or nullptr on failure
-     */
-    UFUNCTION(BlueprintCallable, Category = "ExtraPythonAPIs|Graph", meta = (DevelopmentOnly))
-    static UBlueprint* CreateBlueprintAsset(
-        const FString& AssetPath,
-        const FString& AssetName,
-        UClass* ParentClass = nullptr
-    );
 
     /**
      * Add a function call node to the Blueprint's event graph.
@@ -181,17 +168,10 @@ public:
         const FString& NewValue
     );
 
-    /**
-     * Compile the Blueprint.
-     * Must be called after modifications to make them effective.
-     * @param Blueprint The Blueprint to compile
-     * @return True if compilation succeeded without errors
-     */
-    UFUNCTION(BlueprintCallable, Category = "ExtraPythonAPIs|Graph", meta = (DevelopmentOnly))
-    static bool CompileBlueprint(UBlueprint* Blueprint);
+    // For Blueprint compilation, use BlueprintEditorLibrary.compile_blueprint()
 
     // ========================================================================
-    // READ Operations
+    // READ Operations (Graph Node Queries)
     // ========================================================================
 
     /**
@@ -218,28 +198,7 @@ public:
     UFUNCTION(BlueprintCallable, Category = "ExtraPythonAPIs|Graph", meta = (DevelopmentOnly))
     static FString GetNodeTitle(UEdGraphNode* Node);
 
-    /**
-     * Get all variable names defined in a Blueprint.
-     * @param Blueprint The Blueprint to query
-     * @return Array of variable names
-     */
-    UFUNCTION(BlueprintCallable, Category = "ExtraPythonAPIs|Graph", meta = (DevelopmentOnly))
-    static TArray<FName> GetBlueprintVariables(UBlueprint* Blueprint);
-
-    /**
-     * Add a member variable to a Blueprint.
-     * Supported types: "bool", "int", "float", "string", "vector", "rotator", "transform"
-     * @param Blueprint The Blueprint to modify
-     * @param VariableName Name for the new variable
-     * @param VariableType Type of the variable (e.g., "bool", "int", "float")
-     * @return True if variable was added successfully
-     */
-    UFUNCTION(BlueprintCallable, Category = "ExtraPythonAPIs|Graph", meta = (DevelopmentOnly))
-    static bool AddMemberVariable(
-        UBlueprint* Blueprint,
-        FName VariableName,
-        const FString& VariableType
-    );
+    // For Blueprint variables, use BlueprintEditorLibrary.add_member_variable()
 
     // ========================================================================
     // DELETE Operations

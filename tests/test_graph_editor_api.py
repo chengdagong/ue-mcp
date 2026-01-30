@@ -4,14 +4,20 @@ ExGraphEditorLibrary API Tests using mcp-pytest fixtures.
 Tests the Blueprint graph editing functionality in ExtraPythonAPIs plugin.
 Uses ThirdPersonTemplate project for testing.
 
+Note: ExGraphEditorLibrary focuses on graph NODE operations only.
+For Blueprint creation, compilation, and variables, use BlueprintEditorLibrary:
+- BlueprintEditorLibrary.create_blueprint_asset_with_parent() - create blueprints
+- BlueprintEditorLibrary.compile_blueprint() - compile blueprints
+- BlueprintEditorLibrary.add_member_variable() - add variables
+
 Tests:
 1. Check if ExGraphEditorLibrary is available
-2. Create Blueprint assets
+2. Create Blueprint assets (using BlueprintEditorLibrary)
 3. Add function call and event nodes
 4. Connect nodes and set pin values
 5. Read node information
 6. Delete nodes and disconnect pins
-7. Compile blueprints
+7. Compile blueprints (using BlueprintEditorLibrary)
 
 Usage:
     pytest tests/test_graph_editor_api.py -v -s
@@ -145,14 +151,13 @@ class TestGraphEditorCRUD:
 
     @pytest.mark.asyncio
     async def test_create_blueprint_asset(self, running_editor: ToolCaller, test_blueprint_path: str):
-        """Test creating a new Blueprint asset."""
+        """Test creating a new Blueprint asset using BlueprintEditorLibrary."""
         code = f"""
 import unreal
 
-# Create a new Blueprint
-bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
-    "{test_blueprint_path}",
-    "BP_TestActor",
+# Create a new Blueprint using BlueprintEditorLibrary
+bp = unreal.BlueprintEditorLibrary.create_blueprint_asset_with_parent(
+    "{test_blueprint_path}/BP_TestActor",
     unreal.Actor.static_class()
 )
 
@@ -190,9 +195,8 @@ import unreal
 bp = unreal.load_asset("{test_blueprint_path}/BP_TestActor")
 if not bp:
     print("Blueprint not found, creating new one")
-    bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
-        "{test_blueprint_path}",
-        "BP_TestActor",
+    bp = unreal.BlueprintEditorLibrary.create_blueprint_asset_with_parent(
+        "{test_blueprint_path}/BP_TestActor",
         unreal.Actor.static_class()
     )
 
@@ -378,13 +382,13 @@ print(json.dumps(result))
 
     @pytest.mark.asyncio
     async def test_compile_blueprint(self, running_editor: ToolCaller, test_blueprint_path: str):
-        """Test compiling a Blueprint."""
+        """Test compiling a Blueprint using BlueprintEditorLibrary."""
         code = f"""
 import unreal
 
 bp = unreal.load_asset("{test_blueprint_path}/BP_TestActor")
 if bp:
-    success = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+    success = unreal.BlueprintEditorLibrary.compile_blueprint(bp)
     print(f"Compile result: {{success}}")
     result = {{"success": success}}
 else:
@@ -552,14 +556,14 @@ class TestGraphEditorIntegration:
     async def test_create_simple_blueprint_logic(self, running_editor: ToolCaller):
         """
         Integration test: Create a Blueprint with BeginPlay -> K2_DestroyActor logic.
+        Uses BlueprintEditorLibrary for blueprint creation/compilation.
         """
         code = """
 import unreal
 
-# Create a fresh test Blueprint
-bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
-    "/Game/TestGraphEditor",
-    "BP_IntegrationTest",
+# Create a fresh test Blueprint using BlueprintEditorLibrary
+bp = unreal.BlueprintEditorLibrary.create_blueprint_asset_with_parent(
+    "/Game/TestGraphEditor/BP_IntegrationTest",
     unreal.Actor.static_class()
 )
 
@@ -594,8 +598,8 @@ else:
     )
     print(f"Connected nodes: {connected}")
 
-    # Step 4: Compile
-    compiled = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+    # Step 4: Compile using BlueprintEditorLibrary
+    compiled = unreal.BlueprintEditorLibrary.compile_blueprint(bp)
     print(f"Compiled: {compiled}")
 
     result = {
@@ -638,10 +642,9 @@ class TestPhase4APIs:
         code = """
 import unreal
 
-# Create a test Blueprint
-bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
-    "/Game/TestGraphEditor",
-    "BP_BranchTest",
+# Create a test Blueprint using BlueprintEditorLibrary
+bp = unreal.BlueprintEditorLibrary.create_blueprint_asset_with_parent(
+    "/Game/TestGraphEditor/BP_BranchTest",
     unreal.Actor.static_class()
 )
 
@@ -655,8 +658,8 @@ if bp:
         print(f"Added branch node: {title}")
         print(f"Pins: {[str(p) for p in pins]}")
 
-        # Compile to verify
-        compiled = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+        # Compile to verify using BlueprintEditorLibrary
+        compiled = unreal.BlueprintEditorLibrary.compile_blueprint(bp)
         print(f"Compiled: {compiled}")
 
         result = {"success": True, "title": title, "pin_count": len(pins), "compiled": compiled}
@@ -687,23 +690,22 @@ print(json.dumps(result))
 
     @pytest.mark.asyncio
     async def test_add_member_variable(self, running_editor: ToolCaller):
-        """Test adding member variables to a Blueprint."""
+        """Test adding member variables to a Blueprint using BlueprintEditorLibrary."""
         code = """
 import unreal
 
-# Create a test Blueprint
-bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
-    "/Game/TestGraphEditor",
-    "BP_VariableTest",
+# Create a test Blueprint using BlueprintEditorLibrary
+bp = unreal.BlueprintEditorLibrary.create_blueprint_asset_with_parent(
+    "/Game/TestGraphEditor/BP_VariableTest",
     unreal.Actor.static_class()
 )
 
 if bp:
     # Check initial variables
-    vars_before = unreal.ExGraphEditorLibrary.get_blueprint_variables(bp)
-    print(f"Variables before: {[str(v) for v in vars_before]}")
+    vars_before = len(bp.new_variables)
+    print(f"Variables before: {vars_before}")
 
-    # Add variables of different types
+    # Add variables of different types using BlueprintEditorLibrary
     add_results = []
     test_vars = [
         ("TestInt", "int"),
@@ -714,23 +716,23 @@ if bp:
     ]
 
     for var_name, var_type in test_vars:
-        success = unreal.ExGraphEditorLibrary.add_member_variable(
+        success = unreal.BlueprintEditorLibrary.add_member_variable(
             bp, unreal.Name(var_name), var_type
         )
         add_results.append((var_name, success))
         print(f"Add {var_name} ({var_type}): {success}")
 
     # Check variables after
-    vars_after = unreal.ExGraphEditorLibrary.get_blueprint_variables(bp)
-    print(f"Variables after: {[str(v) for v in vars_after]}")
+    vars_after = len(bp.new_variables)
+    print(f"Variables after: {vars_after}")
 
-    # Compile to verify
-    compiled = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+    # Compile to verify using BlueprintEditorLibrary
+    compiled = unreal.BlueprintEditorLibrary.compile_blueprint(bp)
     print(f"Compiled: {compiled}")
 
     result = {
-        "success": len(vars_after) == len(test_vars),
-        "var_count": len(vars_after),
+        "success": vars_after == len(test_vars),
+        "var_count": vars_after,
         "compiled": compiled
     }
 else:
@@ -768,19 +770,18 @@ import unreal
 # Load the variable test Blueprint we created in previous test
 bp = unreal.load_asset("/Game/TestGraphEditor/BP_VariableTest")
 if not bp:
-    # Create it if not found
-    bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
-        "/Game/TestGraphEditor",
-        "BP_VariableTest2",
+    # Create it if not found using BlueprintEditorLibrary
+    bp = unreal.BlueprintEditorLibrary.create_blueprint_asset_with_parent(
+        "/Game/TestGraphEditor/BP_VariableTest2",
         unreal.Actor.static_class()
     )
-    # Add a variable
-    unreal.ExGraphEditorLibrary.add_member_variable(bp, unreal.Name("TestVar"), "int")
-    unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+    # Add a variable using BlueprintEditorLibrary
+    unreal.BlueprintEditorLibrary.add_member_variable(bp, unreal.Name("TestVar"), "int")
+    unreal.BlueprintEditorLibrary.compile_blueprint(bp)
 
 if bp:
-    # Get variables
-    variables = unreal.ExGraphEditorLibrary.get_blueprint_variables(bp)
+    # Get variables from Blueprint's new_variables array
+    variables = [v.var_name for v in bp.new_variables]
     print(f"Variables: {[str(v) for v in variables]}")
 
     if len(variables) > 0:
@@ -810,8 +811,8 @@ if bp:
         else:
             print("VariableSet: Failed")
 
-        # Compile to verify
-        compiled = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+        # Compile to verify using BlueprintEditorLibrary
+        compiled = unreal.BlueprintEditorLibrary.compile_blueprint(bp)
         print(f"Compiled: {compiled}")
 
         result = {
@@ -853,26 +854,26 @@ print(json.dumps(result))
         """
         Integration test: Create logic with Branch node using variable as condition.
         BeginPlay -> Get variable -> Branch -> (true/false paths)
+        Uses BlueprintEditorLibrary for blueprint/variable operations.
         """
         code = """
 import unreal
 
-# Create a test Blueprint
-bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
-    "/Game/TestGraphEditor",
-    "BP_BranchWithVariable",
+# Create a test Blueprint using BlueprintEditorLibrary
+bp = unreal.BlueprintEditorLibrary.create_blueprint_asset_with_parent(
+    "/Game/TestGraphEditor/BP_BranchWithVariable",
     unreal.Actor.static_class()
 )
 
 if bp:
-    # Add a bool variable
-    var_added = unreal.ExGraphEditorLibrary.add_member_variable(
+    # Add a bool variable using BlueprintEditorLibrary
+    var_added = unreal.BlueprintEditorLibrary.add_member_variable(
         bp, unreal.Name("bShouldDestroy"), "bool"
     )
     print(f"Variable added: {var_added}")
 
     # Compile to create the property
-    unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+    unreal.BlueprintEditorLibrary.compile_blueprint(bp)
 
     # Get BeginPlay event node (auto-created)
     nodes = unreal.ExGraphEditorLibrary.get_all_nodes(bp)
@@ -909,8 +910,8 @@ if bp:
         )
         print(f"Condition connected: {cond_connected}")
 
-    # Final compile
-    compiled = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+    # Final compile using BlueprintEditorLibrary
+    compiled = unreal.BlueprintEditorLibrary.compile_blueprint(bp)
     print(f"Final compile: {compiled}")
 
     result = {
@@ -956,10 +957,9 @@ print(json.dumps(result))
         code = """
 import unreal
 
-# Create a test Blueprint
-bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
-    "/Game/TestGraphEditor",
-    "BP_MemberFuncTest",
+# Create a test Blueprint using BlueprintEditorLibrary
+bp = unreal.BlueprintEditorLibrary.create_blueprint_asset_with_parent(
+    "/Game/TestGraphEditor/BP_MemberFuncTest",
     unreal.Actor.static_class()
 )
 
@@ -997,8 +997,8 @@ if bp:
     results["K2_GetComponentLocation"] = get_comp_loc is not None
     print(f"SceneComponent.K2_GetComponentLocation: {get_comp_loc is not None}")
 
-    # Compile to verify all nodes are valid
-    compiled = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+    # Compile to verify all nodes are valid using BlueprintEditorLibrary
+    compiled = unreal.BlueprintEditorLibrary.compile_blueprint(bp)
     results["compiled"] = compiled
     print(f"Compiled: {compiled}")
 
@@ -1041,10 +1041,9 @@ print(json.dumps(result))
         code = """
 import unreal
 
-# Create a test Blueprint
-bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
-    "/Game/TestGraphEditor",
-    "BP_BackwardCompatTest",
+# Create a test Blueprint using BlueprintEditorLibrary
+bp = unreal.BlueprintEditorLibrary.create_blueprint_asset_with_parent(
+    "/Game/TestGraphEditor/BP_BackwardCompatTest",
     unreal.Actor.static_class()
 )
 
@@ -1061,7 +1060,8 @@ if bp:
     )
     print(f"Delay (no OwnerClass): {delay_node is not None}")
 
-    compiled = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+    # Compile using BlueprintEditorLibrary
+    compiled = unreal.BlueprintEditorLibrary.compile_blueprint(bp)
     print(f"Compiled: {compiled}")
 
     result = {
