@@ -525,6 +525,16 @@ bool UExGraphEditorLibrary::ConnectNodes(
     bool bSuccess = Schema->TryCreateConnection(PinA, PinB);
     if (bSuccess)
     {
+        // Refresh Blueprint editor
+        if (UEdGraph* Graph = NodeA->GetGraph())
+        {
+            Graph->NotifyGraphChanged();
+            if (UBlueprint* Blueprint = FBlueprintEditorUtils::FindBlueprintForGraph(Graph))
+            {
+                FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+            }
+        }
+
         UE_LOG(LogExGraphEditor, Log, TEXT("ConnectNodes: Connected '%s' -> '%s'"),
             *PinA->PinName.ToString(), *PinB->PinName.ToString());
     }
@@ -557,6 +567,16 @@ bool UExGraphEditorLibrary::SetPinDefaultValue(
 
     const UEdGraphSchema_K2* K2Schema = GetDefault<UEdGraphSchema_K2>();
     K2Schema->TrySetDefaultValue(*Pin, NewValue);
+
+    // Refresh Blueprint editor
+    if (UEdGraph* Graph = Node->GetGraph())
+    {
+        Graph->NotifyGraphChanged();
+        if (UBlueprint* Blueprint = FBlueprintEditorUtils::FindBlueprintForGraph(Graph))
+        {
+            FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+        }
+    }
 
     UE_LOG(LogExGraphEditor, Log, TEXT("SetPinDefaultValue: Set '%s' = '%s'"),
         *Pin->PinName.ToString(), *NewValue);
@@ -684,6 +704,10 @@ bool UExGraphEditorLibrary::DisconnectPin(UEdGraphNode* Node, const FString& Pin
     if (UEdGraph* Graph = Node->GetGraph())
     {
         Graph->NotifyGraphChanged();
+        if (UBlueprint* Blueprint = FBlueprintEditorUtils::FindBlueprintForGraph(Graph))
+        {
+            FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+        }
     }
 
     UE_LOG(LogExGraphEditor, Log, TEXT("DisconnectPin: Broke %d links from '%s'"), NumLinks, *Pin->PinName.ToString());
