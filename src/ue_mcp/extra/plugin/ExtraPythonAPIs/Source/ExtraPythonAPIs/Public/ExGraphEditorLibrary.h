@@ -123,6 +123,29 @@ public:
         int32 NodePosY = 0
     );
 
+    /**
+     * Add a function call node by function name.
+     * - If OwnerClass is nullptr: searches common library classes (PrintString, Delay, etc.)
+     * - If OwnerClass is provided: searches only in that class (supports ANY class's member methods)
+     *
+     * For member methods, a Target/self pin is automatically created to receive the object instance.
+     *
+     * @param TargetBlueprint The Blueprint to modify
+     * @param FunctionName Function name (e.g., "PrintString", "SetStaticMesh", "GetActorLocation")
+     * @param OwnerClass Optional: the class containing the function (for member methods)
+     * @param NodePosX X position in graph
+     * @param NodePosY Y position in graph
+     * @return The created node, or nullptr on failure
+     */
+    UFUNCTION(BlueprintCallable, Category = "ExtraPythonAPIs|Graph", meta = (DevelopmentOnly))
+    static UEdGraphNode* AddFunctionNodeByName(
+        UBlueprint* TargetBlueprint,
+        const FString& FunctionName,
+        UClass* OwnerClass = nullptr,
+        int32 NodePosX = 0,
+        int32 NodePosY = 0
+    );
+
     // ========================================================================
     // UPDATE Operations
     // ========================================================================

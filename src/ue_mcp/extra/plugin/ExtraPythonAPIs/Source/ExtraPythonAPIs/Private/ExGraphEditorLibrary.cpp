@@ -10,6 +10,12 @@
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
 #include "Factories/BlueprintFactory.h"
+#include "Kismet/KismetSystemLibrary.h"
+#include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetMathLibrary.h"
+#include "Kismet/KismetStringLibrary.h"
+#include "Kismet/KismetArrayLibrary.h"
+#include "Kismet/KismetTextLibrary.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogExGraphEditor, Log, All);
 
@@ -358,6 +364,107 @@ UEdGraphNode* UExGraphEditorLibrary::AddVariableSetNode(
 
     UE_LOG(LogExGraphEditor, Log, TEXT("AddVariableSetNode: Added setter for '%s' at (%d, %d)"),
         *VariableName.ToString(), NodePosX, NodePosY);
+
+    return NewNode;
+}
+
+UEdGraphNode* UExGraphEditorLibrary::AddFunctionNodeByName(
+    UBlueprint* TargetBlueprint,
+    const FString& FunctionName,
+    UClass* OwnerClass,
+    int32 NodePosX,
+    int32 NodePosY)
+{
+    if (!TargetBlueprint)
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("AddFunctionNodeByName: TargetBlueprint is null"));
+        return nullptr;
+    }
+
+    if (FunctionName.IsEmpty())
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("AddFunctionNodeByName: FunctionName is empty"));
+        return nullptr;
+    }
+
+    FName FuncName(*FunctionName);
+    UFunction* FoundFunction = nullptr;
+    UClass* FoundClass = nullptr;
+
+    // If OwnerClass is provided, search only in that class (supports ANY class's member methods)
+    if (OwnerClass)
+    {
+        FoundFunction = OwnerClass->FindFunctionByName(FuncName);
+        if (FoundFunction)
+        {
+            FoundClass = OwnerClass;
+        }
+        else
+        {
+            UE_LOG(LogExGraphEditor, Warning, TEXT("AddFunctionNodeByName: Function '%s' not found in class '%s'"),
+                *FunctionName, *OwnerClass->GetName());
+            return nullptr;
+        }
+    }
+    else
+    {
+        // No OwnerClass provided - search common library classes (backward compatibility)
+        TArray<UClass*> LibraryClasses = {
+            UKismetSystemLibrary::StaticClass(),
+            UGameplayStatics::StaticClass(),
+            UKismetMathLibrary::StaticClass(),
+            UKismetStringLibrary::StaticClass(),
+            UKismetArrayLibrary::StaticClass(),
+            UKismetTextLibrary::StaticClass(),
+            AActor::StaticClass(),
+            UActorComponent::StaticClass(),
+        };
+
+        for (UClass* LibClass : LibraryClasses)
+        {
+            UFunction* Func = LibClass->FindFunctionByName(FuncName);
+            if (Func)
+            {
+                FoundFunction = Func;
+                FoundClass = LibClass;
+                break;
+            }
+        }
+
+        if (!FoundFunction)
+        {
+            UE_LOG(LogExGraphEditor, Warning, TEXT("AddFunctionNodeByName: Function '%s' not found in any common library class"), *FunctionName);
+            return nullptr;
+        }
+    }
+
+    UEdGraph* Graph = GetEventGraph(TargetBlueprint);
+    if (!Graph)
+    {
+        return nullptr;
+    }
+
+    // Create the node
+    UK2Node_CallFunction* NewNode = NewObject<UK2Node_CallFunction>(Graph);
+    NewNode->CreateNewGuid();
+    NewNode->NodePosX = NodePosX;
+    NewNode->NodePosY = NodePosY;
+
+    // Set up the function reference
+    // SetFromFunction() automatically handles member vs static functions
+    // and will create a Target/self pin for member methods
+    NewNode->SetFromFunction(FoundFunction);
+
+    // Add to graph and create pins
+    Graph->AddNode(NewNode, false, false);
+    NewNode->AllocateDefaultPins();
+
+    // Notify changes
+    Graph->NotifyGraphChanged();
+    FBlueprintEditorUtils::MarkBlueprintAsModified(TargetBlueprint);
+
+    UE_LOG(LogExGraphEditor, Log, TEXT("AddFunctionNodeByName: Added '%s::%s' at (%d, %d)"),
+        *FoundClass->GetName(), *FunctionName, NodePosX, NodePosY);
 
     return NewNode;
 }

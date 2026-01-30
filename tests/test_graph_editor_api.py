@@ -944,3 +944,151 @@ print(json.dumps(result))
         assert "Final compile: True" in output_text, (
             f"Integration test failed - compilation failed. Output: {output_text}"
         )
+
+    @pytest.mark.asyncio
+    async def test_add_member_function_node(self, running_editor: ToolCaller):
+        """
+        Test adding member function nodes for various classes using OwnerClass parameter.
+        This tests the enhanced AddFunctionNodeByName API that supports ANY class's member methods.
+
+        Note: In UE5, Blueprint-callable member methods use K2_ prefix (e.g., K2_GetActorLocation).
+        """
+        code = """
+import unreal
+
+# Create a test Blueprint
+bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
+    "/Game/TestGraphEditor",
+    "BP_MemberFuncTest",
+    unreal.Actor.static_class()
+)
+
+if bp:
+    results = {}
+
+    # Test 1: Actor.K2_GetActorLocation (member method - note K2_ prefix)
+    get_loc = unreal.ExGraphEditorLibrary.add_function_node_by_name(
+        bp, "K2_GetActorLocation", unreal.Actor.static_class(), 0, 0
+    )
+    results["K2_GetActorLocation"] = get_loc is not None
+    print(f"Actor.K2_GetActorLocation: {get_loc is not None}")
+
+    # Test 2: Actor.K2_SetActorLocation (member method with params)
+    set_loc = unreal.ExGraphEditorLibrary.add_function_node_by_name(
+        bp, "K2_SetActorLocation", unreal.Actor.static_class(), 200, 0
+    )
+    results["K2_SetActorLocation"] = set_loc is not None
+    print(f"Actor.K2_SetActorLocation: {set_loc is not None}")
+
+    # Test 3: Verify Target/self pin exists for member method
+    if get_loc:
+        pins = unreal.ExGraphEditorLibrary.get_node_pin_names(get_loc)
+        pin_strs = [str(p).lower() for p in pins]
+        print(f"K2_GetActorLocation pins: {[str(p) for p in pins]}")
+        # Member methods should have a self/target pin
+        has_self = any("self" in p or "target" in p for p in pin_strs)
+        results["has_self_pin"] = has_self
+        print(f"Has self/target pin: {has_self}")
+
+    # Test 4: SceneComponent.K2_GetComponentLocation
+    get_comp_loc = unreal.ExGraphEditorLibrary.add_function_node_by_name(
+        bp, "K2_GetComponentLocation", unreal.SceneComponent.static_class(), 400, 0
+    )
+    results["K2_GetComponentLocation"] = get_comp_loc is not None
+    print(f"SceneComponent.K2_GetComponentLocation: {get_comp_loc is not None}")
+
+    # Compile to verify all nodes are valid
+    compiled = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+    results["compiled"] = compiled
+    print(f"Compiled: {compiled}")
+
+    result = {"success": all(results.values()), "results": results}
+else:
+    result = {"success": False, "error": "Blueprint not created"}
+
+import json
+print(json.dumps(result))
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": code},
+            timeout=60,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        assert "Actor.K2_GetActorLocation: True" in output_text, (
+            f"Failed to add Actor.K2_GetActorLocation node. Output: {output_text}"
+        )
+        assert "Actor.K2_SetActorLocation: True" in output_text, (
+            f"Failed to add Actor.K2_SetActorLocation node. Output: {output_text}"
+        )
+        assert "Has self/target pin: True" in output_text, (
+            f"Member method should have self/target pin. Output: {output_text}"
+        )
+        assert "Compiled: True" in output_text, (
+            f"Member function test blueprint failed to compile. Output: {output_text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_add_function_node_backward_compatibility(self, running_editor: ToolCaller):
+        """
+        Test that AddFunctionNodeByName still works without OwnerClass (backward compatibility).
+        Library functions like PrintString should work without specifying OwnerClass.
+        """
+        code = """
+import unreal
+
+# Create a test Blueprint
+bp = unreal.ExGraphEditorLibrary.create_blueprint_asset(
+    "/Game/TestGraphEditor",
+    "BP_BackwardCompatTest",
+    unreal.Actor.static_class()
+)
+
+if bp:
+    # Test: PrintString without OwnerClass (should still work)
+    print_node = unreal.ExGraphEditorLibrary.add_function_node_by_name(
+        bp, "PrintString", None, 0, 0
+    )
+    print(f"PrintString (no OwnerClass): {print_node is not None}")
+
+    # Test: Delay without OwnerClass
+    delay_node = unreal.ExGraphEditorLibrary.add_function_node_by_name(
+        bp, "Delay", None, 200, 0
+    )
+    print(f"Delay (no OwnerClass): {delay_node is not None}")
+
+    compiled = unreal.ExGraphEditorLibrary.compile_blueprint(bp)
+    print(f"Compiled: {compiled}")
+
+    result = {
+        "success": print_node is not None and compiled,
+        "print_node": print_node is not None,
+        "delay_node": delay_node is not None,
+        "compiled": compiled
+    }
+else:
+    result = {"success": False, "error": "Blueprint not created"}
+
+import json
+print(json.dumps(result))
+"""
+        result = await running_editor.call(
+            "editor_execute_code",
+            {"code": code},
+            timeout=60,
+        )
+        data = parse_tool_result(result)
+
+        output = data.get("output", [])
+        output_text = extract_output_text(output)
+
+        assert "PrintString (no OwnerClass): True" in output_text, (
+            f"Backward compatibility broken - PrintString without OwnerClass failed. Output: {output_text}"
+        )
+        assert "Compiled: True" in output_text, (
+            f"Backward compatibility test blueprint failed to compile. Output: {output_text}"
+        )
