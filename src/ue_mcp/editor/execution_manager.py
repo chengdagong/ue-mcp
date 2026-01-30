@@ -464,9 +464,19 @@ class ExecutionManager:
         inject_result = self._execute_code_impl(injection_code, timeout=5.0)
 
         if not inject_result.get("success"):
+            # Log full result for troubleshooting (error details often in result/output)
+            logger.warning(f"Parameter injection failed. Full result: {inject_result}")
+            # Extract error from result or output when error key is missing
+            error_msg = inject_result.get("error")
+            if not error_msg:
+                error_msg = inject_result.get("result") or ""
+                output = inject_result.get("output", [])
+                if output:
+                    output_str = "\n".join(str(o) for o in output) if isinstance(output, list) else str(output)
+                    error_msg = f"{error_msg}\nOutput: {output_str}".strip()
             return {
                 "success": False,
-                "error": f"Failed to inject parameters: {inject_result.get('error')}",
+                "error": f"Failed to inject parameters: {error_msg or 'Unknown error'}",
             }
 
         # Step 3: Execute script file directly (true hot-reload)

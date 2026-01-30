@@ -271,8 +271,9 @@ class TestBuildEnvInjectionCode:
         result = build_env_injection_code("/path/to/script.py", {})
         assert "import os" in result
         assert f"os.environ[{repr(ENV_VAR_CALL)}]" in result
-        # Should have empty JSON object in payload (escaped for f-string: {} -> {{}})
-        assert ":{{}}" in result  # The payload ends with :{{}} (escaped empty JSON)
+        # Should have empty JSON object in payload (using string concatenation with repr())
+        # New format: ... + ':' + '{}'
+        assert "+ '{}'" in result  # Empty JSON dict at end of concatenation
 
     def test_complex_types(self):
         """Test that complex types (lists, dicts) are JSON encoded."""
@@ -286,14 +287,13 @@ class TestBuildEnvInjectionCode:
         result = build_env_injection_code("/path/to/script.py", params)
 
         # Extract the payload from the result
-        # The format is: os.environ['UE_MCP_CALL'] = f'<checksum>:{time.time()}:<json>'
+        # New format: os.environ['UE_MCP_CALL'] = '<checksum>:' + str(time.time()) + ':' + '<json>'
         import re
-        # The payload format in the f-string: '{checksum}:{time.time()}:{json_params}'
-        # Note: JSON braces are escaped for f-string ({{ and }})
-        match = re.search(r"= f'([a-f0-9]{8}):\{time\.time\(\)\}:(.+)'", result)
-        assert match is not None, f"Could not find payload pattern in: {result}"
-        # Unescape f-string braces before parsing as JSON
-        json_str = match.group(2).replace("{{", "{").replace("}}", "}")
+        # Match the JSON string at the end of the concatenation (after the last + ':' +)
+        # The JSON is wrapped in repr(), so it appears as '{"key": "value"}'
+        match = re.search(r"\+ '(\{.+\})'$", result.strip())
+        assert match is not None, f"Could not find JSON payload pattern in: {result}"
+        json_str = match.group(1)
         parsed = json.loads(json_str)
 
         assert parsed["actors"] == ["Actor1", "Actor2"]
@@ -339,8 +339,9 @@ class TestBuildEnvInjectionCode:
             "/path/to/script.py",
             {"a": None, "b": None}
         )
-        # Empty JSON {} is escaped to {{}} for f-string
-        assert ":{{}}" in result  # Empty JSON at end of payload (escaped)
+        # Empty JSON {} using string concatenation with repr()
+        # New format: ... + ':' + '{}'
+        assert "+ '{}'" in result  # Empty JSON at end of concatenation
 
     def test_includes_mcp_mode(self):
         """Test that injection code sets MCP mode flag."""
@@ -361,10 +362,11 @@ class TestBuildEnvInjectionCode:
         """Test that payload has correct format: <checksum>:{time.time()}:<json_params>."""
         result = build_env_injection_code("/path/to/script.py", {"key": "value"})
         checksum = compute_script_checksum("/path/to/script.py")
-        # The line should be: os.environ['UE_MCP_CALL'] = f'<checksum>:{time.time()}:<json>'
-        # Check that format string has checksum, time.time(), and JSON params
-        assert f"f'{checksum}:{{time.time()}}:" in result
-        assert '{"key": "value"}' in result or '{"key":"value"}' in result
+        # New format: os.environ['UE_MCP_CALL'] = '<checksum>:' + str(time.time()) + ':' + '<json>'
+        # Check that string concatenation has checksum, time.time(), and JSON params
+        assert f"'{checksum}:'" in result  # Checksum with colon
+        assert "str(time.time())" in result  # Timestamp
+        assert '{"key": "value"}' in result or '{"key":"value"}' in result  # JSON params
 
     def test_only_two_env_vars(self):
         """Test that only two env vars are set (MODE and PAYLOAD)."""

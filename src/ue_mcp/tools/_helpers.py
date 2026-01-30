@@ -180,15 +180,11 @@ def build_env_injection_code(
 
     # JSON-encode parameters (will be part of the payload)
     params_json = json.dumps(clean_params)
-    # Escape for f-string embedding:
-    # 1. Backslashes must be doubled (\ -> \\) because f-string literals interpret escapes
-    # 2. Braces must be doubled ({ -> {{, } -> }}) to avoid f-string format expressions
-    escaped_params_json = (
-        params_json.replace("\\", "\\\\")  # Must come first!
-        .replace("{", "{{")
-        .replace("}", "}}")
-    )
 
+    # Use string concatenation instead of f-string to avoid escaping issues
+    # when the generated code is wrapped in exec(repr(...)) by _execute_code_impl.
+    # The f-string approach caused syntax errors due to nested escaping of
+    # backslashes, quotes, and braces in complex parameters like code_snippets.
     lines = [
         "import os",
         "import sys",
@@ -196,7 +192,8 @@ def build_env_injection_code(
         # Set MCP mode flag
         f"os.environ[{repr(ENV_VAR_MODE)}] = '1'",
         # Set call info: "<checksum>:<timestamp>:<json_params>"
-        f"os.environ[{repr(ENV_VAR_CALL)}] = f'{checksum}:{{time.time()}}:{escaped_params_json}'",
+        # Use string concatenation + repr() to properly handle all special characters
+        f"os.environ[{repr(ENV_VAR_CALL)}] = {repr(checksum + ':')} + str(time.time()) + ':' + {repr(params_json)}",
     ]
 
     # Add output capture setup if output_file is provided
