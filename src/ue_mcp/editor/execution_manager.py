@@ -10,6 +10,7 @@ This subsystem manages:
 import logging
 import tempfile
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -46,6 +47,35 @@ if TYPE_CHECKING:
     from .types import NotifyCallback
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PreExecutionContext:
+    """Context captured before code execution for tracking and validation."""
+
+    code: str
+    """The code being executed (original or read from script)."""
+
+    import_statements: list[str] = field(default_factory=list)
+    """Extracted import statements from the code."""
+
+    game_paths: list[str] = field(default_factory=list)
+    """Extracted /Game/ paths from the code."""
+
+    level_paths: list[str] = field(default_factory=list)
+    """Extracted level paths from the code."""
+
+    pre_snapshot: dict[str, Any] | None = None
+    """Asset snapshot taken before execution."""
+
+    pre_actor_snapshot: dict[str, Any] | None = None
+    """Actor snapshot taken before execution."""
+
+    bundled_imports: list[str] = field(default_factory=list)
+    """Bundled module imports that need reloading."""
+
+    installed_packages: list[str] = field(default_factory=list)
+    """Packages auto-installed during import resolution."""
 
 
 def _build_crash_response(ctx: "EditorContext", details: dict[str, Any]) -> dict[str, Any]:
@@ -189,31 +219,33 @@ class ExecutionManager:
         if ensure_result is not None:
             return ensure_result
 
-        # If params provided, use parameter injection flow
-        if params is not None:
-            return self._execute_script_with_params(
-                script_path,
-                params,
-                timeout=timeout,
-                wait_for_latent=wait_for_latent,
-                latent_timeout=latent_timeout,
-            )
-
-        # No params, use appropriate execution method
+        # Use appropriate execution method based on checks flag
         if checks:
+            # Checks impl handles params internally
             return self._execute_script_with_checks_impl(
                 script_path,
                 timeout=timeout,
+                params=params,
                 wait_for_latent=wait_for_latent,
                 latent_timeout=latent_timeout,
             )
         else:
-            return self._execute_script_impl(
-                script_path,
-                timeout=timeout,
-                wait_for_latent=wait_for_latent,
-                latent_timeout=latent_timeout,
-            )
+            # No checks - use direct execution with optional params
+            if params is not None:
+                return self._execute_script_with_params(
+                    script_path,
+                    params,
+                    timeout=timeout,
+                    wait_for_latent=wait_for_latent,
+                    latent_timeout=latent_timeout,
+                )
+            else:
+                return self._execute_script_impl(
+                    script_path,
+                    timeout=timeout,
+                    wait_for_latent=wait_for_latent,
+                    latent_timeout=latent_timeout,
+                )
 
     async def pip_install(
         self,
@@ -499,12 +531,12 @@ class ExecutionManager:
         and bundled module reloading (internal implementation).
 
         Flow:
-        1. Extract import statements from code (also checks syntax)
-        2. If syntax error, return error immediately
-        2.5. Detect bundled module imports and inject unload code
-        3. Execute import statements in UE to detect missing modules
-        4. Auto-install missing modules and retry imports
-        5. Execute the full code
+        1. Validate syntax and run code inspection
+        2. Prepare pre-execution context (snapshots, paths)
+        3. Handle bundled module reload
+        4. Auto-install missing imports
+        5. Execute the code
+        6. Process post-execution tracking
 
         Args:
             code: Python code to execute
@@ -514,24 +546,180 @@ class ExecutionManager:
         Returns:
             Execution result dictionary
         """
-        installed_packages: list[str] = []
+        # Step 1: Validate and inspect code
+        validation_error = self._validate_and_inspect_code(code)
+        if validation_error:
+            return validation_error
 
+        # Step 2: Prepare pre-execution context
+        pre_ctx = self._prepare_pre_execution_context(code)
+
+        # Step 3: Handle bundled module reload by injecting unload code
+        exec_code = code
+        if pre_ctx.bundled_imports:
+            unload_code = generate_module_unload_code(pre_ctx.bundled_imports)
+            exec_code = unload_code + code
+            logger.debug(f"Injected unload code for bundled modules: {pre_ctx.bundled_imports}")
+
+        # Step 4: Handle imports with auto-install
+        self._handle_imports_with_auto_install(
+            pre_ctx.import_statements,
+            pre_ctx.installed_packages,
+            max_install_attempts,
+        )
+
+        # Step 5: Execute the code
+        result = self._execute_code_impl(exec_code, timeout=timeout)
+
+        # Add installation info
+        if pre_ctx.installed_packages:
+            result["auto_installed"] = pre_ctx.installed_packages
+
+        # Step 6: Process post-execution tracking
+        self._process_post_execution_tracking(pre_ctx, result)
+
+        return result
+
+    def _execute_script_with_checks_impl(
+        self,
+        script_path: str,
+        timeout: float = 120.0,
+        params: dict[str, Any] | None = None,
+        wait_for_latent: bool = True,
+        latent_timeout: float = 60.0,
+        max_install_attempts: int = 3,
+    ) -> dict[str, Any]:
+        """
+        Execute a Python script file with validation and tracking (internal implementation).
+
+        Provides the same checks as _execute_with_checks_impl:
+        - Syntax validation
+        - Server-side code inspection (blocking calls, deprecated APIs)
+        - Editor-side code inspection (UnrealAPIChecker)
+        - Import auto-install for missing packages
+        - Asset change tracking
+        - Actor change tracking
+
+        Args:
+            script_path: Absolute path to the Python script file
+            timeout: Execution timeout in seconds
+            params: Optional parameters to pass to the script via environment variables
+            wait_for_latent: Whether to wait for latent commands to complete
+            latent_timeout: Max time to wait for latent commands
+            max_install_attempts: Maximum number of packages to auto-install
+
+        Returns:
+            Execution result with asset_changes, dirty_assets, etc.
+        """
+        path = Path(script_path)
+        if not path.exists():
+            return {"success": False, "error": f"Script not found: {script_path}"}
+
+        # Step 1: Read script content
+        try:
+            code = path.read_text(encoding="utf-8")
+        except Exception as e:
+            return {"success": False, "error": f"Failed to read script: {e}"}
+
+        # Step 2: Validate and inspect code
+        validation_error = self._validate_and_inspect_code(code)
+        if validation_error:
+            return validation_error
+
+        # Step 3: Prepare pre-execution context
+        pre_ctx = self._prepare_pre_execution_context(code)
+
+        # Step 4: Handle bundled module reload (execute separately since we can't modify script)
+        if pre_ctx.bundled_imports:
+            unload_code = generate_module_unload_code(pre_ctx.bundled_imports)
+            self._execute_code_impl(unload_code, timeout=5.0)
+            logger.debug(f"Executed unload code for bundled modules: {pre_ctx.bundled_imports}")
+
+        # Step 5: Handle imports with auto-install
+        self._handle_imports_with_auto_install(
+            pre_ctx.import_statements,
+            pre_ctx.installed_packages,
+            max_install_attempts,
+        )
+
+        # Step 6: Handle parameter injection if params provided
+        output_file: str | None = None
+        if params is not None:
+            # Create temporary file for output capture
+            temp_dir = Path(tempfile.gettempdir())
+            output_file = str(temp_dir / f"ue_mcp_output_{uuid.uuid4().hex[:8]}.txt")
+
+            # Inject parameters via environment variables with output capture
+            injection_code = build_env_injection_code(str(script_path), params, output_file)
+            inject_result = self._execute_code_impl(injection_code, timeout=5.0)
+
+            if not inject_result.get("success"):
+                return {
+                    "success": False,
+                    "error": f"Failed to inject parameters: {inject_result.get('error')}",
+                }
+
+        # Step 7: Execute the script file
+        result = self._execute_script_impl(
+            script_path,
+            timeout=timeout,
+            output_file=output_file,
+            wait_for_latent=wait_for_latent,
+            latent_timeout=latent_timeout,
+        )
+
+        # Add installation info
+        if pre_ctx.installed_packages:
+            result["auto_installed"] = pre_ctx.installed_packages
+
+        # Step 8: Process post-execution tracking
+        self._process_post_execution_tracking(pre_ctx, result)
+
+        return result
+
+    def _pip_install_impl(
+        self,
+        packages: list[str],
+        upgrade: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Install Python packages in UE5's Python environment (internal implementation).
+
+        Args:
+            packages: List of package names to install
+            upgrade: Whether to upgrade existing packages
+
+        Returns:
+            Installation result dictionary
+        """
+        python_path = self._get_python_path()
+        return pip_install(packages, python_path=python_path, upgrade=upgrade)
+
+    # =========================================================================
+    # EXECUTION HELPERS - Shared logic for checked execution
+    # =========================================================================
+
+    def _validate_and_inspect_code(self, code: str) -> dict[str, Any] | None:
+        """
+        Validate syntax and run code inspection checks.
+
+        Performs:
+        1. Syntax validation via import extraction
+        2. Server-side code inspection (blocking calls, deprecated APIs)
+        3. Editor-side code inspection (UnrealAPIChecker)
+
+        Args:
+            code: Python code to validate
+
+        Returns:
+            None if validation passes, error dict if validation fails.
+        """
         # Step 1: Extract import statements (also validates syntax)
         import_statements, syntax_error = extract_import_statements(code)
-
-        # Step 2: If syntax error, return immediately
         if syntax_error:
-            return {
-                "success": False,
-                "error": syntax_error,
-            }
+            return {"success": False, "error": syntax_error}
 
-        # Step 2.5: Code inspection for blocking calls and other issues
-        # Run inspection in two phases:
-        # 1. Server-side inspection (for checks that don't need unreal module)
-        # 2. Editor-side inspection (for UnrealAPIChecker that needs unreal module)
-
-        # Server-side inspection
+        # Step 2: Server-side code inspection
         inspection = inspect_code(code)
         if not inspection.allowed:
             return {
@@ -540,14 +728,28 @@ class ExecutionManager:
                 "inspection_issues": [i.to_dict() for i in inspection.issues],
             }
 
-        # Editor-side inspection (only if editor is ready)
+        # Step 3: Editor-side code inspection (only if editor is ready)
         if self._ctx.editor and self._ctx.editor.status == "ready":
-            logger.debug("Running editor-side code inspection for UnrealAPIChecker")
-            # Prepare code inspector execution in editor
-            # Calculate src path relative to this file
-            src_path = Path(__file__).parent.parent.parent
+            editor_error = self._run_editor_inspection(code)
+            if editor_error:
+                return editor_error
 
-            inspector_code = f'''
+        return None
+
+    def _run_editor_inspection(self, code: str) -> dict[str, Any] | None:
+        """
+        Run code inspection in the UE5 editor.
+
+        Args:
+            code: Python code to inspect
+
+        Returns:
+            None if inspection passes, error dict if inspection fails.
+        """
+        logger.debug("Running editor-side code inspection for UnrealAPIChecker")
+        src_path = Path(__file__).parent.parent.parent
+
+        inspector_code = f'''
 import sys
 
 # Add src to path (absolute path, since __file__ is not available in editor)
@@ -572,462 +774,215 @@ else:
     print("CODE_INSPECTION_PASSED")
 '''
 
-            logger.debug("Inspector code prepared, executing in editor...")
-            # Execute inspector in editor
-            inspector_result = self._execute_code_impl(inspector_code, timeout=10.0)
+        logger.debug("Inspector code prepared, executing in editor...")
+        inspector_result = self._execute_code_impl(inspector_code, timeout=10.0)
 
-            logger.debug(f"Inspector execution result: success={inspector_result.get('success')}")
+        logger.debug(f"Inspector execution result: success={inspector_result.get('success')}")
 
-            # Check inspection result
-            if inspector_result.get("success"):
-                output = inspector_result.get("output", [])
-                output_str = ""
-                if isinstance(output, list):
-                    for line in output:
-                        if isinstance(line, dict):
-                            output_str += str(line.get("output", ""))
-                        else:
-                            output_str += str(line)
-                else:
-                    output_str = str(output)
+        if inspector_result.get("success"):
+            output = inspector_result.get("output", [])
+            output_str = ""
+            if isinstance(output, list):
+                for line in output:
+                    if isinstance(line, dict):
+                        output_str += str(line.get("output", ""))
+                    else:
+                        output_str += str(line)
+            else:
+                output_str = str(output)
 
-                logger.debug(f"Inspector output: {output_str[:200]}")
+            logger.debug(f"Inspector output: {output_str[:200]}")
 
-                if "CODE_INSPECTION_FAILED" in output_str:
-                    # Extract error message
-                    error_msg = output_str.split("CODE_INSPECTION_FAILED", 1)[1].strip()
-                    logger.info(f"Code inspection failed in editor: {error_msg[:200]}")
-                    return {
-                        "success": False,
-                        "error": error_msg,
-                    }
-                elif "CODE_INSPECTION_PASSED" in output_str:
-                    logger.debug("Code inspection passed in editor")
-            # If inspection execution failed or output unclear, log but continue
-            # (better to allow code execution than block it due to inspector issues)
-            elif not inspector_result.get("success"):
-                logger.warning(
-                    f"Editor-side code inspection failed to execute: {inspector_result.get('error')}"
-                )
-        else:
-            logger.debug(
-                f"Skipping editor-side inspection: editor_status="
-                f"{self._ctx.editor.status if self._ctx.editor else 'None'}"
+            if "CODE_INSPECTION_FAILED" in output_str:
+                error_msg = output_str.split("CODE_INSPECTION_FAILED", 1)[1].strip()
+                logger.info(f"Code inspection failed in editor: {error_msg[:200]}")
+                return {"success": False, "error": error_msg}
+            elif "CODE_INSPECTION_PASSED" in output_str:
+                logger.debug("Code inspection passed in editor")
+        elif not inspector_result.get("success"):
+            logger.warning(
+                f"Editor-side code inspection failed to execute: {inspector_result.get('error')}"
             )
 
-        # Step 3: Detect and prepare bundled module reload
-        # This ensures bundled modules are reloaded to pick up latest code changes
-        bundled_imports = extract_bundled_module_imports(code)
-        if bundled_imports:
-            unload_code = generate_module_unload_code(bundled_imports)
-            code = unload_code + code
-            logger.debug(f"Injected unload code for bundled modules: {bundled_imports}")
+        return None
 
-        # Step 3.5: Asset change tracking - Pre-execution snapshot
-        # Extract /Game/xxx/ paths from code and take a snapshot before execution
-        # Also auto-track the current level even if not explicitly referenced in code
-        pre_snapshot = None
-        pre_actor_snapshot = None
-        game_paths = extract_game_paths(code)
-        level_paths = extract_level_paths(code)
-
-        # Auto-add current level path to tracking list
-        # This ensures changes to the current level are tracked even when the code
-        # doesn't explicitly contain /Game/ path strings
-        if self._ctx.editor and self._ctx.editor.status == "ready":
-            current_level_dir = get_current_level_path(self)
-            if current_level_dir and current_level_dir not in game_paths:
-                game_paths.append(current_level_dir)
-                logger.debug(f"Asset tracking: auto-added current level {current_level_dir}")
-
-        if game_paths and self._ctx.editor and self._ctx.editor.status == "ready":
-            logger.debug(f"Asset tracking: creating pre-snapshot for paths {game_paths}")
-            pre_snapshot = create_snapshot(self, game_paths, str(self._ctx.project_root))
-            if pre_snapshot:
-                logger.debug(
-                    f"Asset tracking: pre-snapshot captured "
-                    f"{len(pre_snapshot.get('assets', {}))} assets"
-                )
-
-        # Also create actor snapshot for OFPA mode support
-        # Pass level_paths to track actors in referenced levels too
-        if self._ctx.editor and self._ctx.editor.status == "ready":
-            pre_actor_snapshot = create_level_actor_snapshot(self, level_paths)
-            if pre_actor_snapshot:
-                levels_count = len(pre_actor_snapshot.get("levels", {}))
-                total_actors = sum(
-                    level.get("actor_count", 0)
-                    for level in pre_actor_snapshot.get("levels", {}).values()
-                )
-                logger.debug(
-                    f"Actor tracking: pre-snapshot captured {total_actors} actors "
-                    f"across {levels_count} level(s)"
-                )
-
-        if import_statements:
-            # Combine all import statements into one code block
-            import_code = "\n".join(import_statements)
-
-            # Step 3: Try executing imports, install missing modules and retry
-            attempts = 0
-            while attempts <= max_install_attempts:
-                result = self._execute_code_impl(import_code, timeout=10.0)
-
-                if result.get("success"):
-                    # All imports succeeded
-                    break
-
-                # Check if it's an ImportError
-                if not is_import_error(result):
-                    # Not an import error, skip pre-installation
-                    break
-
-                # Extract missing module name
-                missing_module = get_missing_module_from_result(result)
-                if not missing_module:
-                    logger.warning("Import error detected but could not extract module name")
-                    break
-
-                # Convert to package name
-                package_name = module_to_package(missing_module)
-
-                # Prevent duplicate installation
-                if package_name in installed_packages:
-                    logger.warning(f"Already attempted to install {package_name}, giving up")
-                    break
-
-                # Get Python path from running editor
-                python_path = self._get_python_path()
-
-                # Install the missing package
-                logger.info(f"Pre-installing missing package: {package_name}")
-                install_result = pip_install([package_name], python_path=python_path)
-
-                if not install_result.get("success", False):
-                    logger.warning(
-                        f"Failed to install {package_name}: {install_result.get('error')}"
-                    )
-                    break
-
-                installed_packages.append(package_name)
-                logger.info(f"Successfully pre-installed {package_name}, retrying imports...")
-                attempts += 1
-
-        # Step 4: Execute the full code
-        result = self._execute_code_impl(code, timeout=timeout)
-
-        # Add installation info
-        if installed_packages:
-            result["auto_installed"] = installed_packages
-
-        # Step 5: Asset change tracking - Post-execution snapshot and comparison
-        # asset_changes is a simple list of paths of changed assets
-        changed_paths: set[str] = set()
-        temp_level_warning: str | None = None
-
-        if pre_snapshot is not None and result.get("success"):
-            try:
-                post_snapshot = create_snapshot(self, game_paths, str(self._ctx.project_root))
-                if post_snapshot:
-                    snapshot_changes = compare_snapshots(pre_snapshot, post_snapshot)
-                    if snapshot_changes:
-                        changed_paths.update(snapshot_changes)
-                        logger.debug(f"Asset tracking: detected {len(snapshot_changes)} changed assets")
-                    else:
-                        logger.debug("Asset tracking: no changes detected")
-            except Exception as e:
-                logger.warning(f"Asset tracking failed: {e}")
-
-        # Actor-based change tracking for OFPA mode
-        # When actors change, add the level to asset_changes
-        if pre_actor_snapshot is not None and result.get("success"):
-            try:
-                post_actor_snapshot = create_level_actor_snapshot(self, level_paths)
-                if post_actor_snapshot:
-                    # compare_level_actor_snapshots now returns {level_path: [changed_actors]}
-                    actor_changes = compare_level_actor_snapshots(
-                        pre_actor_snapshot, post_actor_snapshot
-                    )
-
-                    if actor_changes:
-                        for level_path, changed_actors in actor_changes.items():
-                            logger.info(
-                                f"Actor tracking: detected {len(changed_actors)} changes in {level_path}"
-                            )
-
-                            # Add temp level warning if applicable
-                            if level_path.startswith("/Temp/"):
-                                temp_level_warning = (
-                                    f"Changes detected in temporary level '{level_path}'. "
-                                    "This level is not saved. If you intended to modify a "
-                                    "persistent level, please load it first using editor_load_level."
-                                )
-                                logger.warning(f"Actor changes in temporary level: {level_path}")
-
-                            # level_path is already in asset path format from compare function
-                            changed_paths.add(level_path)
-                            logger.debug(
-                                f"Added level {level_path} to changed paths via actor tracking"
-                            )
-                    else:
-                        logger.debug("Actor tracking: no changes detected")
-            except Exception as e:
-                logger.warning(f"Actor tracking failed: {e}")
-
-        # Include asset_changes if there are any changed paths
-        if changed_paths:
-            result["asset_changes"] = sorted(changed_paths)
-        if temp_level_warning:
-            result["temp_level_warning"] = temp_level_warning
-
-        # Step 6: Get dirty asset paths
-        dirty_paths: list[str] = []
-        if result.get("success"):
-            try:
-                dirty_paths = get_dirty_asset_paths(self)
-                if dirty_paths:
-                    result["dirty_assets"] = dirty_paths
-                    logger.debug(f"Dirty assets: {dirty_paths}")
-            except Exception as e:
-                logger.warning(f"Failed to get dirty asset paths: {e}")
-
-        # Step 7: Refresh Slate UI if changes were detected
-        if result.get("success") and (changed_paths or dirty_paths):
-            try:
-                refresh_result = self._execute_code_impl(
-                    "import unreal; unreal.ExSlateTabLibrary.refresh_slate_view()",
-                    timeout=5.0,
-                )
-                if refresh_result.get("success"):
-                    logger.debug("Refreshed Slate UI after detected changes")
-            except Exception as e:
-                logger.debug(f"RefreshSlateView failed (non-critical): {e}")
-
-        return result
-
-    def _execute_script_with_checks_impl(
-        self,
-        script_path: str,
-        timeout: float = 120.0,
-        output_file: str | None = None,
-        wait_for_latent: bool = True,
-        latent_timeout: float = 60.0,
-        max_install_attempts: int = 3,
-    ) -> dict[str, Any]:
+    def _prepare_pre_execution_context(self, code: str) -> PreExecutionContext:
         """
-        Execute a Python script file with validation and tracking (internal implementation).
+        Prepare context before code execution including snapshots.
 
-        Provides the same checks as _execute_with_checks_impl:
-        - Syntax validation
-        - Server-side code inspection (blocking calls, deprecated APIs)
-        - Editor-side code inspection (UnrealAPIChecker)
-        - Import auto-install for missing packages
-        - Asset change tracking
-        - Actor change tracking
+        Creates pre-execution snapshots for asset and actor tracking.
 
         Args:
-            script_path: Absolute path to the Python script file
-            timeout: Execution timeout in seconds
-            output_file: Optional path to temp file for stdout/stderr capture
-            wait_for_latent: Whether to wait for latent commands to complete
-            latent_timeout: Max time to wait for latent commands
-            max_install_attempts: Maximum number of packages to auto-install
+            code: Python code to execute
 
         Returns:
-            Execution result with asset_changes, dirty_assets, etc.
+            PreExecutionContext with snapshots and extracted paths.
         """
-        path = Path(script_path)
-        if not path.exists():
-            return {"success": False, "error": f"Script not found: {script_path}"}
+        ctx = PreExecutionContext(code=code)
 
-        # Step 1: Read script content
-        try:
-            code = path.read_text(encoding="utf-8")
-        except Exception as e:
-            return {"success": False, "error": f"Failed to read script: {e}"}
+        # Extract import statements
+        ctx.import_statements, _ = extract_import_statements(code)
 
-        # Step 2: Syntax validation via import extraction
-        import_statements, syntax_error = extract_import_statements(code)
-        if syntax_error:
-            return {"success": False, "error": syntax_error}
+        # Extract paths from code
+        ctx.game_paths = extract_game_paths(code)
+        ctx.level_paths = extract_level_paths(code)
 
-        installed_packages: list[str] = []
-
-        # Step 3a: Server-side code inspection (runs locally, no editor required)
-        inspection = inspect_code(code)
-        if not inspection.allowed:
-            return {
-                "success": False,
-                "error": inspection.format_error(),
-                "inspection_issues": [i.to_dict() for i in inspection.issues],
-            }
-
-        # Step 3b: Editor-side code inspection (runs in UE, requires editor)
-        if self._ctx.editor and self._ctx.editor.status == "ready":
-            # Pre-escape the code to avoid backslash in f-string expression
-            escaped_code = code.replace('"', '\\"')
-            inspector_code = f'''
-import sys
-if "unreal_api_checker" in sys.modules:
-    del sys.modules["unreal_api_checker"]
-try:
-    import unreal_api_checker
-    result = unreal_api_checker.check_code("""{escaped_code}""")
-    if not result["valid"]:
-        print("CODE_INSPECTION_FAILED " + "; ".join(result.get("errors", [])))
-    else:
-        print("CODE_INSPECTION_PASSED")
-except ImportError:
-    print("CODE_INSPECTION_PASSED")
-except Exception as e:
-    print(f"CODE_INSPECTION_ERROR {{e}}")
-'''
-            inspector_result = self._execute_code_impl(inspector_code, timeout=10.0)
-
-            if inspector_result.get("success"):
-                output_lines = inspector_result.get("output", [])
-                output_str = " ".join(
-                    str(line.get("output", "")) if isinstance(line, dict) else str(line)
-                    for line in output_lines
-                )
-
-                if "CODE_INSPECTION_FAILED" in output_str:
-                    error_msg = output_str.split("CODE_INSPECTION_FAILED", 1)[1].strip()
-                    return {
-                        "success": False,
-                        "error": error_msg,
-                    }
-
-        # Step 4: Bundled module reload (execute separately since we can't modify script)
-        bundled_imports = extract_bundled_module_imports(code)
-        if bundled_imports:
-            unload_code = generate_module_unload_code(bundled_imports)
-            self._execute_code_impl(unload_code, timeout=5.0)
-            logger.debug(f"Executed unload code for bundled modules: {bundled_imports}")
-
-        # Step 5: Pre-execution tracking snapshots
-        pre_snapshot = None
-        pre_actor_snapshot = None
-        game_paths = extract_game_paths(code)
-        level_paths = extract_level_paths(code)
+        # Detect bundled module imports
+        ctx.bundled_imports = extract_bundled_module_imports(code)
 
         # Auto-add current level path to tracking list
         if self._ctx.editor and self._ctx.editor.status == "ready":
             current_level_dir = get_current_level_path(self)
-            if current_level_dir and current_level_dir not in game_paths:
-                game_paths.append(current_level_dir)
+            if current_level_dir and current_level_dir not in ctx.game_paths:
+                ctx.game_paths.append(current_level_dir)
                 logger.debug(f"Asset tracking: auto-added current level {current_level_dir}")
 
-        if game_paths and self._ctx.editor and self._ctx.editor.status == "ready":
-            logger.debug(f"Asset tracking: creating pre-snapshot for paths {game_paths}")
-            pre_snapshot = create_snapshot(self, game_paths, str(self._ctx.project_root))
-            if pre_snapshot:
+        # Create asset snapshot
+        if ctx.game_paths and self._ctx.editor and self._ctx.editor.status == "ready":
+            logger.debug(f"Asset tracking: creating pre-snapshot for paths {ctx.game_paths}")
+            ctx.pre_snapshot = create_snapshot(self, ctx.game_paths, str(self._ctx.project_root))
+            if ctx.pre_snapshot:
                 logger.debug(
                     f"Asset tracking: pre-snapshot captured "
-                    f"{len(pre_snapshot.get('assets', {}))} assets"
+                    f"{len(ctx.pre_snapshot.get('assets', {}))} assets"
                 )
 
-        # Actor snapshot for OFPA mode support
+        # Create actor snapshot for OFPA mode support
         if self._ctx.editor and self._ctx.editor.status == "ready":
-            pre_actor_snapshot = create_level_actor_snapshot(self, level_paths)
-            if pre_actor_snapshot:
-                levels_count = len(pre_actor_snapshot.get("levels", {}))
+            ctx.pre_actor_snapshot = create_level_actor_snapshot(self, ctx.level_paths)
+            if ctx.pre_actor_snapshot:
+                levels_count = len(ctx.pre_actor_snapshot.get("levels", {}))
                 total_actors = sum(
                     level.get("actor_count", 0)
-                    for level in pre_actor_snapshot.get("levels", {}).values()
+                    for level in ctx.pre_actor_snapshot.get("levels", {}).values()
                 )
                 logger.debug(
                     f"Actor tracking: pre-snapshot captured {total_actors} actors "
                     f"across {levels_count} level(s)"
                 )
 
-        # Step 6: Import handling with auto-install
-        if import_statements:
-            import_code = "\n".join(import_statements)
-            attempts = 0
-            while attempts <= max_install_attempts:
-                result = self._execute_code_impl(import_code, timeout=10.0)
+        return ctx
 
-                if result.get("success"):
-                    break
+    def _handle_imports_with_auto_install(
+        self,
+        import_statements: list[str],
+        installed_packages: list[str],
+        max_install_attempts: int = 3,
+    ) -> None:
+        """
+        Execute import statements with automatic package installation.
 
-                if not is_import_error(result):
-                    break
+        Tries to execute imports, and if ImportError occurs, attempts to
+        install the missing package and retry.
 
-                missing_module = get_missing_module_from_result(result)
-                if not missing_module:
-                    logger.warning("Import error detected but could not extract module name")
-                    break
+        Args:
+            import_statements: List of import statement strings
+            installed_packages: List to append installed package names to
+            max_install_attempts: Maximum number of packages to auto-install
+        """
+        if not import_statements:
+            return
 
-                package_name = module_to_package(missing_module)
-                if package_name in installed_packages:
-                    logger.warning(f"Already attempted to install {package_name}, giving up")
-                    break
+        import_code = "\n".join(import_statements)
+        attempts = 0
 
-                python_path = self._get_python_path()
-                logger.info(f"Pre-installing missing package: {package_name}")
-                install_result = pip_install([package_name], python_path=python_path)
+        while attempts <= max_install_attempts:
+            result = self._execute_code_impl(import_code, timeout=10.0)
 
-                if not install_result.get("success", False):
-                    logger.warning(
-                        f"Failed to install {package_name}: {install_result.get('error')}"
-                    )
-                    break
+            if result.get("success"):
+                break
 
-                installed_packages.append(package_name)
-                logger.info(f"Successfully pre-installed {package_name}, retrying imports...")
-                attempts += 1
+            if not is_import_error(result):
+                break
 
-        # Step 7: Execute the script file
-        result = self._execute_script_impl(
-            script_path,
-            timeout=timeout,
-            output_file=output_file,
-            wait_for_latent=wait_for_latent,
-            latent_timeout=latent_timeout,
-        )
+            missing_module = get_missing_module_from_result(result)
+            if not missing_module:
+                logger.warning("Import error detected but could not extract module name")
+                break
 
-        # Add installation info
-        if installed_packages:
-            result["auto_installed"] = installed_packages
+            package_name = module_to_package(missing_module)
+            if package_name in installed_packages:
+                logger.warning(f"Already attempted to install {package_name}, giving up")
+                break
 
-        # Step 8: Post-execution tracking
+            python_path = self._get_python_path()
+            logger.info(f"Pre-installing missing package: {package_name}")
+            install_result = pip_install([package_name], python_path=python_path)
+
+            if not install_result.get("success", False):
+                logger.warning(
+                    f"Failed to install {package_name}: {install_result.get('error')}"
+                )
+                break
+
+            installed_packages.append(package_name)
+            logger.info(f"Successfully pre-installed {package_name}, retrying imports...")
+            attempts += 1
+
+    def _process_post_execution_tracking(
+        self,
+        pre_ctx: PreExecutionContext,
+        result: dict[str, Any],
+    ) -> None:
+        """
+        Process post-execution tracking and update result dict.
+
+        Compares pre/post snapshots, detects changes, and updates result with:
+        - asset_changes: List of changed asset paths
+        - temp_level_warning: Warning if changes in temp level
+        - dirty_assets: List of dirty asset paths
+        Also refreshes Slate UI if changes detected.
+
+        Args:
+            pre_ctx: Pre-execution context with snapshots
+            result: Execution result dict to update in place
+        """
+        if not result.get("success"):
+            return
+
         changed_paths: set[str] = set()
         temp_level_warning: str | None = None
 
-        if pre_snapshot is not None and result.get("success"):
+        # Asset change tracking
+        if pre_ctx.pre_snapshot is not None:
             try:
-                post_snapshot = create_snapshot(self, game_paths, str(self._ctx.project_root))
+                post_snapshot = create_snapshot(
+                    self, pre_ctx.game_paths, str(self._ctx.project_root)
+                )
                 if post_snapshot:
-                    snapshot_changes = compare_snapshots(pre_snapshot, post_snapshot)
+                    snapshot_changes = compare_snapshots(pre_ctx.pre_snapshot, post_snapshot)
                     if snapshot_changes:
                         changed_paths.update(snapshot_changes)
-                        logger.debug(f"Asset tracking: detected {len(snapshot_changes)} changed assets")
+                        logger.debug(
+                            f"Asset tracking: detected {len(snapshot_changes)} changed assets"
+                        )
                     else:
                         logger.debug("Asset tracking: no changes detected")
             except Exception as e:
                 logger.warning(f"Asset tracking failed: {e}")
 
         # Actor-based change tracking for OFPA mode
-        if pre_actor_snapshot is not None and result.get("success"):
+        if pre_ctx.pre_actor_snapshot is not None:
             try:
-                post_actor_snapshot = create_level_actor_snapshot(self, level_paths)
+                post_actor_snapshot = create_level_actor_snapshot(self, pre_ctx.level_paths)
                 if post_actor_snapshot:
                     actor_changes = compare_level_actor_snapshots(
-                        pre_actor_snapshot, post_actor_snapshot
+                        pre_ctx.pre_actor_snapshot, post_actor_snapshot
                     )
 
                     if actor_changes:
                         for level_path, changed_actors in actor_changes.items():
                             logger.info(
-                                f"Actor tracking: detected {len(changed_actors)} changes in {level_path}"
+                                f"Actor tracking: detected {len(changed_actors)} changes "
+                                f"in {level_path}"
                             )
 
                             if level_path.startswith("/Temp/"):
                                 temp_level_warning = (
                                     f"Changes detected in temporary level '{level_path}'. "
                                     "This level is not saved. If you intended to modify a "
-                                    "persistent level, please load it first using editor_load_level."
+                                    "persistent level, please load it first using "
+                                    "editor_load_level."
                                 )
                                 logger.warning(f"Actor changes in temporary level: {level_path}")
 
@@ -1040,7 +995,7 @@ except Exception as e:
             except Exception as e:
                 logger.warning(f"Actor tracking failed: {e}")
 
-        # Include asset_changes if there are any changed paths
+        # Update result with tracking info
         if changed_paths:
             result["asset_changes"] = sorted(changed_paths)
         if temp_level_warning:
@@ -1048,17 +1003,16 @@ except Exception as e:
 
         # Get dirty asset paths
         dirty_paths: list[str] = []
-        if result.get("success"):
-            try:
-                dirty_paths = get_dirty_asset_paths(self)
-                if dirty_paths:
-                    result["dirty_assets"] = dirty_paths
-                    logger.debug(f"Dirty assets: {dirty_paths}")
-            except Exception as e:
-                logger.warning(f"Failed to get dirty asset paths: {e}")
+        try:
+            dirty_paths = get_dirty_asset_paths(self)
+            if dirty_paths:
+                result["dirty_assets"] = dirty_paths
+                logger.debug(f"Dirty assets: {dirty_paths}")
+        except Exception as e:
+            logger.warning(f"Failed to get dirty asset paths: {e}")
 
         # Refresh Slate UI if changes were detected
-        if result.get("success") and (changed_paths or dirty_paths):
+        if changed_paths or dirty_paths:
             try:
                 refresh_result = self._execute_code_impl(
                     "import unreal; unreal.ExSlateTabLibrary.refresh_slate_view()",
@@ -1068,26 +1022,6 @@ except Exception as e:
                     logger.debug("Refreshed Slate UI after detected changes")
             except Exception as e:
                 logger.debug(f"RefreshSlateView failed (non-critical): {e}")
-
-        return result
-
-    def _pip_install_impl(
-        self,
-        packages: list[str],
-        upgrade: bool = False,
-    ) -> dict[str, Any]:
-        """
-        Install Python packages in UE5's Python environment (internal implementation).
-
-        Args:
-            packages: List of package names to install
-            upgrade: Whether to upgrade existing packages
-
-        Returns:
-            Installation result dictionary
-        """
-        python_path = self._get_python_path()
-        return pip_install(packages, python_path=python_path, upgrade=upgrade)
 
     # =========================================================================
     # PRIVATE HELPER METHODS
