@@ -187,6 +187,20 @@ public:
         const FString& NewValue
     );
 
+    /**
+     * Move a node to a new position in the graph.
+     * @param Node The node to move
+     * @param NewPosX New X position in graph
+     * @param NewPosY New Y position in graph
+     * @return True if move succeeded
+     */
+    UFUNCTION(BlueprintCallable, Category = "ExtraPythonAPIs|Graph", meta = (DevelopmentOnly))
+    static bool MoveNode(
+        UEdGraphNode* Node,
+        int32 NewPosX,
+        int32 NewPosY
+    );
+
     // For Blueprint compilation, use BlueprintEditorLibrary.compile_blueprint()
 
     // ========================================================================

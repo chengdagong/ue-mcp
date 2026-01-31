@@ -584,6 +584,41 @@ bool UExGraphEditorLibrary::SetPinDefaultValue(
     return true;
 }
 
+bool UExGraphEditorLibrary::MoveNode(
+    UEdGraphNode* Node,
+    int32 NewPosX,
+    int32 NewPosY)
+{
+    if (!Node)
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("MoveNode: Node is null"));
+        return false;
+    }
+
+    // Store old position for logging
+    int32 OldPosX = Node->NodePosX;
+    int32 OldPosY = Node->NodePosY;
+
+    // Set new position
+    Node->NodePosX = NewPosX;
+    Node->NodePosY = NewPosY;
+
+    // Refresh Blueprint editor
+    if (UEdGraph* Graph = Node->GetGraph())
+    {
+        Graph->NotifyGraphChanged();
+        if (UBlueprint* Blueprint = FBlueprintEditorUtils::FindBlueprintForGraph(Graph))
+        {
+            FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+        }
+    }
+
+    UE_LOG(LogExGraphEditor, Log, TEXT("MoveNode: Moved from (%d, %d) to (%d, %d)"),
+        OldPosX, OldPosY, NewPosX, NewPosY);
+
+    return true;
+}
+
 // For Blueprint compilation, use BlueprintEditorLibrary.compile_blueprint()
 
 // ============================================================================
