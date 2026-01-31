@@ -10,6 +10,7 @@
 #include "K2Node_IfThenElse.h"
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
+#include "EdGraphNode_Comment.h"
 #include "Factories/BlueprintFactory.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/GameplayStatics.h"
@@ -481,6 +482,54 @@ UEdGraphNode* UExGraphEditorLibrary::AddFunctionNodeByName(
         *FoundClass->GetName(), *FunctionName, NodePosX, NodePosY);
 
     return NewNode;
+}
+
+UEdGraphNode* UExGraphEditorLibrary::AddCommentNode(
+    UBlueprint* TargetBlueprint,
+    const FString& CommentText,
+    int32 NodePosX,
+    int32 NodePosY,
+    int32 SizeX,
+    int32 SizeY)
+{
+    if (!TargetBlueprint)
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("AddCommentNode: TargetBlueprint is null"));
+        return nullptr;
+    }
+
+    UEdGraph* Graph = GetEventGraph(TargetBlueprint);
+    if (!Graph)
+    {
+        return nullptr;
+    }
+
+    // Create the comment node
+    UEdGraphNode_Comment* CommentNode = NewObject<UEdGraphNode_Comment>(Graph);
+    if (!CommentNode)
+    {
+        UE_LOG(LogExGraphEditor, Warning, TEXT("AddCommentNode: Failed to create comment node"));
+        return nullptr;
+    }
+
+    // Set node properties
+    CommentNode->NodeComment = CommentText;
+    CommentNode->NodePosX = NodePosX;
+    CommentNode->NodePosY = NodePosY;
+    CommentNode->NodeWidth = SizeX;
+    CommentNode->NodeHeight = SizeY;
+
+    // Add to graph
+    Graph->AddNode(CommentNode, false, false);
+
+    // Notify changes
+    Graph->NotifyGraphChanged();
+    FBlueprintEditorUtils::MarkBlueprintAsModified(TargetBlueprint);
+
+    UE_LOG(LogExGraphEditor, Log, TEXT("AddCommentNode: Added comment '%s' at (%d, %d) size (%d, %d)"),
+        *CommentText, NodePosX, NodePosY, SizeX, SizeY);
+
+    return CommentNode;
 }
 
 // ============================================================================

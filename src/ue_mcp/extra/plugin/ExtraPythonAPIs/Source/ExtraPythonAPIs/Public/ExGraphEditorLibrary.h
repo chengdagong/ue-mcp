@@ -152,6 +152,27 @@ public:
         int32 NodePosY = 0
     );
 
+    /**
+     * Add a comment node to the Blueprint's event graph.
+     * Comment nodes are visual annotations that can group and document other nodes.
+     * @param TargetBlueprint The Blueprint to modify
+     * @param CommentText The text to display in the comment
+     * @param NodePosX X position in graph
+     * @param NodePosY Y position in graph
+     * @param SizeX Width of the comment box (default 400)
+     * @param SizeY Height of the comment box (default 100)
+     * @return The created comment node, or nullptr on failure
+     */
+    UFUNCTION(BlueprintCallable, Category = "ExtraPythonAPIs|Graph", meta = (DevelopmentOnly))
+    static UEdGraphNode* AddCommentNode(
+        UBlueprint* TargetBlueprint,
+        const FString& CommentText,
+        int32 NodePosX = 0,
+        int32 NodePosY = 0,
+        int32 SizeX = 400,
+        int32 SizeY = 100
+    );
+
     // ========================================================================
     // UPDATE Operations
     // ========================================================================
